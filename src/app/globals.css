@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #1f1f1f;
+  --primary: #1a73e8;
+  --primary-light: #e8f0fe;
+  --border: #dadce0;
+  --muted: #5f6368;
+  --surface: #f8f9fa;
+  --success: #34a853;
+  --warning: #fbbc04;
+  --danger: #ea4335;
+  --install: #1a73e8;
+  --service: #e8710a;
+  --jsv: #9334e6;
+  --measure: #f59e0b;
+  --rba-green: #4a7c2e;
+  --rba-green-light: #e8f5e0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-light: var(--primary-light);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-install: var(--install);
+  --color-service: var(--service);
+  --color-jsv: var(--jsv);
+  --color-measure: var(--measure);
+  --color-rba-green: var(--rba-green);
+  --color-rba-green-light: var(--rba-green-light);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #1f1f1f;
+    --foreground: #e8eaed;
+    --primary: #8ab4f8;
+    --primary-light: #303134;
+    --border: #3c4043;
+    --muted: #9aa0a6;
+    --surface: #303134;
+    --rba-green: #6aad4a;
+    --rba-green-light: #2d3a27;
+  }
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+@keyframes slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.25s ease-out;
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(35%); opacity: 0.3; }
+  to   { transform: translateX(0);   opacity: 1; }
+}
+
+@keyframes slide-in-left {
+  from { transform: translateX(-35%); opacity: 0.3; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.slide-next {
+  animation: slide-in-right 0.25s ease-out;
+}
+
+.slide-prev {
+  animation: slide-in-left 0.25s ease-out;
+}

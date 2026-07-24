@@ -1,0 +1,181 @@
+import { getSupabase } from "./supabase";
+import {
+  Appointment,
+  Crew,
+  RForceOrder,
+  CsvImport,
+  TimeOffRequest,
+} from "./types";
+
+// ── Crews ──
+
+export async function fetchCrews(): Promise<Crew[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("sched_crews")
+    .select("*")
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+  return (data as Crew[]) ?? [];
+}
+
+export async function upsertCrew(
+  crew: Partial<Crew> & { name: string; crew_type: string }
+): Promise<Crew | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data } = await sb
+    .from("sched_crews")
+    .upsert({ ...crew, updated_at: new Date().toISOString() })
+    .select()
+    .single();
+  return data as Crew | null;
+}
+
+export async function deactivateCrew(id: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  await sb
+    .from("sched_crews")
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq("id", id);
+}
+
+// ── Appointments ──
+
+export async function fetchAppointments(
+  startDate: string,
+  endDate: string
+): Promise<Appointment[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("sched_appointments")
+    .select("*")
+    .gte("scheduled_date", startDate)
+    .lte("scheduled_date", endDate)
+    .neq("status", "cancelled")
+    .order("scheduled_date", { ascending: true });
+  return (data as Appointment[]) ?? [];
+}
+
+export async function createAppointment(
+  appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at">
+): Promise<Appointment | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_appointments")
+    .insert(appt)
+    .select()
+    .single();
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("DOUBLE_BOOK");
+    }
+    throw error;
+  }
+  return data as Appointment;
+}
+
+export async function updateAppointment(
+  id: string,
+  version: number,
+  updates: Partial<Appointment>
+): Promise<Appointment | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_appointments")
+    .update({
+      ...updates,
+      version: version + 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("version", version)
+    .select()
+    .single();
+  if (error) {
+    if (error.code === "PGRST116") {
+      throw new Error("VERSION_CONFLICT");
+    }
+    if (error.code === "23505") {
+      throw new Error("DOUBLE_BOOK");
+    }
+    throw error;
+  }
+  return data as Appointment;
+}
+
+export async function cancelAppointment(
+  id: string,
+  version: number,
+  reason?: string
+): Promise<void> {
+  await updateAppointment(id, version, {
+    status: "cancelled",
+    reschedule_reason: reason || null,
+  });
+}
+
+// ── rForce Orders (CSV import) ──
+
+export async function fetchRForceOrders(): Promise<RForceOrder[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb.from("sched_rforce_orders").select("*");
+  return (data as RForceOrder[]) ?? [];
+}
+
+export async function upsertRForceOrders(
+  orders: Omit<RForceOrder, "updated_at">[],
+  csvImportId: string
+): Promise<number> {
+  const sb = getSupabase();
+  if (!sb) return 0;
+
+  const enriched = orders.map((o) => ({
+    ...o,
+    csv_import_id: csvImportId,
+    updated_at: new Date().toISOString(),
+  }));
+
+  let upserted = 0;
+  const BATCH = 500;
+  for (let i = 0; i < enriched.length; i += BATCH) {
+    const batch = enriched.slice(i, i + BATCH);
+    const { data } = await sb
+      .from("sched_rforce_orders")
+      .upsert(batch, { onConflict: "id" })
+      .select("id");
+    upserted += data?.length ?? 0;
+  }
+  return upserted;
+}
+
+export async function createCsvImport(
+  record: Omit<CsvImport, "id" | "imported_at">
+): Promise<CsvImport | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data } = await sb
+    .from("sched_csv_imports")
+    .insert(record)
+    .select()
+    .single();
+  return data as CsvImport | null;
+}
+
+// ── Time Off (read from Duck Force table) ──
+
+export async function fetchTimeOffRequests(): Promise<TimeOffRequest[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("time_off_requests")
+    .select("*")
+    .order("start_date", { ascending: true });
+  return (data as TimeOffRequest[]) ?? [];
+}

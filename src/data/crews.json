@@ -1,0 +1,20 @@
+[
+  { "name": "Ryan", "crew_type": "measure_tech", "color": "#f59e0b", "notes": "Office Wed, Late Day Thu", "sort_order": 1 },
+  { "name": "Nate", "crew_type": "measure_tech", "color": "#d97706", "notes": "Office Thu, Late Day Tue", "sort_order": 2 },
+  { "name": "Aaron", "crew_type": "measure_tech", "color": "#b45309", "notes": "Special cases, bays/bows", "sort_order": 3 },
+  { "name": "Sam Mormon", "crew_type": "install_in_house", "color": "#2563eb", "sort_order": 10 },
+  { "name": "Keith Morris", "crew_type": "install_in_house", "color": "#1d4ed8", "sort_order": 11 },
+  { "name": "Trevor Holewinaki", "crew_type": "install_in_house", "color": "#1e40af", "sort_order": 12 },
+  { "name": "Ken Driebergen", "crew_type": "install_in_house", "color": "#1e3a8a", "sort_order": 13 },
+  { "name": "Logan Dotson", "crew_type": "install_in_house", "color": "#3b82f6", "sort_order": 14 },
+  { "name": "Morgan Michalak", "crew_type": "install_in_house", "color": "#60a5fa", "sort_order": 15 },
+  { "name": "Tim Fitzpatrick", "crew_type": "install_in_house", "color": "#93c5fd", "sort_order": 16 },
+  { "name": "Randy Taylor", "crew_type": "install_sub", "color": "#059669", "sort_order": 20 },
+  { "name": "Alex Taylor", "crew_type": "install_sub", "color": "#047857", "sort_order": 21 },
+  { "name": "Tom Snyder", "crew_type": "install_sub", "color": "#065f46", "sort_order": 22 },
+  { "name": "Shane Grounds", "crew_type": "install_sub", "color": "#064e3b", "sort_order": 23 },
+  { "name": "Josh Maas", "crew_type": "jip", "color": "#7c3aed", "sort_order": 30 },
+  { "name": "Todd Williams", "crew_type": "jip", "color": "#6d28d9", "notes": "Flex", "sort_order": 31 },
+  { "name": "Matt Morgan", "crew_type": "svc", "color": "#e11d48", "sort_order": 40 },
+  { "name": "Josh McIntyre", "crew_type": "svc", "color": "#be123c", "sort_order": 41 }
+]
