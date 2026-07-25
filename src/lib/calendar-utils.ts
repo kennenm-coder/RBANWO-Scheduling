@@ -244,7 +244,8 @@ export function getRForceItemsForDay(
     if (rf.wo_status === "Appt Complete / Closed" || rf.wo_status === "Canceled") continue;
 
     const startDate = rf.scheduled_start.slice(0, 10);
-    if (startDate !== dateStr) continue;
+    const endDate = rf.scheduled_end ? rf.scheduled_end.slice(0, 10) : startDate;
+    if (dateStr < startDate || dateStr > endDate) continue;
 
     const resourceName =
       rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
