@@ -16,6 +16,7 @@ import {
 import {
   getAppointmentsForCrewAndDay,
   getRForceItemsForDay,
+  checkDiscrepancy,
   RForceCalendarItem,
   MEASURE_TIME_BLOCKS,
   INSTALL_TIME_BLOCKS,
@@ -104,6 +105,7 @@ export default function CrewLaneDayView({
             timeBlocks={MEASURE_TIME_BLOCKS}
             date={date}
             appointments={appointments}
+            rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
             onCardClick={setSelectedAppt}
@@ -121,6 +123,7 @@ export default function CrewLaneDayView({
             timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
+            rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
             onCardClick={setSelectedAppt}
@@ -167,6 +170,7 @@ function CrewSection({
   timeBlocks,
   date,
   appointments,
+  rforceOrders,
   rforceItems,
   isCrewOff,
   onCardClick,
@@ -177,6 +181,7 @@ function CrewSection({
   timeBlocks: TimeBlock[];
   date: Date;
   appointments: Appointment[];
+  rforceOrders: RForceOrder[];
   rforceItems: RForceCalendarItem[];
   isCrewOff: (name: string) => boolean;
   onCardClick: (a: Appointment) => void;
@@ -270,6 +275,7 @@ function CrewSection({
                                 appointment={a}
                                 crew={crew}
                                 compact={timeBlocks.length > 1}
+                                hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
                                 onClick={() => onCardClick(a)}
                               />
                             ))}

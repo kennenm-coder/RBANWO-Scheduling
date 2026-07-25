@@ -29,25 +29,25 @@ export default function RForceCard({ order, crew, compact, onClick }: Props) {
   return (
     <div
       onClick={onClick}
-      className="rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-xs leading-tight overflow-hidden border-2 border-dashed bg-background"
-      style={{ borderColor }}
+      className="rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-xs leading-tight overflow-hidden text-white"
+      style={{ backgroundColor: borderColor }}
     >
-      <div className="font-semibold truncate flex items-center gap-1" style={{ color: borderColor }}>
+      <div className="font-semibold truncate flex items-center gap-1">
         {order.customer_name || "Unknown"}
-        <span className="text-[9px] opacity-60 font-normal ml-auto shrink-0">rForce</span>
+        <span className="text-[9px] opacity-70 font-normal ml-auto shrink-0 bg-white/20 px-1 rounded">rForce</span>
       </div>
       {!compact && (
         <>
-          <div className="flex items-center gap-1 mt-0.5 text-muted">
+          <div className="flex items-center gap-1 mt-0.5 opacity-90">
             <MapPin size={10} />
             <span className="truncate">{order.address}</span>
           </div>
           <div className="flex items-center justify-between mt-1">
-            <span className="text-muted">
+            <span className="opacity-80">
               {order.work_order_type || "Unknown"}
             </span>
             {order.product_count != null && order.product_count > 0 && (
-              <span className="text-muted">
+              <span className="opacity-80">
                 {order.product_count} units
               </span>
             )}

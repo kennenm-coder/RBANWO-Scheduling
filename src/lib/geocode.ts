@@ -17,9 +17,10 @@ export async function getCachedGeocode(address: string): Promise<GeoResult | nul
     .from("sched_geocode_cache")
     .select("lat, lng")
     .eq("address_hash", hash)
-    .single();
-  if (data?.lat != null && data?.lng != null) {
-    return { lat: data.lat, lng: data.lng };
+    .limit(1);
+  const row = data?.[0];
+  if (row?.lat != null && row?.lng != null) {
+    return { lat: row.lat, lng: row.lng };
   }
   return null;
 }
@@ -38,30 +39,102 @@ export async function saveGeocode(address: string, lat: number, lng: number): Pr
   });
 }
 
+function extractZip(address: string): string | null {
+  const match = address.match(/\b(\d{5})\b/);
+  return match ? match[1] : null;
+}
+
+function cleanAddress(address: string): string[] {
+  const variants: string[] = [];
+  let cleaned = address
+    .replace(/\s+United States$/i, "")
+    .replace(/\s+US$/i, "")
+    .trim();
+  variants.push(cleaned);
+
+  const countyRd = cleaned.replace(/County Road\s+/i, "CR ");
+  if (countyRd !== cleaned) variants.push(countyRd);
+
+  const stateZip = cleaned.match(/,\s*(\w+)\s+(\d{5})/);
+  if (stateZip) {
+    const structured = cleaned.replace(/,\s*(\w+)\s+(\d{5}).*$/, "");
+    variants.push(`${structured}, ${stateZip[1]} ${stateZip[2]}`);
+  }
+
+  return variants;
+}
+
+async function nominatimLookup(query: string): Promise<GeoResult | null> {
+  const q = encodeURIComponent(query);
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=us`,
+    {
+      headers: {
+        "User-Agent": "RBANWO-Scheduling/1.0 (kennen.m@rbanwo.com)",
+      },
+    }
+  );
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data || data.length === 0) return null;
+  const lat = parseFloat(data[0].lat);
+  const lng = parseFloat(data[0].lon);
+  if (isNaN(lat) || isNaN(lng)) return null;
+  return { lat, lng };
+}
+
+async function nominatimZipFallback(zip: string): Promise<GeoResult | null> {
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?postalcode=${zip}&country=US&format=json&limit=1`,
+    {
+      headers: {
+        "User-Agent": "RBANWO-Scheduling/1.0 (kennen.m@rbanwo.com)",
+      },
+    }
+  );
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data || data.length === 0) return null;
+  const lat = parseFloat(data[0].lat);
+  const lng = parseFloat(data[0].lon);
+  if (isNaN(lat) || isNaN(lng)) return null;
+  return { lat, lng };
+}
+
 export async function geocodeAddress(address: string): Promise<GeoResult | null> {
   const cached = await getCachedGeocode(address);
   if (cached) return cached;
 
   try {
-    const q = encodeURIComponent(address);
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`,
-      {
-        headers: {
-          "User-Agent": "RBANWO-Scheduling/1.0 (kennen.m@rbanwo.com)",
-        },
+    const result = await nominatimLookup(address);
+    if (result) {
+      await saveGeocode(address, result.lat, result.lng);
+      return result;
+    }
+
+    const variants = cleanAddress(address);
+    for (const variant of variants) {
+      if (variant === address) continue;
+      await new Promise((r) => setTimeout(r, 1100));
+      const vResult = await nominatimLookup(variant);
+      if (vResult) {
+        await saveGeocode(address, vResult.lat, vResult.lng);
+        return vResult;
       }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data || data.length === 0) return null;
+    }
 
-    const lat = parseFloat(data[0].lat);
-    const lng = parseFloat(data[0].lon);
-    if (isNaN(lat) || isNaN(lng)) return null;
+    // Fall back to zip code center (~2 mile accuracy)
+    const zip = extractZip(address);
+    if (zip) {
+      await new Promise((r) => setTimeout(r, 1100));
+      const zipResult = await nominatimZipFallback(zip);
+      if (zipResult) {
+        await saveGeocode(address, zipResult.lat, zipResult.lng);
+        return zipResult;
+      }
+    }
 
-    await saveGeocode(address, lat, lng);
-    return { lat, lng };
+    return null;
   } catch {
     return null;
   }
@@ -83,6 +156,8 @@ export async function geocodeBatch(
       uncached.push(addr);
     }
   }
+
+  onProgress?.(results.size, unique.length);
 
   for (let i = 0; i < uncached.length; i++) {
     const addr = uncached[i];

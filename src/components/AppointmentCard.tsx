@@ -2,12 +2,13 @@
 
 import { Appointment, Crew } from "@/lib/types";
 import { typeLabel } from "@/lib/calendar-utils";
-import { MapPin, Link2 } from "lucide-react";
+import { MapPin, Unlink, AlertTriangle } from "lucide-react";
 
 interface Props {
   appointment: Appointment;
   crew?: Crew;
   compact?: boolean;
+  hasDiscrepancy?: boolean;
   onClick?: () => void;
 }
 
@@ -15,6 +16,7 @@ export default function AppointmentCard({
   appointment,
   crew,
   compact,
+  hasDiscrepancy,
   onClick,
 }: Props) {
   const bgColor = crew?.color || "#1a73e8";
@@ -27,8 +29,11 @@ export default function AppointmentCard({
     >
       <div className="font-semibold truncate flex items-center gap-1">
         {appointment.customer_name}
-        {appointment.work_order_number && (
-          <Link2 size={10} className="shrink-0 opacity-70" />
+        {hasDiscrepancy && (
+          <AlertTriangle size={10} className="shrink-0 text-yellow-200" />
+        )}
+        {!appointment.work_order_number && (
+          <Unlink size={10} className="shrink-0 opacity-70" />
         )}
       </div>
       {!compact && (

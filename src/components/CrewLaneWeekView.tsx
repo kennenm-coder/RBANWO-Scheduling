@@ -11,6 +11,7 @@ import {
   getWeekDays,
   getAppointmentsForCrewAndDay,
   getRForceItemsForDay,
+  checkDiscrepancy,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { openSalesforce } from "@/lib/salesforce";
@@ -27,6 +28,7 @@ export default function CrewLaneWeekView({
   onDayClick,
 }: Props) {
   const { crews, appointments, rforceOrders, timeOffRequests } = useData();
+
   const days = getWeekDays(currentDate);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
@@ -160,6 +162,7 @@ export default function CrewLaneWeekView({
                               appointment={a}
                               crew={crew}
                               compact
+                              hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
                               onClick={() => setSelectedAppt(a)}
                             />
                           ))}

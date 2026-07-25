@@ -1,23 +1,26 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
 import { geocodeBatch, GeoResult } from "@/lib/geocode";
-import { getAppointmentsForCrewAndDay, typeLabel } from "@/lib/calendar-utils";
+import { getRForceItemsForDay, typeLabel } from "@/lib/calendar-utils";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
-import { Appointment, Crew } from "@/lib/types";
+import { Appointment, Crew, RForceOrder } from "@/lib/types";
 import { format } from "date-fns";
-import { Loader2, ExternalLink, MapPin, Navigation } from "lucide-react";
+import { Loader2, ExternalLink, Navigation } from "lucide-react";
 
-function crewMarkerIcon(color: string): L.DivIcon {
+function crewMarkerIcon(color: string, dashed?: boolean): L.DivIcon {
+  const border = dashed
+    ? `border:3px dashed white;`
+    : `border:3px solid white;`;
   return L.divIcon({
     className: "",
     html: `<div style="
       width:28px;height:28px;border-radius:50%;
-      background:${color};border:3px solid white;
+      background:${color};${border}
       box-shadow:0 2px 6px rgba(0,0,0,0.3);
     "></div>`,
     iconSize: [28, 28],
@@ -44,18 +47,26 @@ interface Props {
   date: Date;
 }
 
-interface MarkerData {
-  appointment: Appointment;
-  crew: Crew;
+interface MapItem {
+  id: string;
+  customerName: string;
+  address: string;
+  type: string;
+  crewName: string;
+  crewColor: string;
+  crewId: string;
+  productCount?: number | null;
+  workOrderNumber?: string | null;
+  orderNumber?: string | null;
+  isRForce: boolean;
   geo: GeoResult;
 }
 
 export default function MapView({ date }: Props) {
-  const { crews, appointments } = useData();
+  const { crews, appointments, rforceOrders } = useData();
   const [geoCache, setGeoCache] = useState<Map<string, GeoResult>>(new Map());
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const geocodingRef = useRef(false);
 
   const dateStr = format(date, "yyyy-MM-dd");
 
@@ -65,39 +76,89 @@ export default function MapView({ date }: Props) {
     );
   }, [appointments, dateStr]);
 
+  const dayRForceItems = useMemo(
+    () => getRForceItemsForDay(rforceOrders, appointments, crews, date),
+    [rforceOrders, appointments, crews, date]
+  );
+
+  const allAddresses = useMemo(() => {
+    const addrs: string[] = [];
+    for (const a of dayAppointments) {
+      if (a.address) addrs.push(a.address);
+    }
+    for (const rf of dayRForceItems) {
+      if (rf.rforceOrder.address) addrs.push(rf.rforceOrder.address);
+    }
+    return [...new Set(addrs)];
+  }, [dayAppointments, dayRForceItems]);
+
   useEffect(() => {
-    if (geocodingRef.current) return;
-    const addresses = dayAppointments.map((a) => a.address).filter(Boolean);
-    if (addresses.length === 0) {
+    if (allAddresses.length === 0) {
       setLoading(false);
       return;
     }
-    geocodingRef.current = true;
+    let cancelled = false;
     setLoading(true);
-    geocodeBatch(addresses, (done, total) => {
-      setProgress({ done, total });
+    geocodeBatch(allAddresses, (done, total) => {
+      if (!cancelled) setProgress({ done, total });
     }).then((results) => {
-      setGeoCache(results);
-      setLoading(false);
-      geocodingRef.current = false;
+      if (!cancelled) {
+        setGeoCache(results);
+        setLoading(false);
+      }
     });
-  }, [dateStr]);
+    return () => { cancelled = true; };
+  }, [dateStr, allAddresses]);
 
-  const markers: MarkerData[] = useMemo(() => {
-    const result: MarkerData[] = [];
+  const mapItems: MapItem[] = useMemo(() => {
+    const items: MapItem[] = [];
     for (const appt of dayAppointments) {
       const geo = geoCache.get(appt.address);
       const crew = crews.find((c) => c.id === appt.crew_id);
       if (geo && crew) {
-        result.push({ appointment: appt, crew, geo });
+        items.push({
+          id: appt.id,
+          customerName: appt.customer_name,
+          address: appt.address,
+          type: typeLabel(appt.appointment_type),
+          crewName: crew.name,
+          crewColor: crew.color,
+          crewId: crew.id,
+          productCount: appt.product_count,
+          workOrderNumber: appt.work_order_number,
+          orderNumber: appt.order_number,
+          isRForce: false,
+          geo,
+        });
       }
     }
-    return result;
-  }, [dayAppointments, geoCache, crews]);
+    for (const rf of dayRForceItems) {
+      const geo = geoCache.get(rf.rforceOrder.address || "");
+      const crew = crews.find((c) => c.id === rf.crewId);
+      if (geo && crew) {
+        items.push({
+          id: rf.rforceOrder.work_order_number,
+          customerName: rf.rforceOrder.customer_name || "Unknown",
+          address: rf.rforceOrder.address || "",
+          type: rf.rforceOrder.work_order_type || "Unknown",
+          crewName: crew.name,
+          crewColor: crew.color,
+          crewId: crew.id,
+          productCount: rf.rforceOrder.product_count,
+          workOrderNumber: rf.rforceOrder.work_order_number,
+          orderNumber: rf.rforceOrder.order_number,
+          isRForce: true,
+          geo,
+        });
+      }
+    }
+    return items;
+  }, [dayAppointments, dayRForceItems, geoCache, crews]);
 
-  const positions: [number, number][] = markers.map((m) => [m.geo.lat, m.geo.lng]);
+  const positions: [number, number][] = mapItems.map((m) => [m.geo.lat, m.geo.lng]);
+  const totalItems = dayAppointments.length + dayRForceItems.length;
 
-  const defaultCenter: [number, number] = [45.52, -122.68];
+  const defaultCenter: [number, number] = [41.65, -83.54];
 
   if (loading) {
     return (
@@ -110,7 +171,7 @@ export default function MapView({ date }: Props) {
     );
   }
 
-  if (dayAppointments.length === 0) {
+  if (totalItems === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted text-sm">
         No appointments scheduled for this day.
@@ -131,29 +192,34 @@ export default function MapView({ date }: Props) {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <FitBounds positions={positions} />
-        {markers.map((m) => (
+        {mapItems.map((m) => (
           <Marker
-            key={m.appointment.id}
+            key={m.id}
             position={[m.geo.lat, m.geo.lng]}
-            icon={crewMarkerIcon(m.crew.color)}
+            icon={crewMarkerIcon(m.crewColor, false)}
           >
             <Popup>
               <div className="text-sm min-w-[200px]">
-                <div className="font-bold">{m.appointment.customer_name}</div>
+                <div className="font-bold flex items-center gap-2">
+                  {m.customerName}
+                  {m.isRForce && (
+                    <span className="text-[9px] font-normal px-1.5 py-0.5 bg-gray-100 rounded text-gray-500">rForce</span>
+                  )}
+                </div>
                 <div className="text-xs text-gray-600 mt-0.5">
-                  {typeLabel(m.appointment.appointment_type)} &middot; {m.crew.name}
+                  {m.type} &middot; {m.crewName}
                 </div>
-                <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
-                  <span>{m.appointment.address}</span>
+                <div className="text-xs text-gray-500 mt-1">
+                  {m.address}
                 </div>
-                {m.appointment.product_count && (
+                {m.productCount != null && m.productCount > 0 && (
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {m.appointment.product_count} products
+                    {m.productCount} products
                   </div>
                 )}
                 <div className="flex gap-2 mt-2">
                   <a
-                    href={mapsHref(m.appointment.address)}
+                    href={mapsHref(m.address)}
                     target="_blank"
                     rel="noopener"
                     className="text-xs text-blue-600 underline flex items-center gap-1"
@@ -161,13 +227,10 @@ export default function MapView({ date }: Props) {
                     <Navigation size={10} />
                     Directions
                   </a>
-                  {m.appointment.work_order_number && (
+                  {m.workOrderNumber && (
                     <button
                       onClick={() =>
-                        openSalesforce(
-                          m.appointment.work_order_number!,
-                          m.appointment.order_number || ""
-                        )
+                        openSalesforce(m.workOrderNumber!, m.orderNumber || "")
                       }
                       className="text-xs text-blue-600 underline flex items-center gap-1"
                     >
@@ -182,9 +245,9 @@ export default function MapView({ date }: Props) {
         ))}
       </MapContainer>
 
-      {markers.length < dayAppointments.length && (
+      {mapItems.length < totalItems && (
         <div className="absolute bottom-4 left-4 bg-background/90 backdrop-blur border border-border rounded-lg px-3 py-2 text-xs text-muted shadow-lg z-[1000]">
-          Showing {markers.length} of {dayAppointments.length} appointments (some addresses could not be geocoded)
+          Showing {mapItems.length} of {totalItems} items (some addresses could not be geocoded)
         </div>
       )}
 
@@ -192,9 +255,9 @@ export default function MapView({ date }: Props) {
         <div className="text-[10px] text-muted font-medium mb-1.5">Crews</div>
         <div className="space-y-1">
           {crews
-            .filter((c) => markers.some((m) => m.crew.id === c.id))
+            .filter((c) => mapItems.some((m) => m.crewId === c.id))
             .map((c) => {
-              const count = markers.filter((m) => m.crew.id === c.id).length;
+              const count = mapItems.filter((m) => m.crewId === c.id).length;
               return (
                 <div key={c.id} className="flex items-center gap-1.5 text-[10px]">
                   <div

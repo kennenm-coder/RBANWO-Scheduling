@@ -207,6 +207,22 @@ export interface RForceCalendarItem {
   timeBlock: TimeBlock;
 }
 
+export function checkDiscrepancy(
+  appointment: Appointment,
+  rforceOrders: RForceOrder[]
+): boolean {
+  if (!appointment.work_order_number) return false;
+  const rf = rforceOrders.find(
+    (r) => r.work_order_number === appointment.work_order_number
+  );
+  if (!rf) return false;
+  if (rf.scheduled_start) {
+    const rfDate = rf.scheduled_start.slice(0, 10);
+    if (rfDate !== appointment.scheduled_date) return true;
+  }
+  return false;
+}
+
 export function getRForceItemsForDay(
   rforceOrders: RForceOrder[],
   appointments: Appointment[],
