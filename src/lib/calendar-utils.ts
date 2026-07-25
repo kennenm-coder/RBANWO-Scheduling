@@ -1,4 +1,4 @@
-import { Appointment, TimeBlock, AppointmentType, Crew } from "./types";
+import { Appointment, TimeBlock, AppointmentType, Crew, RForceOrder } from "./types";
 import {
   startOfWeek,
   addDays,
@@ -183,4 +183,66 @@ export function crewTypeLabel(type: Crew["crew_type"]): string {
     case "svc":
       return "Service";
   }
+}
+
+function timeToBlock(hour: number): TimeBlock {
+  if (hour < 10) return "9-10";
+  if (hour < 12) return "10-12";
+  if (hour < 14) return "12-2";
+  if (hour < 16) return "2-4";
+  return "4-6";
+}
+
+function matchCrewByName(resourceName: string, crews: Crew[]): Crew | undefined {
+  const lower = resourceName.toLowerCase().trim();
+  const exact = crews.find((c) => c.name.toLowerCase() === lower);
+  if (exact) return exact;
+  const firstName = lower.split(" ")[0];
+  return crews.find((c) => c.name.toLowerCase().split(" ")[0] === firstName);
+}
+
+export interface RForceCalendarItem {
+  rforceOrder: RForceOrder;
+  crewId: string;
+  timeBlock: TimeBlock;
+}
+
+export function getRForceItemsForDay(
+  rforceOrders: RForceOrder[],
+  appointments: Appointment[],
+  crews: Crew[],
+  date: Date
+): RForceCalendarItem[] {
+  const dateStr = format(date, "yyyy-MM-dd");
+  const linkedWOs = new Set(
+    appointments
+      .filter((a) => a.work_order_number && a.status !== "cancelled")
+      .map((a) => a.work_order_number)
+  );
+
+  const items: RForceCalendarItem[] = [];
+
+  for (const rf of rforceOrders) {
+    if (!rf.scheduled_start) continue;
+    if (linkedWOs.has(rf.work_order_number)) continue;
+    if (rf.wo_status === "Appt Complete / Closed" || rf.wo_status === "Canceled") continue;
+
+    const startDate = rf.scheduled_start.slice(0, 10);
+    if (startDate !== dateStr) continue;
+
+    const resourceName =
+      rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
+    if (!resourceName) continue;
+
+    const crew = matchCrewByName(resourceName, crews);
+    if (!crew) continue;
+
+    const hour = parseInt(rf.scheduled_start.slice(11, 13), 10);
+    const isMeasure = crew.crew_type === "measure_tech";
+    const timeBlock: TimeBlock = isMeasure ? timeToBlock(hour) : "full_day";
+
+    items.push({ rforceOrder: rf, crewId: crew.id, timeBlock });
+  }
+
+  return items;
 }

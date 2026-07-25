@@ -3,21 +3,26 @@
 import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
+import RForceCard from "./RForceCard";
 import AppointmentSheet from "./AppointmentSheet";
 import ScheduleModal from "./ScheduleModal";
 import {
   Appointment,
   Crew,
   TimeBlock,
+  RForceOrder,
   AppointmentType,
 } from "@/lib/types";
 import {
   getAppointmentsForCrewAndDay,
+  getRForceItemsForDay,
+  RForceCalendarItem,
   MEASURE_TIME_BLOCKS,
   INSTALL_TIME_BLOCKS,
   timeBlockLabel,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
+import { openSalesforce } from "@/lib/salesforce";
 import { Plus, Palmtree } from "lucide-react";
 import { format } from "date-fns";
 
@@ -30,7 +35,7 @@ export default function CrewLaneDayView({
   date,
   filterType = "all",
 }: Props) {
-  const { crews, appointments, timeOffRequests } = useData();
+  const { crews, appointments, rforceOrders, timeOffRequests } = useData();
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
@@ -47,6 +52,11 @@ export default function CrewLaneDayView({
   const offNames = useMemo(() => {
     return new Set(offToday.map((r) => r.employee_name.toLowerCase()));
   }, [offToday]);
+
+  const rforceItems = useMemo(
+    () => getRForceItemsForDay(rforceOrders, appointments, crews, date),
+    [rforceOrders, appointments, crews, date]
+  );
 
   function isCrewOff(crewName: string): boolean {
     const lower = crewName.toLowerCase();
@@ -94,6 +104,7 @@ export default function CrewLaneDayView({
             timeBlocks={MEASURE_TIME_BLOCKS}
             date={date}
             appointments={appointments}
+            rforceItems={rforceItems}
             isCrewOff={isCrewOff}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
@@ -110,6 +121,7 @@ export default function CrewLaneDayView({
             timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
+            rforceItems={rforceItems}
             isCrewOff={isCrewOff}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
@@ -155,6 +167,7 @@ function CrewSection({
   timeBlocks,
   date,
   appointments,
+  rforceItems,
   isCrewOff,
   onCardClick,
   onCellClick,
@@ -164,6 +177,7 @@ function CrewSection({
   timeBlocks: TimeBlock[];
   date: Date;
   appointments: Appointment[];
+  rforceItems: RForceCalendarItem[];
   isCrewOff: (name: string) => boolean;
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
@@ -224,7 +238,13 @@ function CrewSection({
                       date
                     ).filter((a) => a.time_block === block);
 
-                    if (off && cellAppts.length === 0) {
+                    const cellRForce = rforceItems.filter(
+                      (r) => r.crewId === crew.id && r.timeBlock === block
+                    );
+
+                    const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
+
+                    if (off && !hasContent) {
                       return (
                         <td
                           key={block}
@@ -242,7 +262,7 @@ function CrewSection({
                         key={block}
                         className={`p-1 border-b border-border border-l border-l-border/50 align-top min-h-[60px] ${off ? "bg-amber-50/30 dark:bg-amber-900/5" : ""}`}
                       >
-                        {cellAppts.length > 0 ? (
+                        {hasContent ? (
                           <div className="space-y-1">
                             {cellAppts.map((a) => (
                               <AppointmentCard
@@ -251,6 +271,20 @@ function CrewSection({
                                 crew={crew}
                                 compact={timeBlocks.length > 1}
                                 onClick={() => onCardClick(a)}
+                              />
+                            ))}
+                            {cellRForce.map((rf) => (
+                              <RForceCard
+                                key={rf.rforceOrder.work_order_number}
+                                order={rf.rforceOrder}
+                                crew={crew}
+                                compact={timeBlocks.length > 1}
+                                onClick={() =>
+                                  openSalesforce(
+                                    rf.rforceOrder.work_order_number,
+                                    rf.rforceOrder.order_number
+                                  )
+                                }
                               />
                             ))}
                           </div>

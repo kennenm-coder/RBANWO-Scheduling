@@ -125,8 +125,20 @@ export async function cancelAppointment(
 export async function fetchRForceOrders(): Promise<RForceOrder[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  const { data } = await sb.from("sched_rforce_orders").select("*");
-  return (data as RForceOrder[]) ?? [];
+  const all: RForceOrder[] = [];
+  let offset = 0;
+  const BATCH = 1000;
+  while (true) {
+    const { data } = await sb
+      .from("sched_rforce_orders")
+      .select("*")
+      .range(offset, offset + BATCH - 1);
+    if (!data || data.length === 0) break;
+    all.push(...(data as RForceOrder[]));
+    if (data.length < BATCH) break;
+    offset += BATCH;
+  }
+  return all;
 }
 
 export async function upsertRForceOrders(

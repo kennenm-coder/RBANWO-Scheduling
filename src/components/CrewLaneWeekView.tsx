@@ -3,14 +3,17 @@
 import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
+import RForceCard from "./RForceCard";
 import AppointmentSheet from "./AppointmentSheet";
 import ScheduleModal from "./ScheduleModal";
 import { Appointment } from "@/lib/types";
 import {
   getWeekDays,
   getAppointmentsForCrewAndDay,
+  getRForceItemsForDay,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
+import { openSalesforce } from "@/lib/salesforce";
 import { format, isToday } from "date-fns";
 import { Plus, Palmtree } from "lucide-react";
 
@@ -23,7 +26,7 @@ export default function CrewLaneWeekView({
   currentDate,
   onDayClick,
 }: Props) {
-  const { crews, appointments, timeOffRequests } = useData();
+  const { crews, appointments, rforceOrders, timeOffRequests } = useData();
   const days = getWeekDays(currentDate);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
@@ -45,6 +48,14 @@ export default function CrewLaneWeekView({
     }
     return map;
   }, [days, timeOffRequests]);
+
+  const rforceByDay = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getRForceItemsForDay>>();
+    for (const day of days) {
+      map.set(format(day, "yyyy-MM-dd"), getRForceItemsForDay(rforceOrders, appointments, crews, day));
+    }
+    return map;
+  }, [days, rforceOrders, appointments, crews]);
 
   function isCrewOffOnDay(crewName: string, day: Date): boolean {
     const dateStr = format(day, "yyyy-MM-dd");
@@ -118,8 +129,12 @@ export default function CrewLaneWeekView({
                     crew.id,
                     day
                   );
+                  const dateStr = format(day, "yyyy-MM-dd");
+                  const dayRForce = rforceByDay.get(dateStr) || [];
+                  const cellRForce = dayRForce.filter((r) => r.crewId === crew.id);
+                  const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
 
-                  if (off && cellAppts.length === 0) {
+                  if (off && !hasContent) {
                     return (
                       <td
                         key={day.toISOString()}
@@ -137,7 +152,7 @@ export default function CrewLaneWeekView({
                       key={day.toISOString()}
                       className={`p-1 border-b border-border border-l border-l-border/50 align-top ${off ? "bg-amber-50/30 dark:bg-amber-900/5" : ""}`}
                     >
-                      {cellAppts.length > 0 ? (
+                      {hasContent ? (
                         <div className="space-y-1">
                           {cellAppts.map((a) => (
                             <AppointmentCard
@@ -146,6 +161,20 @@ export default function CrewLaneWeekView({
                               crew={crew}
                               compact
                               onClick={() => setSelectedAppt(a)}
+                            />
+                          ))}
+                          {cellRForce.map((rf) => (
+                            <RForceCard
+                              key={rf.rforceOrder.work_order_number}
+                              order={rf.rforceOrder}
+                              crew={crew}
+                              compact
+                              onClick={() =>
+                                openSalesforce(
+                                  rf.rforceOrder.work_order_number,
+                                  rf.rforceOrder.order_number
+                                )
+                              }
                             />
                           ))}
                         </div>
