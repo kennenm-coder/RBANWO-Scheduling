@@ -117,6 +117,14 @@ export function typeColor(type: AppointmentType): string {
       return "bg-service";
     case "jip":
       return "bg-jsv";
+    case "lswp":
+      return "bg-teal-500";
+    case "hoa":
+      return "bg-cyan-500";
+    case "paint_stain":
+      return "bg-rose-500";
+    default:
+      return "bg-gray-500";
   }
 }
 
@@ -130,6 +138,14 @@ export function typeColorText(type: AppointmentType): string {
       return "text-service";
     case "jip":
       return "text-jsv";
+    case "lswp":
+      return "text-teal-600";
+    case "hoa":
+      return "text-cyan-600";
+    case "paint_stain":
+      return "text-rose-600";
+    default:
+      return "text-gray-600";
   }
 }
 
@@ -143,6 +159,14 @@ export function typeLabel(type: AppointmentType): string {
       return "Service";
     case "jip":
       return "JIP";
+    case "lswp":
+      return "LSWP";
+    case "hoa":
+      return "HOA";
+    case "paint_stain":
+      return "Paint/Stain";
+    default:
+      return type;
   }
 }
 

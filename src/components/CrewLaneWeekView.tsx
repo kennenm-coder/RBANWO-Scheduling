@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
 import AppointmentSheet from "./AppointmentSheet";
@@ -10,8 +10,9 @@ import {
   getWeekDays,
   getAppointmentsForCrewAndDay,
 } from "@/lib/calendar-utils";
+import { getTimeOffForDate } from "@/lib/store";
 import { format, isToday } from "date-fns";
-import { Plus } from "lucide-react";
+import { Plus, Palmtree } from "lucide-react";
 
 interface Props {
   currentDate: Date;
@@ -22,7 +23,7 @@ export default function CrewLaneWeekView({
   currentDate,
   onDayClick,
 }: Props) {
-  const { crews, appointments } = useData();
+  const { crews, appointments, timeOffRequests } = useData();
   const days = getWeekDays(currentDate);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
@@ -30,6 +31,37 @@ export default function CrewLaneWeekView({
     date: Date;
     crewId: string;
   } | null>(null);
+
+  const offByDay = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const day of days) {
+      const dateStr = format(day, "yyyy-MM-dd");
+      const offToday = getTimeOffForDate(timeOffRequests, dateStr);
+      const names = new Set<string>();
+      for (const r of offToday) {
+        names.add(r.employee_name.toLowerCase());
+      }
+      map.set(dateStr, names);
+    }
+    return map;
+  }, [days, timeOffRequests]);
+
+  function isCrewOffOnDay(crewName: string, day: Date): boolean {
+    const dateStr = format(day, "yyyy-MM-dd");
+    const offNames = offByDay.get(dateStr);
+    if (!offNames) return false;
+    const lower = crewName.toLowerCase();
+    if (offNames.has(lower)) return true;
+    const crewFirst = crewName.split(" ")[0].toLowerCase();
+    const crewLast = crewName.split(" ").slice(-1)[0].toLowerCase();
+    const offToday = getTimeOffForDate(timeOffRequests, dateStr);
+    for (const r of offToday) {
+      const torFirst = r.employee_name.split(" ")[0].toLowerCase();
+      const torLast = r.employee_name.split(" ").slice(-1)[0].toLowerCase();
+      if (crewFirst === torFirst && crewLast.slice(0, 4) === torLast.slice(0, 4)) return true;
+    }
+    return false;
+  }
 
   const installCrews = crews.filter(
     (c) =>
@@ -39,6 +71,7 @@ export default function CrewLaneWeekView({
       c.crew_type === "svc"
   );
   const measureCrews = crews.filter((c) => c.crew_type === "measure_tech");
+  const allCrews = [...measureCrews, ...installCrews];
 
   return (
     <div className="flex-1 overflow-auto">
@@ -46,88 +79,97 @@ export default function CrewLaneWeekView({
         <table className="w-full border-collapse min-w-[800px]">
           <thead>
             <tr>
-              <th className="w-20 p-2 text-xs text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
-                Day
+              <th className="w-32 p-2 text-xs text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
+                Crew
               </th>
-              {[...measureCrews, ...installCrews].map((crew) => (
-                <th
-                  key={crew.id}
-                  className="p-1 text-[10px] font-medium text-center border-b border-border min-w-[100px]"
-                >
-                  <div className="flex items-center justify-center gap-1">
+              {days.map((day) => {
+                const today = isToday(day);
+                return (
+                  <th
+                    key={day.toISOString()}
+                    className={`p-2 text-xs font-medium text-center border-b border-border min-w-[100px] cursor-pointer hover:bg-primary-light ${today ? "bg-primary-light" : ""}`}
+                    onClick={() => onDayClick(day)}
+                  >
+                    <div className={today ? "text-primary font-bold" : ""}>
+                      {format(day, "EEE")}
+                    </div>
+                    <div className="text-muted">{format(day, "M/d")}</div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {allCrews.map((crew) => (
+              <tr key={crew.id}>
+                <td className="p-2 text-xs font-medium border-b border-border sticky left-0 bg-background z-10">
+                  <div className="flex items-center gap-1">
                     <div
                       className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: crew.color }}
                     />
                     <span className="truncate">{crew.name}</span>
                   </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {days.map((day) => {
-              const today = isToday(day);
-              return (
-                <tr key={day.toISOString()}>
-                  <td
-                    className={`p-2 text-xs font-medium border-b border-border sticky left-0 z-10 cursor-pointer hover:bg-primary-light ${
-                      today ? "bg-primary-light" : "bg-background"
-                    }`}
-                    onClick={() => onDayClick(day)}
-                  >
-                    <div
-                      className={`${today ? "text-primary font-bold" : ""}`}
-                    >
-                      {format(day, "EEE")}
-                    </div>
-                    <div className="text-muted">{format(day, "M/d")}</div>
-                  </td>
-                  {[...measureCrews, ...installCrews].map((crew) => {
-                    const cellAppts = getAppointmentsForCrewAndDay(
-                      appointments,
-                      crew.id,
-                      day
-                    );
+                </td>
+                {days.map((day) => {
+                  const off = isCrewOffOnDay(crew.name, day);
+                  const cellAppts = getAppointmentsForCrewAndDay(
+                    appointments,
+                    crew.id,
+                    day
+                  );
+
+                  if (off && cellAppts.length === 0) {
                     return (
                       <td
-                        key={crew.id}
-                        className="p-1 border-b border-border border-l border-l-border/50 align-top"
+                        key={day.toISOString()}
+                        className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-50/50 dark:bg-amber-900/5"
                       >
-                        {cellAppts.length > 0 ? (
-                          <div className="space-y-1">
-                            {cellAppts.map((a) => (
-                              <AppointmentCard
-                                key={a.id}
-                                appointment={a}
-                                crew={crew}
-                                compact
-                                onClick={() => setSelectedAppt(a)}
-                              />
-                            ))}
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() =>
-                              setScheduleTarget({
-                                date: day,
-                                crewId: crew.id,
-                              })
-                            }
-                            className="w-full h-8 rounded border border-dashed border-border/30 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
-                          >
-                            <Plus
-                              size={10}
-                              className="text-muted/20 group-hover:text-primary"
-                            />
-                          </button>
-                        )}
+                        <div className="w-full h-8 rounded bg-amber-100/50 dark:bg-amber-900/10 border border-dashed border-amber-300/40 dark:border-amber-700/30 flex items-center justify-center">
+                          <Palmtree size={10} className="text-amber-400/40" />
+                        </div>
                       </td>
                     );
-                  })}
-                </tr>
-              );
-            })}
+                  }
+
+                  return (
+                    <td
+                      key={day.toISOString()}
+                      className={`p-1 border-b border-border border-l border-l-border/50 align-top ${off ? "bg-amber-50/30 dark:bg-amber-900/5" : ""}`}
+                    >
+                      {cellAppts.length > 0 ? (
+                        <div className="space-y-1">
+                          {cellAppts.map((a) => (
+                            <AppointmentCard
+                              key={a.id}
+                              appointment={a}
+                              crew={crew}
+                              compact
+                              onClick={() => setSelectedAppt(a)}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() =>
+                            setScheduleTarget({
+                              date: day,
+                              crewId: crew.id,
+                            })
+                          }
+                          className="w-full h-8 rounded border border-dashed border-border/30 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
+                        >
+                          <Plus
+                            size={10}
+                            className="text-muted/20 group-hover:text-primary"
+                          />
+                        </button>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

@@ -1,4 +1,6 @@
-import { Appointment, AppointmentType, Crew } from "./types";
+import { Appointment, AppointmentType, Crew, TimeOffRequest } from "./types";
+import { parseISO, differenceInWeeks, addDays } from "date-fns";
+import { getTimeOffForDate } from "./store";
 
 interface ValidationResult {
   valid: boolean;
@@ -10,10 +12,25 @@ export function validateAppointment(
   appointment: Partial<Appointment>,
   existingForDay: Appointment[],
   crew: Crew,
-  allCrews: Crew[]
+  allCrews: Crew[],
+  timeOffRequests?: TimeOffRequest[]
 ): ValidationResult {
   const warnings: string[] = [];
   const errors: string[] = [];
+
+  if (appointment.scheduled_date && timeOffRequests) {
+    const offToday = getTimeOffForDate(timeOffRequests, appointment.scheduled_date);
+    const crewMatch = offToday.find((r) => {
+      const torFirst = r.employee_name.split(" ")[0].toLowerCase();
+      const crewFirst = crew.name.split(" ")[0].toLowerCase();
+      const torLast = r.employee_name.split(" ").slice(-1)[0].toLowerCase();
+      const crewLast = crew.name.split(" ").slice(-1)[0].toLowerCase();
+      return crewFirst === torFirst && crewLast.slice(0, 4) === torLast.slice(0, 4);
+    });
+    if (crewMatch) {
+      warnings.push(`${crew.name} has time off scheduled this day`);
+    }
+  }
 
   if (appointment.appointment_type === "tech_measure") {
     const crewAppts = existingForDay.filter(
@@ -26,9 +43,7 @@ export function validateAppointment(
     }
 
     if (appointment.product_count && appointment.product_count > 20) {
-      warnings.push(
-        "Over 20 products — consider assigning 2 techs"
-      );
+      warnings.push("Over 20 products — consider assigning 2 techs");
     }
   }
 
@@ -46,6 +61,14 @@ export function validateAppointment(
       errors.push(
         `${crew.name} is already booked for a full-day install on this date`
       );
+    }
+  }
+
+  if (appointment.appointment_type === "install" && appointment.scheduled_date) {
+    const schedDate = parseISO(appointment.scheduled_date);
+    const weeksOut = differenceInWeeks(schedDate, new Date());
+    if (weeksOut < 2) {
+      warnings.push("Install scheduled less than 2 weeks out — verify materials are ready");
     }
   }
 

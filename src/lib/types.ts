@@ -5,7 +5,14 @@ export type CrewType =
   | "jip"
   | "svc";
 
-export type AppointmentType = "tech_measure" | "install" | "service" | "jip";
+export type AppointmentType =
+  | "tech_measure"
+  | "install"
+  | "service"
+  | "jip"
+  | "lswp"
+  | "hoa"
+  | "paint_stain";
 
 export type AppointmentStatus =
   | "scheduled"
@@ -64,21 +71,30 @@ export interface RForceOrder {
   id: string;
   order_number: string;
   work_order_number: string;
-  status: string | null;
-  appointment_status: string | null;
+  order_status: string | null;
+  wo_status: string | null;
+  work_order_type: string | null;
   customer_name: string | null;
   address: string | null;
   booking_date: string | null;
   scheduled_start: string | null;
   scheduled_end: string | null;
-  work_order_type: string | null;
+  description: string | null;
+  combined_retail_total: number | null;
+  product_count: number | null;
+  total_units: number | null;
+  windows: number | null;
+  patio_doors: number | null;
+  doors: number | null;
   order_owner: string | null;
   sales_rep: string | null;
+  primary_resource: string | null;
+  tech_measure_name: string | null;
   installer: string | null;
+  service_rep: string | null;
   contact_name: string | null;
   email: string | null;
   phones: PhoneEntry[] | null;
-  product_count: number | null;
   csv_import_id: string | null;
   updated_at: string;
 }
@@ -99,9 +115,12 @@ export interface CsvImport {
 
 export type ReconciliationStatus =
   | "unscheduled"
+  | "scheduled_rforce_only"
   | "scheduled_app_only"
   | "scheduled_both"
   | "discrepancy"
+  | "completed"
+  | "cancelled"
   | "not_in_rforce";
 
 export interface ReconciliationResult {
@@ -115,6 +134,13 @@ export interface ReconciliationResult {
   customerName: string;
   address: string;
   salesforceUrl?: string;
+  workOrderType?: string;
+  orderStatus?: string;
+  woStatus?: string;
+  productCount?: number;
+  windows?: number;
+  patioDoors?: number;
+  doors?: number;
 }
 
 export type ViewMode = "day" | "week";

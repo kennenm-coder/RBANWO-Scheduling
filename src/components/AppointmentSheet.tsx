@@ -8,11 +8,11 @@ import {
   X,
   MapPin,
   ExternalLink,
-  Phone,
   Calendar,
   User,
   Hash,
   Clock,
+  Link2,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -71,12 +71,20 @@ export default function AppointmentSheet({
             <div className="text-xl font-bold">
               {appointment.customer_name}
             </div>
-            <span
-              className="inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-medium text-white"
-              style={{ backgroundColor: crew?.color || "#1a73e8" }}
-            >
-              {typeLabel(appointment.appointment_type)}
-            </span>
+            <div className="flex items-center gap-2 mt-1">
+              <span
+                className="inline-block px-2 py-0.5 rounded-full text-xs font-medium text-white"
+                style={{ backgroundColor: crew?.color || "#1a73e8" }}
+              >
+                {typeLabel(appointment.appointment_type)}
+              </span>
+              {appointment.work_order_number && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200">
+                  <Link2 size={10} />
+                  Linked
+                </span>
+              )}
+            </div>
           </div>
 
           <InfoRow icon={<User size={16} />} label="Crew">

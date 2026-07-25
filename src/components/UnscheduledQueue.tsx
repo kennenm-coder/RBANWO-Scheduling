@@ -5,7 +5,9 @@ import { useData } from "./DataProvider";
 import { reconcile } from "@/lib/reconcile";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import ScheduleModal from "./ScheduleModal";
+import LinkModal from "./LinkModal";
 import {
+  Appointment,
   RForceOrder,
   ReconciliationResult,
   ReconciliationStatus,
@@ -13,6 +15,7 @@ import {
 import {
   Calendar,
   ExternalLink,
+  Link2,
   MapPin,
   AlertTriangle,
   CheckCircle2,
@@ -22,12 +25,17 @@ import {
 
 const STATUS_CONFIG: Record<
   ReconciliationStatus,
-  { label: string; color: string; icon: typeof Clock }
+  { label: string; color: string; icon: typeof Clock; hidden?: boolean }
 > = {
   unscheduled: {
     label: "Unscheduled",
     color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200",
     icon: Clock,
+  },
+  scheduled_rforce_only: {
+    label: "rForce Only",
+    color: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-200",
+    icon: AlertTriangle,
   },
   scheduled_app_only: {
     label: "App Only",
@@ -49,21 +57,39 @@ const STATUS_CONFIG: Record<
     color: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-200",
     icon: XCircle,
   },
+  completed: {
+    label: "Completed",
+    color: "bg-gray-100 text-gray-500 dark:bg-gray-900/30 dark:text-gray-400",
+    icon: CheckCircle2,
+    hidden: true,
+  },
+  cancelled: {
+    label: "Cancelled",
+    color: "bg-gray-100 text-gray-400 dark:bg-gray-900/30 dark:text-gray-500",
+    icon: XCircle,
+    hidden: true,
+  },
 };
 
 export default function UnscheduledQueue() {
   const { rforceOrders, appointments, crews } = useData();
   const [filter, setFilter] = useState<ReconciliationStatus | "all">("unscheduled");
   const [scheduleOrder, setScheduleOrder] = useState<RForceOrder | null>(null);
+  const [linkRForceOrder, setLinkRForceOrder] = useState<RForceOrder | null>(null);
+  const [linkAppointment, setLinkAppointment] = useState<Appointment | null>(null);
 
-  const results = reconcile(rforceOrders, appointments, crews);
+  const allResults = reconcile(rforceOrders, appointments, crews);
+
+  const activeResults = allResults.filter(
+    (r) => !STATUS_CONFIG[r.status].hidden
+  );
 
   const filtered =
     filter === "all"
-      ? results
-      : results.filter((r) => r.status === filter);
+      ? activeResults
+      : allResults.filter((r) => r.status === filter);
 
-  const counts = results.reduce(
+  const counts = allResults.reduce(
     (acc, r) => {
       acc[r.status] = (acc[r.status] || 0) + 1;
       return acc;
@@ -71,15 +97,19 @@ export default function UnscheduledQueue() {
     {} as Record<string, number>
   );
 
+  const visibleStatuses = (
+    Object.entries(STATUS_CONFIG) as [ReconciliationStatus, typeof STATUS_CONFIG[ReconciliationStatus]][]
+  ).filter(([, cfg]) => !cfg.hidden);
+
   return (
     <div className="flex-1 overflow-auto">
       <div className="flex gap-1 px-4 py-3 overflow-x-auto border-b border-border">
         <FilterChip
-          label={`All (${results.length})`}
+          label={`All (${activeResults.length})`}
           active={filter === "all"}
           onClick={() => setFilter("all")}
         />
-        {(Object.entries(STATUS_CONFIG) as [ReconciliationStatus, typeof STATUS_CONFIG[ReconciliationStatus]][]).map(
+        {visibleStatuses.map(
           ([key, cfg]) => (
             <FilterChip
               key={key}
@@ -122,8 +152,28 @@ export default function UnscheduledQueue() {
                     <MapPin size={10} />
                     <span className="truncate">{item.address}</span>
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-muted mt-1">
+                  <div className="flex items-center gap-3 text-xs text-muted mt-1 flex-wrap">
+                    {item.workOrderType && (
+                      <span className="font-medium">{item.workOrderType}</span>
+                    )}
                     <span>WO: {item.workOrderNumber}</span>
+                    {item.woStatus && (
+                      <span className="italic">{item.woStatus}</span>
+                    )}
+                    {item.productCount != null && item.productCount > 0 && (
+                      <span>
+                        {item.productCount} products
+                        {(() => {
+                          const parts: string[] = [];
+                          if (item.windows) parts.push(`${item.windows}W`);
+                          if (item.patioDoors) parts.push(`${item.patioDoors}PD`);
+                          if (item.doors) parts.push(`${item.doors}D`);
+                          return parts.length > 0 ? ` (${parts.join("/")})` : "";
+                        })()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-muted mt-0.5">
                     {item.appDate && (
                       <span>App: {item.appDate}</span>
                     )}
@@ -133,21 +183,59 @@ export default function UnscheduledQueue() {
                     {item.appCrew && (
                       <span>Crew: {item.appCrew}</span>
                     )}
+                    {item.rforceCrew && (
+                      <span>Assigned: {item.rforceCrew}</span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-1 ml-2 shrink-0">
-                  {item.status === "unscheduled" && (
+                  {(item.status === "unscheduled" || item.status === "scheduled_rforce_only") && (
+                    <>
+                      <button
+                        onClick={() => {
+                          const rf = rforceOrders.find(
+                            (r) =>
+                              r.work_order_number === item.workOrderNumber
+                          );
+                          if (rf) setScheduleOrder(rf);
+                        }}
+                        className="px-3 py-1.5 bg-primary text-white text-xs rounded-lg hover:opacity-90"
+                      >
+                        Schedule
+                      </button>
+                      <button
+                        onClick={() => {
+                          const rf = rforceOrders.find(
+                            (r) =>
+                              r.work_order_number === item.workOrderNumber
+                          );
+                          if (rf) setLinkRForceOrder(rf);
+                        }}
+                        className="px-2 py-1.5 border border-border text-xs rounded-lg hover:bg-surface flex items-center gap-1"
+                        title="Link to existing app appointment"
+                      >
+                        <Link2 size={12} />
+                        Link
+                      </button>
+                    </>
+                  )}
+                  {item.status === "not_in_rforce" && (
                     <button
                       onClick={() => {
-                        const rf = rforceOrders.find(
-                          (r) =>
-                            r.work_order_number === item.workOrderNumber
+                        const appt = appointments.find(
+                          (a) =>
+                            a.work_order_number === item.workOrderNumber ||
+                            (!a.work_order_number &&
+                              a.customer_name === item.customerName &&
+                              a.status !== "cancelled")
                         );
-                        if (rf) setScheduleOrder(rf);
+                        if (appt) setLinkAppointment(appt);
                       }}
-                      className="px-3 py-1.5 bg-primary text-white text-xs rounded-lg hover:opacity-90"
+                      className="px-2 py-1.5 border border-border text-xs rounded-lg hover:bg-surface flex items-center gap-1"
+                      title="Link to rForce record"
                     >
-                      Schedule
+                      <Link2 size={12} />
+                      Link
                     </button>
                   )}
                   <button
@@ -174,6 +262,22 @@ export default function UnscheduledQueue() {
           date={new Date()}
           prefill={scheduleOrder}
           onClose={() => setScheduleOrder(null)}
+        />
+      )}
+
+      {linkRForceOrder && (
+        <LinkModal
+          mode="link_to_app"
+          rforceOrder={linkRForceOrder}
+          onClose={() => setLinkRForceOrder(null)}
+        />
+      )}
+
+      {linkAppointment && (
+        <LinkModal
+          mode="link_to_rforce"
+          appointment={linkAppointment}
+          onClose={() => setLinkAppointment(null)}
         />
       )}
     </div>

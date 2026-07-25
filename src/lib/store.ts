@@ -168,6 +168,20 @@ export async function createCsvImport(
   return data as CsvImport | null;
 }
 
+export async function linkAppointmentToRForce(
+  appointmentId: string,
+  version: number,
+  rforceOrder: RForceOrder
+): Promise<Appointment | null> {
+  return updateAppointment(appointmentId, version, {
+    work_order_number: rforceOrder.work_order_number,
+    order_number: rforceOrder.order_number,
+    salesforce_url: rforceOrder.work_order_number
+      ? `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${rforceOrder.work_order_number}`
+      : null,
+  });
+}
+
 // ── Time Off (read from Duck Force table) ──
 
 export async function fetchTimeOffRequests(): Promise<TimeOffRequest[]> {
@@ -178,4 +192,15 @@ export async function fetchTimeOffRequests(): Promise<TimeOffRequest[]> {
     .select("*")
     .order("start_date", { ascending: true });
   return (data as TimeOffRequest[]) ?? [];
+}
+
+export function getTimeOffForDate(
+  requests: TimeOffRequest[],
+  dateStr: string
+): TimeOffRequest[] {
+  return requests.filter((r) => {
+    const start = r.start_date;
+    const end = r.end_date || r.start_date;
+    return dateStr >= start && dateStr <= end;
+  });
 }

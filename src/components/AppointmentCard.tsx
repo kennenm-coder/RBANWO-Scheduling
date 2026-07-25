@@ -2,7 +2,7 @@
 
 import { Appointment, Crew } from "@/lib/types";
 import { typeLabel } from "@/lib/calendar-utils";
-import { MapPin, ExternalLink, User } from "lucide-react";
+import { MapPin, Link2 } from "lucide-react";
 
 interface Props {
   appointment: Appointment;
@@ -25,8 +25,11 @@ export default function AppointmentCard({
       className="rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-white text-xs leading-tight overflow-hidden"
       style={{ backgroundColor: bgColor }}
     >
-      <div className="font-semibold truncate">
+      <div className="font-semibold truncate flex items-center gap-1">
         {appointment.customer_name}
+        {appointment.work_order_number && (
+          <Link2 size={10} className="shrink-0 opacity-70" />
+        )}
       </div>
       {!compact && (
         <>

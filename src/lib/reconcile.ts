@@ -7,6 +7,19 @@ import {
 } from "./types";
 import { buildSalesforceUrl } from "./salesforce";
 
+const CLOSED_WO_STATUSES = new Set([
+  "Appt Complete / Closed",
+]);
+
+const CANCELLED_WO_STATUSES = new Set([
+  "Canceled",
+]);
+
+const SCHEDULED_WO_STATUSES = new Set([
+  "Scheduled & Assigned",
+  "Scheduled",
+]);
+
 export function reconcile(
   rforceOrders: RForceOrder[],
   appointments: Appointment[],
@@ -20,28 +33,35 @@ export function reconcile(
     }
   }
 
-  const rforceByWo = new Map<string, RForceOrder>();
-  for (const r of rforceOrders) {
-    rforceByWo.set(r.work_order_number, r);
-  }
-
   const results: ReconciliationResult[] = [];
   const seen = new Set<string>();
 
   for (const rf of rforceOrders) {
     seen.add(rf.work_order_number);
     const appt = apptByWo.get(rf.work_order_number);
+    const woStatus = rf.wo_status || "";
 
     let status: ReconciliationStatus;
-    if (!appt) {
-      status = "unscheduled";
-    } else if (!rf.scheduled_start) {
-      status = "scheduled_app_only";
+
+    if (CLOSED_WO_STATUSES.has(woStatus)) {
+      status = "completed";
+    } else if (CANCELLED_WO_STATUSES.has(woStatus)) {
+      status = "cancelled";
+    } else if (appt) {
+      if (!rf.scheduled_start) {
+        status = "scheduled_app_only";
+      } else {
+        const rforceDate = rf.scheduled_start.split("T")[0];
+        status = rforceDate === appt.scheduled_date ? "scheduled_both" : "discrepancy";
+      }
+    } else if (SCHEDULED_WO_STATUSES.has(woStatus)) {
+      status = "scheduled_rforce_only";
     } else {
-      const rforceDate = rf.scheduled_start.split("T")[0];
-      const appDate = appt.scheduled_date;
-      status = rforceDate === appDate ? "scheduled_both" : "discrepancy";
+      status = "unscheduled";
     }
+
+    const assignedTo =
+      rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
 
     results.push({
       orderNumber: rf.order_number,
@@ -50,10 +70,17 @@ export function reconcile(
       appDate: appt?.scheduled_date,
       rforceDate: rf.scheduled_start?.split("T")[0],
       appCrew: appt ? crewMap.get(appt.crew_id) : undefined,
-      rforceCrew: rf.installer || undefined,
+      rforceCrew: assignedTo || undefined,
       customerName: rf.customer_name || "",
       address: rf.address || "",
       salesforceUrl: buildSalesforceUrl(rf.work_order_number),
+      workOrderType: rf.work_order_type || undefined,
+      orderStatus: rf.order_status || undefined,
+      woStatus: rf.wo_status || undefined,
+      productCount: rf.product_count || undefined,
+      windows: rf.windows || undefined,
+      patioDoors: rf.patio_doors || undefined,
+      doors: rf.doors || undefined,
     });
   }
 

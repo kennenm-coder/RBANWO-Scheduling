@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
 import AppointmentSheet from "./AppointmentSheet";
@@ -17,7 +17,9 @@ import {
   INSTALL_TIME_BLOCKS,
   timeBlockLabel,
 } from "@/lib/calendar-utils";
-import { Plus } from "lucide-react";
+import { getTimeOffForDate } from "@/lib/store";
+import { Plus, Palmtree } from "lucide-react";
+import { format } from "date-fns";
 
 interface Props {
   date: Date;
@@ -28,13 +30,36 @@ export default function CrewLaneDayView({
   date,
   filterType = "all",
 }: Props) {
-  const { crews, appointments } = useData();
+  const { crews, appointments, timeOffRequests } = useData();
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
     block: TimeBlock;
   } | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
+
+  const dateStr = format(date, "yyyy-MM-dd");
+  const offToday = useMemo(
+    () => getTimeOffForDate(timeOffRequests, dateStr),
+    [timeOffRequests, dateStr]
+  );
+
+  const offNames = useMemo(() => {
+    return new Set(offToday.map((r) => r.employee_name.toLowerCase()));
+  }, [offToday]);
+
+  function isCrewOff(crewName: string): boolean {
+    const lower = crewName.toLowerCase();
+    if (offNames.has(lower)) return true;
+    const crewFirst = crewName.split(" ")[0].toLowerCase();
+    const crewLast = crewName.split(" ").slice(-1)[0].toLowerCase();
+    for (const r of offToday) {
+      const torFirst = r.employee_name.split(" ")[0].toLowerCase();
+      const torLast = r.employee_name.split(" ").slice(-1)[0].toLowerCase();
+      if (crewFirst === torFirst && crewLast.slice(0, 4) === torLast.slice(0, 4)) return true;
+    }
+    return false;
+  }
 
   const filteredCrews = crews.filter((c) => {
     if (filterType === "all") return true;
@@ -69,6 +94,7 @@ export default function CrewLaneDayView({
             timeBlocks={MEASURE_TIME_BLOCKS}
             date={date}
             appointments={appointments}
+            isCrewOff={isCrewOff}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -84,6 +110,7 @@ export default function CrewLaneDayView({
             timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
+            isCrewOff={isCrewOff}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -128,6 +155,7 @@ function CrewSection({
   timeBlocks,
   date,
   appointments,
+  isCrewOff,
   onCardClick,
   onCellClick,
 }: {
@@ -136,6 +164,7 @@ function CrewSection({
   timeBlocks: TimeBlock[];
   date: Date;
   appointments: Appointment[];
+  isCrewOff: (name: string) => boolean;
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
 }) {
@@ -148,76 +177,100 @@ function CrewSection({
         <table className="w-full border-collapse min-w-[600px]">
           <thead>
             <tr>
-              <th className="w-24 p-2 text-xs text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
-                Time
+              <th className="w-36 p-2 text-xs text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
+                Crew
               </th>
-              {crews.map((crew) => (
+              {timeBlocks.map((block) => (
                 <th
-                  key={crew.id}
+                  key={block}
                   className="p-2 text-xs font-medium text-center border-b border-border min-w-[140px]"
                 >
-                  <div className="flex items-center justify-center gap-1.5">
-                    <div
-                      className="w-3 h-3 rounded-full shrink-0"
-                      style={{ backgroundColor: crew.color }}
-                    />
-                    <span className="truncate">{crew.name}</span>
-                  </div>
-                  {crew.notes && (
-                    <div className="text-[10px] text-muted font-normal mt-0.5">
-                      {crew.notes}
-                    </div>
-                  )}
+                  {timeBlockLabel(block)}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {timeBlocks.map((block) => (
-              <tr key={block}>
-                <td className="p-2 text-xs text-muted border-b border-border whitespace-nowrap sticky left-0 bg-background z-10">
-                  {timeBlockLabel(block)}
-                </td>
-                {crews.map((crew) => {
-                  const cellAppts = getAppointmentsForCrewAndDay(
-                    appointments,
-                    crew.id,
-                    date
-                  ).filter((a) => a.time_block === block);
-
-                  return (
-                    <td
-                      key={crew.id}
-                      className="p-1 border-b border-border border-l border-l-border/50 align-top min-h-[60px]"
-                    >
-                      {cellAppts.length > 0 ? (
-                        <div className="space-y-1">
-                          {cellAppts.map((a) => (
-                            <AppointmentCard
-                              key={a.id}
-                              appointment={a}
-                              crew={crew}
-                              compact={timeBlocks.length > 1}
-                              onClick={() => onCardClick(a)}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => onCellClick(crew.id, block)}
-                          className="w-full h-12 rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
-                        >
-                          <Plus
-                            size={14}
-                            className="text-muted/30 group-hover:text-primary"
-                          />
-                        </button>
+            {crews.map((crew) => {
+              const off = isCrewOff(crew.name);
+              return (
+                <tr key={crew.id}>
+                  <td className={`p-2 text-xs font-medium border-b border-border whitespace-nowrap sticky left-0 z-10 ${off ? "bg-amber-50 dark:bg-amber-900/10" : "bg-background"}`}>
+                    <div className="flex items-center gap-1.5">
+                      <div
+                        className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
+                        style={{ backgroundColor: crew.color }}
+                      />
+                      <span className={off ? "opacity-50 line-through" : ""}>{crew.name}</span>
+                      {off && (
+                        <Palmtree size={12} className="text-amber-500 shrink-0" />
                       )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                    </div>
+                    {!off && crew.notes && (
+                      <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">
+                        {crew.notes}
+                      </div>
+                    )}
+                    {off && (
+                      <div className="text-[10px] text-amber-600 dark:text-amber-400 font-normal mt-0.5 pl-[18px]">
+                        Time Off
+                      </div>
+                    )}
+                  </td>
+                  {timeBlocks.map((block) => {
+                    const cellAppts = getAppointmentsForCrewAndDay(
+                      appointments,
+                      crew.id,
+                      date
+                    ).filter((a) => a.time_block === block);
+
+                    if (off && cellAppts.length === 0) {
+                      return (
+                        <td
+                          key={block}
+                          className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-50/50 dark:bg-amber-900/5"
+                        >
+                          <div className="w-full h-12 rounded-lg bg-amber-100/50 dark:bg-amber-900/10 border border-dashed border-amber-300/40 dark:border-amber-700/30 flex items-center justify-center">
+                            <Palmtree size={12} className="text-amber-400/40" />
+                          </div>
+                        </td>
+                      );
+                    }
+
+                    return (
+                      <td
+                        key={block}
+                        className={`p-1 border-b border-border border-l border-l-border/50 align-top min-h-[60px] ${off ? "bg-amber-50/30 dark:bg-amber-900/5" : ""}`}
+                      >
+                        {cellAppts.length > 0 ? (
+                          <div className="space-y-1">
+                            {cellAppts.map((a) => (
+                              <AppointmentCard
+                                key={a.id}
+                                appointment={a}
+                                crew={crew}
+                                compact={timeBlocks.length > 1}
+                                onClick={() => onCardClick(a)}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => onCellClick(crew.id, block)}
+                            className="w-full h-12 rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
+                          >
+                            <Plus
+                              size={14}
+                              className="text-muted/30 group-hover:text-primary"
+                            />
+                          </button>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -1,30 +1,36 @@
 import { parse } from "csv-parse/sync";
 import { RForceOrder, PhoneEntry } from "./types";
-import { buildSalesforceUrl } from "./salesforce";
 
+// Column indices matching the rForce scheduling report
+// Note: two columns are both named "Status" — col 2 is Order Status, col 5 is WO Status
 const COL = {
-  RECORD_STATUS: 0,
+  BOOKING_DATE: 0,
   ORDER_NUMBER: 1,
-  WORK_ORDER_NUMBER: 2,
-  ADDRESS: 3,
-  BOOKING_DATE: 4,
-  CUSTOMER_NAME: 5,
-  ORDER_OWNER: 6,
-  SALES_REP: 7,
-  TECH_MEASURE: 8,
-  INSTALLER: 9,
-  SERVICE_REP: 10,
-  PRIMARY_RESOURCE: 11,
-  APPOINTMENT_STATUS: 12,
-  SCHEDULED_START: 13,
-  SCHEDULED_END: 14,
-  CONTACT_NAME: 15,
-  EMAIL: 16,
-  MOBILE_PHONE: 17,
-  HOME_PHONE: 18,
-  BUSINESS_PHONE: 19,
-  SERVICE_DESCRIPTION: 20,
-  WORK_ORDER_TYPE: 21,
+  ORDER_STATUS: 2,
+  WORK_ORDER_TYPE: 3,
+  WORK_ORDER_NUMBER: 4,
+  WO_STATUS: 5,
+  SCHEDULED_START: 6,
+  SCHEDULED_END: 7,
+  DESCRIPTION: 8,
+  COMBINED_RETAIL_TOTAL: 9,
+  PRODUCT_COUNT: 10,
+  TOTAL_UNITS: 11,
+  WINDOWS: 12,
+  PATIO_DOORS: 13,
+  DOORS: 14,
+  ORDER_OWNER: 15,
+  SALES_REP: 16,
+  PRIMARY_RESOURCE: 17,
+  TECH_MEASURE_NAME: 18,
+  INSTALLER_NAME: 19,
+  SERVICE_NAME: 20,
+  CONTACT_NAME: 21,
+  ADDRESS: 22,
+  HOME_PHONE: 23,
+  MOBILE_PHONE: 24,
+  BUSINESS_PHONE: 25,
+  EMAIL: 26,
 } as const;
 
 function val(row: string[], col: number): string {
@@ -37,6 +43,18 @@ function parseDate(raw: string): string | null {
   if (isNaN(d.getTime())) return null;
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function parseNum(raw: string): number | null {
+  if (!raw) return null;
+  const n = parseFloat(raw.replace(/,/g, ""));
+  return isNaN(n) ? null : n;
+}
+
+function parseIntVal(raw: string): number | null {
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  return isNaN(n) ? null : n;
 }
 
 function normalizePhone(raw: string): string {
@@ -55,8 +73,8 @@ function formatPhone(digits: string): string {
 }
 
 function deduplicatePhones(
-  mobile: string,
   home: string,
+  mobile: string,
   business: string
 ): PhoneEntry[] {
   const seen = new Set<string>();
@@ -111,26 +129,34 @@ export function parseCsv(csvText: string): Omit<RForceOrder, "updated_at">[] {
       id: woNum,
       order_number: val(row, COL.ORDER_NUMBER),
       work_order_number: woNum,
-      status: val(row, COL.RECORD_STATUS),
-      appointment_status:
-        val(row, COL.APPOINTMENT_STATUS) || val(row, COL.RECORD_STATUS),
-      customer_name: val(row, COL.CUSTOMER_NAME),
-      address: val(row, COL.ADDRESS),
+      order_status: val(row, COL.ORDER_STATUS),
+      wo_status: val(row, COL.WO_STATUS),
+      work_order_type: val(row, COL.WORK_ORDER_TYPE) || null,
+      customer_name: val(row, COL.CONTACT_NAME) || null,
+      address: val(row, COL.ADDRESS) || null,
       booking_date: parseDate(val(row, COL.BOOKING_DATE)),
       scheduled_start: parseDate(val(row, COL.SCHEDULED_START)),
       scheduled_end: parseDate(val(row, COL.SCHEDULED_END)),
-      work_order_type: val(row, COL.WORK_ORDER_TYPE) || "Install",
-      order_owner: val(row, COL.ORDER_OWNER),
-      sales_rep: val(row, COL.SALES_REP),
-      installer: val(row, COL.INSTALLER),
-      contact_name: val(row, COL.CONTACT_NAME),
-      email: val(row, COL.EMAIL),
+      description: val(row, COL.DESCRIPTION) || null,
+      combined_retail_total: parseNum(val(row, COL.COMBINED_RETAIL_TOTAL)),
+      product_count: parseIntVal(val(row, COL.PRODUCT_COUNT)),
+      total_units: parseIntVal(val(row, COL.TOTAL_UNITS)),
+      windows: parseIntVal(val(row, COL.WINDOWS)),
+      patio_doors: parseIntVal(val(row, COL.PATIO_DOORS)),
+      doors: parseIntVal(val(row, COL.DOORS)),
+      order_owner: val(row, COL.ORDER_OWNER) || null,
+      sales_rep: val(row, COL.SALES_REP) || null,
+      primary_resource: val(row, COL.PRIMARY_RESOURCE) || null,
+      tech_measure_name: val(row, COL.TECH_MEASURE_NAME) || null,
+      installer: val(row, COL.INSTALLER_NAME) || null,
+      service_rep: val(row, COL.SERVICE_NAME) || null,
+      contact_name: val(row, COL.CONTACT_NAME) || null,
+      email: val(row, COL.EMAIL) || null,
       phones: deduplicatePhones(
-        val(row, COL.MOBILE_PHONE),
         val(row, COL.HOME_PHONE),
+        val(row, COL.MOBILE_PHONE),
         val(row, COL.BUSINESS_PHONE)
       ),
-      product_count: null,
       csv_import_id: null,
     });
   }

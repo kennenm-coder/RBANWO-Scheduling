@@ -39,6 +39,7 @@ export default function ScheduleModal({
   const {
     crews,
     appointments,
+    timeOffRequests,
     createAppointment,
     updateAppointment,
   } = useData();
@@ -108,10 +109,12 @@ export default function ScheduleModal({
           time_block: selectedBlock,
           product_count: productCount ? parseInt(productCount) : null,
           crew_id: selectedCrewId,
+          scheduled_date: selectedDate,
         },
         dayAppts,
         selectedCrew,
-        crews
+        crews,
+        timeOffRequests
       )
     : null;
 
@@ -226,6 +229,9 @@ export default function ScheduleModal({
                 <option value="install">Install</option>
                 <option value="service">Service</option>
                 <option value="jip">JIP</option>
+                <option value="lswp">LSWP</option>
+                <option value="hoa">HOA</option>
+                <option value="paint_stain">Paint/Stain</option>
               </select>
             </div>
             <div>
