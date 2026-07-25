@@ -24,8 +24,11 @@ import {
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { openSalesforce } from "@/lib/salesforce";
-import { Plus, Palmtree } from "lucide-react";
+import { Plus, Palmtree, MapPinned } from "lucide-react";
 import { format } from "date-fns";
+import dynamic from "next/dynamic";
+
+const SectionMap = dynamic(() => import("./SectionMap"), { ssr: false });
 
 interface Props {
   date: Date;
@@ -187,13 +190,29 @@ function CrewSection({
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
 }) {
+  const [showMap, setShowMap] = useState(false);
+
   return (
     <div className="mb-6">
-      <h3 className="px-4 py-2 text-xs font-semibold text-muted uppercase tracking-wider bg-surface sticky top-0 z-10">
-        {title}
-      </h3>
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse min-w-[600px]">
+      <div className="flex items-center justify-between px-4 py-2 bg-surface sticky top-0 z-10">
+        <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">
+          {title}
+        </h3>
+        <button
+          onClick={() => setShowMap(!showMap)}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+            showMap
+              ? "bg-primary text-white"
+              : "text-muted hover:bg-border hover:text-foreground"
+          }`}
+        >
+          <MapPinned size={12} />
+          Map
+        </button>
+      </div>
+      <div className={showMap ? "flex" : ""}>
+        <div className={`overflow-x-auto ${showMap ? "flex-1 min-w-0" : "w-full"}`}>
+          <table className="w-full border-collapse min-w-[600px]">
           <thead>
             <tr>
               <th className="w-36 p-2 text-xs text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
@@ -313,6 +332,12 @@ function CrewSection({
             })}
           </tbody>
         </table>
+      </div>
+      {showMap && (
+        <div className="w-[320px] shrink-0 border-l border-border h-[300px]">
+          <SectionMap date={date} crews={crews} />
+        </div>
+      )}
       </div>
     </div>
   );
