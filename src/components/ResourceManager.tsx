@@ -212,7 +212,7 @@ export default function ResourceManager() {
                   <>
                     <button
                       onClick={() => setLinkingAlias(u.name)}
-                      className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                      className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-blue-600 text-white hover:bg-blue-700 rounded transition-colors"
                       title="Add as alias to existing resource"
                     >
                       <Link2 size={10} />
