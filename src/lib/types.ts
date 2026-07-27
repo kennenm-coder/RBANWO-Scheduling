@@ -33,7 +33,7 @@ export type TimeBlock =
   | "4-6"
   | "full_day";
 
-export type ManagesType = "install" | "service" | "jip";
+export type ManagesType = "install" | "service" | "jip" | "measure";
 
 export interface Crew {
   id: string;

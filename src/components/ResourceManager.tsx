@@ -23,6 +23,7 @@ const TYPE_ORDER: CrewType[] = [
 ];
 
 const MANAGES_OPTIONS: { value: ManagesType; label: string }[] = [
+  { value: "measure", label: "Measure" },
   { value: "install", label: "Install" },
   { value: "service", label: "Service" },
   { value: "jip", label: "JIP" },
@@ -77,9 +78,9 @@ export default function ResourceManager() {
 
   const handleSave = async () => {
     if (!editing?.name || !editing?.crew_type) return;
-    const payload: Record<string, unknown> = {
+    const payload: Partial<Crew> & { name: string; crew_type: string } = {
       name: editing.name,
-      crew_type: editing.crew_type,
+      crew_type: editing.crew_type as Crew["crew_type"],
       color: editing.color || "#2563eb",
       notes: editing.notes || "",
       aliases: editing.aliases || [],
@@ -90,7 +91,7 @@ export default function ResourceManager() {
     if (editing.manages && editing.manages.length > 0) payload.manages = editing.manages;
     if (editing.primary_crew_id) payload.primary_crew_id = editing.primary_crew_id;
     try {
-      await upsertCrew(payload as Crew & { name: string; crew_type: string });
+      await upsertCrew(payload);
       setEditing(null);
       setAliasInput("");
       await refreshData();

@@ -112,6 +112,7 @@ export default function CrewLaneDayView({
   );
 
   const managementCrews = activeCrews.filter((c) => c.crew_type === "management");
+  const measureManagers = managementCrews.filter((c) => c.manages?.includes("measure"));
   const installManagers = managementCrews.filter((c) => c.manages?.includes("install"));
   const serviceManagers = managementCrews.filter((c) => c.manages?.includes("service"));
   const jipManagers = managementCrews.filter((c) => c.manages?.includes("jip"));
@@ -188,6 +189,24 @@ export default function CrewLaneDayView({
             title="JIP Seconds"
             crews={jipSeconds}
             timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
+
+      {(filterType === "all" || filterType === "tech_measure") &&
+        measureManagers.length > 0 && (
+          <CrewSection
+            title="Measure Management"
+            crews={measureManagers}
+            timeBlocks={MEASURE_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
