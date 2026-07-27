@@ -6,7 +6,7 @@ import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
 import AppointmentSheet from "./AppointmentSheet";
 import ScheduleModal from "./ScheduleModal";
-import { Appointment, Crew } from "@/lib/types";
+import { Appointment, Crew, CrewType } from "@/lib/types";
 import {
   getWeekDays,
   getAppointmentsForCrewAndDay,
@@ -86,16 +86,21 @@ export default function CrewLaneWeekView({
     return false;
   }
 
-  const activeCrews = crews.filter((c) => c.is_active && c.crew_type !== "misc" && c.crew_type !== "second" && c.crew_type !== "management");
-  const installCrews = activeCrews.filter(
-    (c) =>
-      c.crew_type === "install_in_house" ||
-      c.crew_type === "install_sub" ||
-      c.crew_type === "jip" ||
-      c.crew_type === "svc"
-  );
-  const measureCrews = activeCrews.filter((c) => c.crew_type === "measure_tech");
-  const allCrews = [...measureCrews, ...installCrews];
+  function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
+    if (types.includes(crew.crew_type)) return true;
+    if (crew.additional_types) {
+      return crew.additional_types.some((t) => types.includes(t));
+    }
+    return false;
+  }
+
+  const activeCrews = crews.filter((c) => c.is_active && !crewHasType(c, "misc", "second", "management"));
+  const measureCrews = activeCrews.filter((c) => crewHasType(c, "measure_tech"));
+  const installCrews = activeCrews.filter((c) => crewHasType(c, "install_in_house", "install_sub"));
+  const serviceCrews = activeCrews.filter((c) => crewHasType(c, "svc"));
+  const jipCrews = activeCrews.filter((c) => crewHasType(c, "jip"));
+  const allCrews = [...measureCrews, ...installCrews, ...serviceCrews, ...jipCrews];
+  const uniqueCrews = allCrews.filter((c, i) => allCrews.findIndex((x) => x.id === c.id) === i);
 
   return (
     <div className="flex-1 overflow-auto">
@@ -124,7 +129,7 @@ export default function CrewLaneWeekView({
             </tr>
           </thead>
           <tbody>
-            {allCrews.map((crew) => (
+            {uniqueCrews.map((crew) => (
               <tr key={crew.id}>
                 <td className="p-2 text-xs font-medium border-b border-border sticky left-0 bg-background z-10">
                   <div className="flex items-center gap-1">

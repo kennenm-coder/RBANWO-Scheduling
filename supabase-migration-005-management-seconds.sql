@@ -10,3 +10,6 @@ ALTER TABLE sched_crews ADD COLUMN IF NOT EXISTS manages TEXT[] DEFAULT '{}';
 
 -- Add primary_crew_id for seconds (references the crew they are second to)
 ALTER TABLE sched_crews ADD COLUMN IF NOT EXISTS primary_crew_id UUID REFERENCES sched_crews(id) ON DELETE SET NULL;
+
+-- Add additional_types for resources that serve multiple roles
+ALTER TABLE sched_crews ADD COLUMN IF NOT EXISTS additional_types TEXT[] DEFAULT '{}';

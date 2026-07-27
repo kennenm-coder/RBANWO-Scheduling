@@ -88,6 +88,7 @@ export default function ResourceManager() {
     };
     if (editing.id) payload.id = editing.id;
     if (editing.is_active !== undefined) payload.is_active = editing.is_active;
+    if (editing.additional_types && editing.additional_types.length > 0) payload.additional_types = editing.additional_types;
     if (editing.manages && editing.manages.length > 0) payload.manages = editing.manages;
     if (editing.primary_crew_id) payload.primary_crew_id = editing.primary_crew_id;
     try {
@@ -407,6 +408,34 @@ export default function ResourceManager() {
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
               />
             </div>
+
+            {editing.crew_type !== "management" && editing.crew_type !== "second" && editing.crew_type !== "misc" && (
+              <div>
+                <label className="block text-xs text-muted mb-1">Additional Types</label>
+                <div className="flex flex-wrap gap-2">
+                  {TYPE_ORDER.filter((t) => t !== editing.crew_type && t !== "management" && t !== "second" && t !== "misc").map((t) => {
+                    const active = editing.additional_types?.includes(t);
+                    return (
+                      <button
+                        key={t}
+                        onClick={() => {
+                          const current = editing.additional_types || [];
+                          const next = active ? current.filter((x) => x !== t) : [...current, t];
+                          setEditing({ ...editing, additional_types: next });
+                        }}
+                        className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                          active
+                            ? "bg-cyan-100 dark:bg-cyan-900/30 border-cyan-300 dark:border-cyan-700 text-cyan-700 dark:text-cyan-300"
+                            : "border-border text-muted hover:bg-surface"
+                        }`}
+                      >
+                        {crewTypeLabel(t)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {editing.crew_type === "management" && (
               <div>

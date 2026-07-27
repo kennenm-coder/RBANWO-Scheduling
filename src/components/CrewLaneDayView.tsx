@@ -418,16 +418,27 @@ function CrewSection({
                       </div>
                     )}
                   </td>
-                  {timeBlocks.map((block) => {
-                    const cellAppts = getAppointmentsForCrewAndDay(
+                  {timeBlocks.map((block, blockIdx) => {
+                    const allCrewAppts = getAppointmentsForCrewAndDay(
                       appointments,
                       crew.id,
                       date
-                    ).filter((a) => a.time_block === block)
-                      .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+                    );
+                    const cellAppts = allCrewAppts.filter((a) => {
+                      if (a.time_block === block) return true;
+                      if (timeBlocks.length === 1) return true;
+                      if (blockIdx === 0 && !timeBlocks.includes(a.time_block as TimeBlock)) return true;
+                      return false;
+                    }).sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
 
                     const cellRForce = rforceItems.filter(
-                      (r) => r.crewId === crew.id && r.timeBlock === block
+                      (r) => {
+                        if (r.crewId !== crew.id) return false;
+                        if (r.timeBlock === block) return true;
+                        if (timeBlocks.length === 1) return true;
+                        if (blockIdx === 0 && !timeBlocks.includes(r.timeBlock)) return true;
+                        return false;
+                      }
                     );
 
                     const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
