@@ -86,6 +86,7 @@ export default function CrewLaneDayView({
   }
 
   const filteredCrews = crews.filter((c) => {
+    if (c.crew_type === "misc") return false;
     if (filterType === "all") return true;
     if (filterType === "tech_measure") return c.crew_type === "measure_tech";
     if (filterType === "install")

@@ -3,7 +3,8 @@ export type CrewType =
   | "install_in_house"
   | "install_sub"
   | "jip"
-  | "svc";
+  | "svc"
+  | "misc";
 
 export type AppointmentType =
   | "tech_measure"

@@ -182,6 +182,8 @@ export function crewTypeLabel(type: Crew["crew_type"]): string {
       return "JIP";
     case "svc":
       return "Service";
+    case "misc":
+      return "Misc";
   }
 }
 

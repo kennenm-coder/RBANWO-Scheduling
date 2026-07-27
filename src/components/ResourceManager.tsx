@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import { upsertCrew, deactivateCrew } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
 import { Crew, CrewType } from "@/lib/types";
-import { Plus, Pencil, Trash2, X, Save, GripVertical } from "lucide-react";
+import { findUnmatchedNames } from "@/lib/unmatched-resources";
+import { Plus, Pencil, Trash2, X, Save, GripVertical, AlertTriangle, UserPlus } from "lucide-react";
 
 const TYPE_ORDER: CrewType[] = [
   "measure_tech",
@@ -13,12 +14,30 @@ const TYPE_ORDER: CrewType[] = [
   "install_sub",
   "jip",
   "svc",
+  "misc",
 ];
 
 export default function ResourceManager() {
-  const { crews, refreshData } = useData();
+  const { crews, rforceOrders, timeOffRequests, refreshData } = useData();
   const [editing, setEditing] = useState<Partial<Crew> | null>(null);
   const [aliasInput, setAliasInput] = useState("");
+
+  const unmatched = useMemo(
+    () => findUnmatchedNames(crews, rforceOrders, timeOffRequests),
+    [crews, rforceOrders, timeOffRequests]
+  );
+
+  const handleQuickAdd = (name: string, type: CrewType) => {
+    setEditing({
+      name,
+      crew_type: type,
+      color: type === "misc" ? "#6b7280" : "#2563eb",
+      notes: "",
+      aliases: [],
+      sort_order: type === "misc" ? 99 : 50,
+    });
+    setAliasInput("");
+  };
 
   const grouped = crews.reduce(
     (acc, c) => {
@@ -80,6 +99,37 @@ export default function ResourceManager() {
           Add Resource
         </button>
       </div>
+
+      {unmatched.length > 0 && (
+        <div className="mb-6 border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle size={14} className="text-red-500" />
+            <h4 className="text-xs font-semibold text-red-700 dark:text-red-400 uppercase tracking-wider">
+              {unmatched.length} Unmatched {unmatched.length === 1 ? "Name" : "Names"}
+            </h4>
+          </div>
+          <p className="text-xs text-red-600/70 dark:text-red-400/60 mb-3">
+            These names appear in rForce or time-off but don&apos;t match any resource. Add them or create an alias on an existing resource.
+          </p>
+          <div className="space-y-1.5">
+            {unmatched.map((u) => (
+              <div key={u.name} className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-background rounded-lg">
+                <span className="text-sm flex-1">{u.name}</span>
+                <span className="text-[10px] text-muted px-1.5 py-0.5 bg-surface rounded">
+                  {u.source === "rforce" ? "rForce" : "Time Off"}
+                </span>
+                <button
+                  onClick={() => handleQuickAdd(u.name, "misc")}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-red-600 hover:bg-red-100 dark:hover:bg-red-900/20 rounded transition-colors"
+                >
+                  <UserPlus size={10} />
+                  Add
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {TYPE_ORDER.map((type) => {
         const members = grouped[type];
