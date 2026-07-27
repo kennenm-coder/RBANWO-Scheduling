@@ -19,9 +19,6 @@ import {
   getRForceItemsForDay,
   checkDiscrepancy,
   RForceCalendarItem,
-  MEASURE_TIME_BLOCKS,
-  INSTALL_TIME_BLOCKS,
-  timeBlockLabel,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { openSalesforce } from "@/lib/salesforce";
@@ -126,7 +123,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="Measure Techs"
             crews={measureCrews}
-            timeBlocks={MEASURE_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -144,7 +140,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="Measure Management"
             crews={measureManagers}
-            timeBlocks={MEASURE_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -163,7 +158,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="Install"
             crews={installCrews}
-            timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -180,7 +174,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="Install Seconds"
             crews={installSeconds}
-            timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -197,7 +190,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="Install Management"
             crews={installManagers}
-            timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -216,7 +208,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="Service"
             crews={serviceCrews}
-            timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -233,7 +224,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="Service Management"
             crews={serviceManagers}
-            timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -252,7 +242,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="JIP"
             crews={jipCrews}
-            timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -269,7 +258,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="JIP Seconds"
             crews={jipSeconds}
-            timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -286,7 +274,6 @@ export default function CrewLaneDayView({
           <CrewSection
             title="JIP Management"
             crews={jipManagers}
-            timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -333,7 +320,6 @@ export default function CrewLaneDayView({
 function CrewSection({
   title,
   crews,
-  timeBlocks,
   date,
   appointments,
   rforceOrders,
@@ -344,7 +330,6 @@ function CrewSection({
 }: {
   title: string;
   crews: Crew[];
-  timeBlocks: TimeBlock[];
   date: Date;
   appointments: Appointment[];
   rforceOrders: RForceOrder[];
@@ -374,145 +359,103 @@ function CrewSection({
         </button>
       </div>
       <div className={showMap ? "flex" : ""}>
-        <div className={`overflow-x-auto ${showMap ? "flex-1 min-w-0" : "w-full"}`}>
-          <table className="w-full border-collapse min-w-[600px]">
-          <thead>
-            <tr>
-              <th className="w-36 p-2 text-xs text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
-                Crew
-              </th>
-              {timeBlocks.map((block) => (
-                <th
-                  key={block}
-                  className="p-2 text-xs font-medium text-center border-b border-border min-w-[140px]"
-                >
-                  {timeBlockLabel(block)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {crews.map((crew) => {
-              const off = isCrewOff(crew);
-              return (
-                <tr key={crew.id}>
-                  <td className={`p-2 text-xs font-medium border-b border-border whitespace-nowrap sticky left-0 z-10 ${off ? "bg-amber-100 dark:bg-amber-900/40" : "bg-background"}`}>
-                    <div className="flex items-center gap-1.5">
-                      <div
-                        className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
-                        style={{ backgroundColor: crew.color }}
-                      />
-                      <span className={off ? "opacity-60 line-through" : ""}>{crew.name}</span>
-                      {off && (
-                        <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />
-                      )}
-                    </div>
-                    {!off && crew.notes && (
-                      <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">
-                        {crew.notes}
-                      </div>
-                    )}
+        <div className={`${showMap ? "flex-1 min-w-0" : "w-full"}`}>
+          {crews.map((crew) => {
+            const off = isCrewOff(crew);
+            const crewAppts = getAppointmentsForCrewAndDay(
+              appointments,
+              crew.id,
+              date
+            ).sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+
+            const crewRForce = rforceItems.filter((r) => r.crewId === crew.id);
+            const hasContent = crewAppts.length > 0 || crewRForce.length > 0;
+
+            return (
+              <div
+                key={crew.id}
+                className={`flex items-stretch border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : ""}`}
+              >
+                <div className={`w-36 shrink-0 p-2 text-xs font-medium ${off ? "bg-amber-100 dark:bg-amber-900/40" : "bg-background"}`}>
+                  <div className="flex items-center gap-1.5">
+                    <div
+                      className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
+                      style={{ backgroundColor: crew.color }}
+                    />
+                    <span className={off ? "opacity-60 line-through" : ""}>{crew.name}</span>
                     {off && (
-                      <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">
-                        Time Off
-                      </div>
+                      <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />
                     )}
-                  </td>
-                  {timeBlocks.map((block, blockIdx) => {
-                    const allCrewAppts = getAppointmentsForCrewAndDay(
-                      appointments,
-                      crew.id,
-                      date
-                    );
-                    const cellAppts = allCrewAppts.filter((a) => {
-                      if (a.time_block === block) return true;
-                      if (timeBlocks.length === 1) return true;
-                      if (blockIdx === 0 && !timeBlocks.includes(a.time_block as TimeBlock)) return true;
-                      return false;
-                    }).sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
-
-                    const cellRForce = rforceItems.filter(
-                      (r) => {
-                        if (r.crewId !== crew.id) return false;
-                        if (r.timeBlock === block) return true;
-                        if (timeBlocks.length === 1) return true;
-                        if (blockIdx === 0 && !timeBlocks.includes(r.timeBlock)) return true;
-                        return false;
-                      }
-                    );
-
-                    const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
-
-                    if (off && !hasContent) {
-                      return (
-                        <td
-                          key={block}
-                          className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-100/60 dark:bg-amber-900/30"
-                        >
-                          <div className="w-full h-12 rounded-lg bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
-                            <Palmtree size={14} className="text-amber-500/70 dark:text-amber-400/60" />
-                          </div>
-                        </td>
-                      );
-                    }
-
-                    return (
-                      <td
-                        key={block}
-                        className={`p-1 border-b border-border border-l border-l-border/50 align-top min-h-[60px] ${off ? "bg-amber-100/40 dark:bg-amber-900/25" : ""}`}
+                  </div>
+                  {!off && crew.notes && (
+                    <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">
+                      {crew.notes}
+                    </div>
+                  )}
+                  {off && (
+                    <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">
+                      Time Off
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 p-1 min-h-[52px]">
+                  {off && !hasContent ? (
+                    <div className="w-full h-full rounded-lg bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
+                      <Palmtree size={14} className="text-amber-500/70 dark:text-amber-400/60" />
+                    </div>
+                  ) : hasContent ? (
+                    <div className="flex gap-1.5 overflow-x-auto items-start">
+                      {crewAppts.map((a) => (
+                        <div key={a.id} className="shrink-0 w-[200px]">
+                          <AppointmentCard
+                            appointment={a}
+                            crew={crew}
+                            compact
+                            hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
+                            onClick={() => onCardClick(a)}
+                          />
+                        </div>
+                      ))}
+                      {crewRForce.map((rf) => (
+                        <div key={rf.rforceOrder.work_order_number} className="shrink-0 w-[200px]">
+                          <RForceCard
+                            order={rf.rforceOrder}
+                            crew={crew}
+                            compact
+                            onClick={() =>
+                              openSalesforce(
+                                rf.rforceOrder.work_order_number,
+                                rf.rforceOrder.order_number
+                              )
+                            }
+                          />
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => onCellClick(crew.id, "full_day")}
+                        className="shrink-0 w-10 h-10 rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
                       >
-                        {hasContent ? (
-                          <div className="space-y-1">
-                            {cellAppts.map((a) => (
-                              <AppointmentCard
-                                key={a.id}
-                                appointment={a}
-                                crew={crew}
-                                compact={timeBlocks.length > 1}
-                                hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
-                                onClick={() => onCardClick(a)}
-                              />
-                            ))}
-                            {cellRForce.map((rf) => (
-                              <RForceCard
-                                key={rf.rforceOrder.work_order_number}
-                                order={rf.rforceOrder}
-                                crew={crew}
-                                compact={timeBlocks.length > 1}
-                                onClick={() =>
-                                  openSalesforce(
-                                    rf.rforceOrder.work_order_number,
-                                    rf.rforceOrder.order_number
-                                  )
-                                }
-                              />
-                            ))}
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => onCellClick(crew.id, block)}
-                            className="w-full h-12 rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
-                          >
-                            <Plus
-                              size={14}
-                              className="text-muted/30 group-hover:text-primary"
-                            />
-                          </button>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {showMap && (
-        <div className="w-[320px] shrink-0 border-l border-border h-[300px]">
-          <SectionMap date={date} crews={crews} />
+                        <Plus size={14} className="text-muted/30 group-hover:text-primary" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => onCellClick(crew.id, "full_day")}
+                      className="w-full h-full min-h-[44px] rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
+                    >
+                      <Plus size={14} className="text-muted/30 group-hover:text-primary" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
-      )}
+        {showMap && (
+          <div className="w-[320px] shrink-0 border-l border-border h-[300px]">
+            <SectionMap date={date} crews={crews} />
+          </div>
+        )}
       </div>
     </div>
   );
