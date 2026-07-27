@@ -77,10 +77,26 @@ export default function ResourceManager() {
 
   const handleSave = async () => {
     if (!editing?.name || !editing?.crew_type) return;
-    await upsertCrew(editing as Crew & { name: string; crew_type: string });
-    setEditing(null);
-    setAliasInput("");
-    await refreshData();
+    const payload: Record<string, unknown> = {
+      name: editing.name,
+      crew_type: editing.crew_type,
+      color: editing.color || "#2563eb",
+      notes: editing.notes || "",
+      aliases: editing.aliases || [],
+      sort_order: editing.sort_order ?? 99,
+    };
+    if (editing.id) payload.id = editing.id;
+    if (editing.is_active !== undefined) payload.is_active = editing.is_active;
+    if (editing.manages && editing.manages.length > 0) payload.manages = editing.manages;
+    if (editing.primary_crew_id) payload.primary_crew_id = editing.primary_crew_id;
+    try {
+      await upsertCrew(payload as Crew & { name: string; crew_type: string });
+      setEditing(null);
+      setAliasInput("");
+      await refreshData();
+    } catch (err) {
+      alert(`Save failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
   };
 
   const handleDelete = async (id: string) => {

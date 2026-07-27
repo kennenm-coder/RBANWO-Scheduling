@@ -24,11 +24,12 @@ export async function upsertCrew(
 ): Promise<Crew | null> {
   const sb = getSupabase();
   if (!sb) return null;
-  const { data } = await sb
+  const { data, error } = await sb
     .from("sched_crews")
     .upsert({ ...crew, updated_at: new Date().toISOString() })
     .select()
     .single();
+  if (error) throw new Error(error.message);
   return data as Crew | null;
 }
 
