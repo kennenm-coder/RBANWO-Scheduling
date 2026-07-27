@@ -19,6 +19,8 @@ import {
   getRForceItemsForDay,
   checkDiscrepancy,
   RForceCalendarItem,
+  MEASURE_TIME_BLOCKS,
+  timeBlockLabel,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { openSalesforce } from "@/lib/salesforce";
@@ -317,6 +319,24 @@ export default function CrewLaneDayView({
   );
 }
 
+const UNIFIED_BLOCKS: { block: TimeBlock; label: string; weight: number }[] = [
+  { block: "9-10",  label: "9–10 AM",    weight: 1 },
+  { block: "10-12", label: "10 AM–12 PM", weight: 2 },
+  { block: "12-2",  label: "12–2 PM",    weight: 2 },
+  { block: "2-4",   label: "2–4 PM",     weight: 2 },
+  { block: "4-6",   label: "4–6 PM",     weight: 2 },
+];
+
+function apptToBlock(a: { time_block: TimeBlock | null; start_time: string }): TimeBlock {
+  if (a.time_block && a.time_block !== "full_day") return a.time_block;
+  const hour = parseInt(a.start_time?.slice(0, 2) || "8", 10);
+  if (hour < 10) return "9-10";
+  if (hour < 12) return "10-12";
+  if (hour < 14) return "12-2";
+  if (hour < 16) return "2-4";
+  return "4-6";
+}
+
 function CrewSection({
   title,
   crews,
@@ -339,6 +359,7 @@ function CrewSection({
   onCellClick: (crewId: string, block: TimeBlock) => void;
 }) {
   const [showMap, setShowMap] = useState(false);
+  const totalWeight = UNIFIED_BLOCKS.reduce((s, b) => s + b.weight, 0);
 
   return (
     <div className="mb-6">
@@ -359,97 +380,111 @@ function CrewSection({
         </button>
       </div>
       <div className={showMap ? "flex" : ""}>
-        <div className={`${showMap ? "flex-1 min-w-0" : "w-full"}`}>
-          {crews.map((crew) => {
-            const off = isCrewOff(crew);
-            const crewAppts = getAppointmentsForCrewAndDay(
-              appointments,
-              crew.id,
-              date
-            ).sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+        <div className={`overflow-x-auto ${showMap ? "flex-1 min-w-0" : "w-full"}`}>
+          <table className="w-full border-collapse min-w-[600px]">
+            <thead>
+              <tr>
+                <th className="w-36 p-2 text-xs text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
+                  Crew
+                </th>
+                {UNIFIED_BLOCKS.map((b) => (
+                  <th
+                    key={b.block}
+                    className="p-2 text-xs font-medium text-center border-b border-border"
+                    style={{ width: `${(b.weight / totalWeight) * 100}%` }}
+                  >
+                    {b.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {crews.map((crew) => {
+                const off = isCrewOff(crew);
+                const allAppts = getAppointmentsForCrewAndDay(appointments, crew.id, date)
+                  .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
 
-            const crewRForce = rforceItems.filter((r) => r.crewId === crew.id);
-            const hasContent = crewAppts.length > 0 || crewRForce.length > 0;
+                return (
+                  <tr key={crew.id}>
+                    <td className={`p-2 text-xs font-medium border-b border-border whitespace-nowrap sticky left-0 z-10 ${off ? "bg-amber-100 dark:bg-amber-900/40" : "bg-background"}`}>
+                      <div className="flex items-center gap-1.5">
+                        <div
+                          className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
+                          style={{ backgroundColor: crew.color }}
+                        />
+                        <span className={off ? "opacity-60 line-through" : ""}>{crew.name}</span>
+                        {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}
+                      </div>
+                      {!off && crew.notes && (
+                        <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">{crew.notes}</div>
+                      )}
+                      {off && (
+                        <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">Time Off</div>
+                      )}
+                    </td>
+                    {UNIFIED_BLOCKS.map((b) => {
+                      const cellAppts = allAppts.filter((a) => apptToBlock(a) === b.block);
+                      const cellRForce = rforceItems.filter(
+                        (r) => r.crewId === crew.id && r.timeBlock === b.block
+                      );
+                      const fullDayRForce = b.block === "9-10"
+                        ? rforceItems.filter((r) => r.crewId === crew.id && r.timeBlock === "full_day")
+                        : [];
+                      const allRForce = [...cellRForce, ...fullDayRForce];
+                      const hasContent = cellAppts.length > 0 || allRForce.length > 0;
 
-            return (
-              <div
-                key={crew.id}
-                className={`flex items-stretch border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : ""}`}
-              >
-                <div className={`w-36 shrink-0 p-2 text-xs font-medium ${off ? "bg-amber-100 dark:bg-amber-900/40" : "bg-background"}`}>
-                  <div className="flex items-center gap-1.5">
-                    <div
-                      className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
-                      style={{ backgroundColor: crew.color }}
-                    />
-                    <span className={off ? "opacity-60 line-through" : ""}>{crew.name}</span>
-                    {off && (
-                      <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />
-                    )}
-                  </div>
-                  {!off && crew.notes && (
-                    <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">
-                      {crew.notes}
-                    </div>
-                  )}
-                  {off && (
-                    <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">
-                      Time Off
-                    </div>
-                  )}
-                </div>
-                <div className="flex-1 p-1 min-h-[52px]">
-                  {off && !hasContent ? (
-                    <div className="w-full h-full rounded-lg bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
-                      <Palmtree size={14} className="text-amber-500/70 dark:text-amber-400/60" />
-                    </div>
-                  ) : hasContent ? (
-                    <div className="flex gap-1.5 overflow-x-auto items-start">
-                      {crewAppts.map((a) => (
-                        <div key={a.id} className="shrink-0 w-[200px]">
-                          <AppointmentCard
-                            appointment={a}
-                            crew={crew}
-                            compact
-                            hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
-                            onClick={() => onCardClick(a)}
-                          />
-                        </div>
-                      ))}
-                      {crewRForce.map((rf) => (
-                        <div key={rf.rforceOrder.work_order_number} className="shrink-0 w-[200px]">
-                          <RForceCard
-                            order={rf.rforceOrder}
-                            crew={crew}
-                            compact
-                            onClick={() =>
-                              openSalesforce(
-                                rf.rforceOrder.work_order_number,
-                                rf.rforceOrder.order_number
-                              )
-                            }
-                          />
-                        </div>
-                      ))}
-                      <button
-                        onClick={() => onCellClick(crew.id, "full_day")}
-                        className="shrink-0 w-10 h-10 rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
-                      >
-                        <Plus size={14} className="text-muted/30 group-hover:text-primary" />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => onCellClick(crew.id, "full_day")}
-                      className="w-full h-full min-h-[44px] rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
-                    >
-                      <Plus size={14} className="text-muted/30 group-hover:text-primary" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+                      if (off && !hasContent) {
+                        return (
+                          <td key={b.block} className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-100/60 dark:bg-amber-900/30">
+                            <div className="w-full h-12 rounded-lg bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
+                              <Palmtree size={14} className="text-amber-500/70 dark:text-amber-400/60" />
+                            </div>
+                          </td>
+                        );
+                      }
+
+                      return (
+                        <td key={b.block} className={`p-1 border-b border-border border-l border-l-border/50 align-top ${off ? "bg-amber-100/40 dark:bg-amber-900/25" : ""}`}>
+                          {hasContent ? (
+                            <div className="space-y-1">
+                              {cellAppts.map((a) => (
+                                <AppointmentCard
+                                  key={a.id}
+                                  appointment={a}
+                                  crew={crew}
+                                  compact
+                                  hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
+                                  onClick={() => onCardClick(a)}
+                                />
+                              ))}
+                              {allRForce.map((rf) => (
+                                <RForceCard
+                                  key={rf.rforceOrder.work_order_number}
+                                  order={rf.rforceOrder}
+                                  crew={crew}
+                                  compact
+                                  onClick={() =>
+                                    openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number)
+                                  }
+                                />
+                              ))}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => onCellClick(crew.id, b.block)}
+                              className="w-full h-12 rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
+                            >
+                              <Plus size={14} className="text-muted/30 group-hover:text-primary" />
+                            </button>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
         {showMap && (
           <div className="w-[320px] shrink-0 border-l border-border h-[300px]">
