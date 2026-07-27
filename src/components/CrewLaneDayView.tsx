@@ -19,8 +19,6 @@ import {
   getRForceItemsForDay,
   checkDiscrepancy,
   RForceCalendarItem,
-  MEASURE_TIME_BLOCKS,
-  timeBlockLabel,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { openSalesforce } from "@/lib/salesforce";
@@ -319,22 +317,27 @@ export default function CrewLaneDayView({
   );
 }
 
-const UNIFIED_BLOCKS: { block: TimeBlock; label: string; weight: number }[] = [
-  { block: "9-10",  label: "9–10 AM",    weight: 1 },
-  { block: "10-12", label: "10 AM–12 PM", weight: 2 },
-  { block: "12-2",  label: "12–2 PM",    weight: 2 },
-  { block: "2-4",   label: "2–4 PM",     weight: 2 },
-  { block: "4-6",   label: "4–6 PM",     weight: 2 },
-];
+const TIMELINE_START = 4;
+const TIMELINE_END = 22;
+const TIMELINE_HOURS = TIMELINE_END - TIMELINE_START;
+const WORK_START = 8;
+const WORK_END = 18;
 
-function apptToBlock(a: { time_block: TimeBlock | null; start_time: string }): TimeBlock {
-  if (a.time_block && a.time_block !== "full_day") return a.time_block;
-  const hour = parseInt(a.start_time?.slice(0, 2) || "8", 10);
-  if (hour < 10) return "9-10";
-  if (hour < 12) return "10-12";
-  if (hour < 14) return "12-2";
-  if (hour < 16) return "2-4";
-  return "4-6";
+const HOUR_LABELS = Array.from({ length: TIMELINE_HOURS + 1 }, (_, i) => {
+  const h = TIMELINE_START + i;
+  if (h === 0 || h === 12) return "12";
+  return `${h > 12 ? h - 12 : h}`;
+});
+
+function timeToPercent(time: string): number {
+  const [hStr, mStr] = time.split(":");
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr || "0", 10);
+  return ((h + m / 60 - TIMELINE_START) / TIMELINE_HOURS) * 100;
+}
+
+function durationPercent(start: string, end: string): number {
+  return timeToPercent(end) - timeToPercent(start);
 }
 
 function CrewSection({
@@ -359,7 +362,9 @@ function CrewSection({
   onCellClick: (crewId: string, block: TimeBlock) => void;
 }) {
   const [showMap, setShowMap] = useState(false);
-  const totalWeight = UNIFIED_BLOCKS.reduce((s, b) => s + b.weight, 0);
+
+  const offHoursLeftPct = ((WORK_START - TIMELINE_START) / TIMELINE_HOURS) * 100;
+  const offHoursRightPct = ((TIMELINE_END - WORK_END) / TIMELINE_HOURS) * 100;
 
   return (
     <div className="mb-6">
@@ -381,110 +386,142 @@ function CrewSection({
       </div>
       <div className={showMap ? "flex" : ""}>
         <div className={`overflow-x-auto ${showMap ? "flex-1 min-w-0" : "w-full"}`}>
-          <table className="w-full border-collapse min-w-[600px]">
-            <thead>
-              <tr>
-                <th className="w-36 p-2 text-xs text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
-                  Crew
-                </th>
-                {UNIFIED_BLOCKS.map((b) => (
-                  <th
-                    key={b.block}
-                    className="p-2 text-xs font-medium text-center border-b border-border"
-                    style={{ width: `${(b.weight / totalWeight) * 100}%` }}
+          <div className="min-w-[700px]">
+            {/* Hour labels */}
+            <div className="flex border-b border-border">
+              <div className="w-36 shrink-0 p-2 text-xs text-muted font-medium">Crew</div>
+              <div className="flex-1 relative h-7">
+                {HOUR_LABELS.map((label, i) => {
+                  const h = TIMELINE_START + i;
+                  const pct = (i / TIMELINE_HOURS) * 100;
+                  const isWorkHour = h >= WORK_START && h <= WORK_END;
+                  return (
+                    <div
+                      key={h}
+                      className="absolute top-0 h-full flex flex-col items-center"
+                      style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
+                    >
+                      <span className={`text-[9px] font-medium ${isWorkHour ? "text-muted" : "text-muted/40"}`}>
+                        {label}{h < 12 || h === 24 ? "a" : "p"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Crew rows */}
+            {crews.map((crew) => {
+              const off = isCrewOff(crew);
+              const crewAppts = getAppointmentsForCrewAndDay(appointments, crew.id, date)
+                .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+              const crewRForce = rforceItems.filter((r) => r.crewId === crew.id);
+
+              return (
+                <div key={crew.id} className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : ""}`}>
+                  <div className={`w-36 shrink-0 p-2 text-xs font-medium ${off ? "bg-amber-100 dark:bg-amber-900/40" : "bg-background"}`}>
+                    <div className="flex items-center gap-1.5">
+                      <div
+                        className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
+                        style={{ backgroundColor: crew.color }}
+                      />
+                      <span className={off ? "opacity-60 line-through" : ""}>{crew.name}</span>
+                      {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}
+                    </div>
+                    {!off && crew.notes && (
+                      <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">{crew.notes}</div>
+                    )}
+                    {off && (
+                      <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">Time Off</div>
+                    )}
+                  </div>
+                  <div
+                    className="flex-1 relative min-h-[52px] cursor-pointer"
+                    onClick={() => onCellClick(crew.id, "full_day")}
                   >
-                    {b.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {crews.map((crew) => {
-                const off = isCrewOff(crew);
-                const allAppts = getAppointmentsForCrewAndDay(appointments, crew.id, date)
-                  .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
-
-                return (
-                  <tr key={crew.id}>
-                    <td className={`p-2 text-xs font-medium border-b border-border whitespace-nowrap sticky left-0 z-10 ${off ? "bg-amber-100 dark:bg-amber-900/40" : "bg-background"}`}>
-                      <div className="flex items-center gap-1.5">
-                        <div
-                          className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
-                          style={{ backgroundColor: crew.color }}
-                        />
-                        <span className={off ? "opacity-60 line-through" : ""}>{crew.name}</span>
-                        {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}
-                      </div>
-                      {!off && crew.notes && (
-                        <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">{crew.notes}</div>
-                      )}
-                      {off && (
-                        <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">Time Off</div>
-                      )}
-                    </td>
-                    {UNIFIED_BLOCKS.map((b) => {
-                      const cellAppts = allAppts.filter((a) => apptToBlock(a) === b.block);
-                      const cellRForce = rforceItems.filter(
-                        (r) => r.crewId === crew.id && r.timeBlock === b.block
-                      );
-                      const fullDayRForce = b.block === "9-10"
-                        ? rforceItems.filter((r) => r.crewId === crew.id && r.timeBlock === "full_day")
-                        : [];
-                      const allRForce = [...cellRForce, ...fullDayRForce];
-                      const hasContent = cellAppts.length > 0 || allRForce.length > 0;
-
-                      if (off && !hasContent) {
-                        return (
-                          <td key={b.block} className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-100/60 dark:bg-amber-900/30">
-                            <div className="w-full h-12 rounded-lg bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
-                              <Palmtree size={14} className="text-amber-500/70 dark:text-amber-400/60" />
-                            </div>
-                          </td>
-                        );
-                      }
-
+                    {/* Off-hours shading */}
+                    <div
+                      className="absolute top-0 bottom-0 left-0 bg-muted/5 dark:bg-muted/10 z-0"
+                      style={{ width: `${offHoursLeftPct}%` }}
+                    />
+                    <div
+                      className="absolute top-0 bottom-0 right-0 bg-muted/5 dark:bg-muted/10 z-0"
+                      style={{ width: `${offHoursRightPct}%` }}
+                    />
+                    {/* Hour gridlines */}
+                    {HOUR_LABELS.map((_, i) => {
+                      const h = TIMELINE_START + i;
+                      const pct = (i / TIMELINE_HOURS) * 100;
                       return (
-                        <td key={b.block} className={`p-1 border-b border-border border-l border-l-border/50 align-top ${off ? "bg-amber-100/40 dark:bg-amber-900/25" : ""}`}>
-                          {hasContent ? (
-                            <div className="space-y-1">
-                              {cellAppts.map((a) => (
-                                <AppointmentCard
-                                  key={a.id}
-                                  appointment={a}
-                                  crew={crew}
-                                  compact
-                                  hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
-                                  onClick={() => onCardClick(a)}
-                                />
-                              ))}
-                              {allRForce.map((rf) => (
-                                <RForceCard
-                                  key={rf.rforceOrder.work_order_number}
-                                  order={rf.rforceOrder}
-                                  crew={crew}
-                                  compact
-                                  onClick={() =>
-                                    openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number)
-                                  }
-                                />
-                              ))}
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => onCellClick(crew.id, b.block)}
-                              className="w-full h-12 rounded-lg border border-dashed border-border/50 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
-                            >
-                              <Plus size={14} className="text-muted/30 group-hover:text-primary" />
-                            </button>
-                          )}
-                        </td>
+                        <div
+                          key={h}
+                          className={`absolute top-0 bottom-0 w-px ${h >= WORK_START && h <= WORK_END ? "bg-border/40" : "bg-border/15"}`}
+                          style={{ left: `${pct}%` }}
+                        />
                       );
                     })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    {/* Time-off overlay */}
+                    {off && crewAppts.length === 0 && crewRForce.length === 0 && (
+                      <div className="absolute inset-0 bg-amber-200/40 dark:bg-amber-800/20 flex items-center justify-center z-[1]">
+                        <Palmtree size={14} className="text-amber-500/50 dark:text-amber-400/40" />
+                      </div>
+                    )}
+                    {/* Appointment cards positioned on timeline */}
+                    {crewAppts.map((a) => {
+                      const start = a.start_time || "08:00";
+                      const end = a.end_time || (a.time_block === "full_day" ? "16:00" : undefined);
+                      const leftPct = timeToPercent(start);
+                      let widthPct = end ? durationPercent(start, end) : 100 / TIMELINE_HOURS;
+                      if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                      return (
+                        <div
+                          key={a.id}
+                          className="absolute top-1 bottom-1 z-[2]"
+                          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                          onClick={(e) => { e.stopPropagation(); onCardClick(a); }}
+                        >
+                          <AppointmentCard
+                            appointment={a}
+                            crew={crew}
+                            compact
+                            hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
+                            onClick={() => onCardClick(a)}
+                          />
+                        </div>
+                      );
+                    })}
+                    {/* rForce cards on timeline */}
+                    {crewRForce.map((rf) => {
+                      const startTime = rf.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
+                      const endTime = rf.rforceOrder.scheduled_end?.slice(11, 16) || undefined;
+                      const leftPct = timeToPercent(startTime);
+                      let widthPct = endTime ? durationPercent(startTime, endTime) : 100 / TIMELINE_HOURS;
+                      if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                      return (
+                        <div
+                          key={rf.rforceOrder.work_order_number}
+                          className="absolute top-1 bottom-1 z-[2]"
+                          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number);
+                          }}
+                        >
+                          <RForceCard
+                            order={rf.rforceOrder}
+                            crew={crew}
+                            compact
+                            onClick={() =>
+                              openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number)
+                            }
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
         {showMap && (
           <div className="w-[320px] shrink-0 border-l border-border h-[300px]">
