@@ -1,10 +1,10 @@
 "use client";
 
 import { useData } from "@/components/DataProvider";
-import CsvUploader from "@/components/CsvUploader";
+import ResourceManager from "@/components/ResourceManager";
 import { Loader2 } from "lucide-react";
 
-export default function AdminPage() {
+export default function ResourcesPage() {
   const { loading } = useData();
 
   if (loading) {
@@ -18,10 +18,10 @@ export default function AdminPage() {
   return (
     <div className="flex flex-col h-full">
       <header className="bg-background border-b border-border px-4 py-3 sticky top-0 z-30">
-        <h1 className="text-lg font-semibold">Admin</h1>
+        <h1 className="text-lg font-semibold">Resources</h1>
       </header>
       <div className="flex-1 overflow-auto">
-        <CsvUploader />
+        <ResourceManager />
       </div>
     </div>
   );

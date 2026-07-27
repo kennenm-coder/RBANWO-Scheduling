@@ -37,6 +37,7 @@ export interface Crew {
   color: string;
   is_active: boolean;
   notes: string | null;
+  aliases: string[] | null;
   sort_order: number;
   created_at: string;
   updated_at: string;

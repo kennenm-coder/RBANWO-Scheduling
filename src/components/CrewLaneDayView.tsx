@@ -62,15 +62,25 @@ export default function CrewLaneDayView({
     [rforceOrders, appointments, crews, date]
   );
 
-  function isCrewOff(crewName: string): boolean {
-    const lower = crewName.toLowerCase();
+  function nameMatchesTimeOff(name: string): boolean {
+    const lower = name.toLowerCase();
     if (offNames.has(lower)) return true;
-    const crewFirst = crewName.split(" ")[0].toLowerCase();
-    const crewLast = crewName.split(" ").slice(-1)[0].toLowerCase();
+    const first = lower.split(" ")[0];
+    const last = lower.split(" ").slice(-1)[0];
     for (const r of offToday) {
       const torFirst = r.employee_name.split(" ")[0].toLowerCase();
       const torLast = r.employee_name.split(" ").slice(-1)[0].toLowerCase();
-      if (crewFirst === torFirst && crewLast.slice(0, 4) === torLast.slice(0, 4)) return true;
+      if (first === torFirst && last.slice(0, 4) === torLast.slice(0, 4)) return true;
+    }
+    return false;
+  }
+
+  function isCrewOff(crew: Crew): boolean {
+    if (nameMatchesTimeOff(crew.name)) return true;
+    if (crew.aliases) {
+      for (const alias of crew.aliases) {
+        if (nameMatchesTimeOff(alias)) return true;
+      }
     }
     return false;
   }
@@ -186,7 +196,7 @@ function CrewSection({
   appointments: Appointment[];
   rforceOrders: RForceOrder[];
   rforceItems: RForceCalendarItem[];
-  isCrewOff: (name: string) => boolean;
+  isCrewOff: (crew: Crew) => boolean;
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
 }) {
@@ -230,7 +240,7 @@ function CrewSection({
           </thead>
           <tbody>
             {crews.map((crew) => {
-              const off = isCrewOff(crew.name);
+              const off = isCrewOff(crew);
               return (
                 <tr key={crew.id}>
                   <td className={`p-2 text-xs font-medium border-b border-border whitespace-nowrap sticky left-0 z-10 ${off ? "bg-amber-50 dark:bg-amber-900/10" : "bg-background"}`}>

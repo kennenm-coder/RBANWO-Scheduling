@@ -6,7 +6,7 @@ import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
 import AppointmentSheet from "./AppointmentSheet";
 import ScheduleModal from "./ScheduleModal";
-import { Appointment } from "@/lib/types";
+import { Appointment, Crew } from "@/lib/types";
 import {
   getWeekDays,
   getAppointmentsForCrewAndDay,
@@ -59,19 +59,29 @@ export default function CrewLaneWeekView({
     return map;
   }, [days, rforceOrders, appointments, crews]);
 
-  function isCrewOffOnDay(crewName: string, day: Date): boolean {
-    const dateStr = format(day, "yyyy-MM-dd");
+  function nameMatchesDay(name: string, dateStr: string): boolean {
     const offNames = offByDay.get(dateStr);
     if (!offNames) return false;
-    const lower = crewName.toLowerCase();
+    const lower = name.toLowerCase();
     if (offNames.has(lower)) return true;
-    const crewFirst = crewName.split(" ")[0].toLowerCase();
-    const crewLast = crewName.split(" ").slice(-1)[0].toLowerCase();
+    const first = lower.split(" ")[0];
+    const last = lower.split(" ").slice(-1)[0];
     const offToday = getTimeOffForDate(timeOffRequests, dateStr);
     for (const r of offToday) {
       const torFirst = r.employee_name.split(" ")[0].toLowerCase();
       const torLast = r.employee_name.split(" ").slice(-1)[0].toLowerCase();
-      if (crewFirst === torFirst && crewLast.slice(0, 4) === torLast.slice(0, 4)) return true;
+      if (first === torFirst && last.slice(0, 4) === torLast.slice(0, 4)) return true;
+    }
+    return false;
+  }
+
+  function isCrewOffOnDay(crew: Crew, day: Date): boolean {
+    const dateStr = format(day, "yyyy-MM-dd");
+    if (nameMatchesDay(crew.name, dateStr)) return true;
+    if (crew.aliases) {
+      for (const alias of crew.aliases) {
+        if (nameMatchesDay(alias, dateStr)) return true;
+      }
     }
     return false;
   }
@@ -125,7 +135,7 @@ export default function CrewLaneWeekView({
                   </div>
                 </td>
                 {days.map((day) => {
-                  const off = isCrewOffOnDay(crew.name, day);
+                  const off = isCrewOffOnDay(crew, day);
                   const cellAppts = getAppointmentsForCrewAndDay(
                     appointments,
                     crew.id,
