@@ -260,7 +260,8 @@ function CrewSection({
                       appointments,
                       crew.id,
                       date
-                    ).filter((a) => a.time_block === block);
+                    ).filter((a) => a.time_block === block)
+                      .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
 
                     const cellRForce = rforceItems.filter(
                       (r) => r.crewId === crew.id && r.timeBlock === block

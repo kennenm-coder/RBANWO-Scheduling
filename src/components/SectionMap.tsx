@@ -5,7 +5,7 @@ import { useEffect, useState, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
-import { geocodeBatch, GeoResult } from "@/lib/geocode";
+import { geocodeFastZip, geocodeBatch, GeoResult } from "@/lib/geocode";
 import { getRForceItemsForDay } from "@/lib/calendar-utils";
 import { getAppointmentsForCrewAndDay } from "@/lib/calendar-utils";
 import { mapsHref } from "@/lib/salesforce";
@@ -13,14 +13,19 @@ import { Crew } from "@/lib/types";
 import { format } from "date-fns";
 import { Loader2, Navigation } from "lucide-react";
 
-function crewMarkerIcon(color: string): L.DivIcon {
+function crewMarkerIcon(color: string, label?: string | number): L.DivIcon {
+  const text = label != null ? `<span style="
+    color:#fff;font-size:10px;font-weight:700;
+    line-height:22px;text-shadow:0 1px 2px rgba(0,0,0,0.4);
+  ">${label}</span>` : "";
   return L.divIcon({
     className: "",
     html: `<div style="
       width:22px;height:22px;border-radius:50%;
       background:${color};border:2px solid white;
       box-shadow:0 2px 4px rgba(0,0,0,0.3);
-    "></div>`,
+      display:flex;align-items:center;justify-content:center;
+    ">${text}</div>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
     popupAnchor: [0, -12],
@@ -53,6 +58,7 @@ interface MapItem {
   type: string;
   crewName: string;
   crewColor: string;
+  crewId: string;
   geo: GeoResult;
 }
 
@@ -60,6 +66,7 @@ export default function SectionMap({ date, crews }: Props) {
   const { appointments, rforceOrders } = useData();
   const [geoCache, setGeoCache] = useState<Map<string, GeoResult>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [refining, setRefining] = useState(false);
 
   const dateStr = format(date, "yyyy-MM-dd");
   const crewIds = useMemo(() => new Set(crews.map((c) => c.id)), [crews]);
@@ -93,12 +100,28 @@ export default function SectionMap({ date, crews }: Props) {
     }
     let cancelled = false;
     setLoading(true);
-    geocodeBatch(allAddresses).then((results) => {
-      if (!cancelled) {
-        setGeoCache(results);
-        setLoading(false);
-      }
+    setRefining(false);
+
+    geocodeFastZip(allAddresses).then((fastResults) => {
+      if (cancelled) return;
+      setGeoCache(new Map(fastResults));
+      setLoading(false);
+      setRefining(true);
+
+      geocodeBatch(allAddresses).then((preciseResults) => {
+        if (!cancelled) {
+          setGeoCache((prev) => {
+            const merged = new Map(prev);
+            for (const [addr, geo] of preciseResults) {
+              merged.set(addr, geo);
+            }
+            return merged;
+          });
+          setRefining(false);
+        }
+      });
     });
+
     return () => { cancelled = true; };
   }, [dateStr, allAddresses]);
 
@@ -115,6 +138,7 @@ export default function SectionMap({ date, crews }: Props) {
           type: appt.appointment_type,
           crewName: crew.name,
           crewColor: crew.color,
+          crewId: crew.id,
           geo,
         });
       }
@@ -130,12 +154,24 @@ export default function SectionMap({ date, crews }: Props) {
           type: rf.rforceOrder.work_order_type || "Unknown",
           crewName: crew.name,
           crewColor: crew.color,
+          crewId: crew.id,
           geo,
         });
       }
     }
     return items;
   }, [dayAppointments, dayRForceItems, geoCache, crews]);
+
+  const crewOrder = useMemo(() => {
+    const order = new Map<string, number>();
+    const counters = new Map<string, number>();
+    for (const m of mapItems) {
+      const count = (counters.get(m.crewId) || 0) + 1;
+      counters.set(m.crewId, count);
+      order.set(m.id, count);
+    }
+    return order;
+  }, [mapItems]);
 
   const positions: [number, number][] = mapItems.map((m) => [m.geo.lat, m.geo.lng]);
   const defaultCenter: [number, number] = [41.65, -83.54];
@@ -158,6 +194,12 @@ export default function SectionMap({ date, crews }: Props) {
 
   return (
     <div className="h-full w-full relative">
+      {refining && (
+        <div className="absolute top-1 left-1 right-1 bg-amber-50/90 dark:bg-amber-900/40 border border-amber-300/60 dark:border-amber-700/50 rounded px-2 py-1 z-[1000] flex items-center gap-1.5">
+          <Loader2 size={10} className="animate-spin text-amber-600" />
+          <span className="text-[9px] text-amber-700 dark:text-amber-300">Refining locations...</span>
+        </div>
+      )}
       <MapContainer
         center={positions.length > 0 ? positions[0] : defaultCenter}
         zoom={10}
@@ -174,7 +216,7 @@ export default function SectionMap({ date, crews }: Props) {
           <Marker
             key={m.id}
             position={[m.geo.lat, m.geo.lng]}
-            icon={crewMarkerIcon(m.crewColor)}
+            icon={crewMarkerIcon(m.crewColor, crewOrder.get(m.id))}
           >
             <Popup>
               <div className="text-xs min-w-[160px]">

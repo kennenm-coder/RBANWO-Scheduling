@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseCsv } from "@/lib/parse-csv";
 import { createCsvImport, upsertRForceOrders } from "@/lib/store";
+import { geocodeBatch } from "@/lib/geocode";
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.UPLOAD_API_KEY;
@@ -65,6 +66,11 @@ export async function POST(req: NextRequest) {
   }
 
   const upserted = await upsertRForceOrders(orders, importRecord.id);
+
+  const addresses = [...new Set(orders.map((o) => o.address).filter(Boolean) as string[])];
+  if (addresses.length > 0) {
+    geocodeBatch(addresses).catch(() => {});
+  }
 
   return NextResponse.json({
     success: true,

@@ -5,24 +5,25 @@ import { useEffect, useState, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
-import { geocodeBatch, GeoResult } from "@/lib/geocode";
+import { geocodeFastZip, geocodeBatch, GeoResult } from "@/lib/geocode";
 import { getRForceItemsForDay, typeLabel } from "@/lib/calendar-utils";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
-import { Appointment, Crew, RForceOrder } from "@/lib/types";
 import { format } from "date-fns";
 import { Loader2, ExternalLink, Navigation } from "lucide-react";
 
-function crewMarkerIcon(color: string, dashed?: boolean): L.DivIcon {
-  const border = dashed
-    ? `border:3px dashed white;`
-    : `border:3px solid white;`;
+function crewMarkerIcon(color: string, label?: string | number): L.DivIcon {
+  const text = label != null ? `<span style="
+    color:#fff;font-size:12px;font-weight:700;
+    line-height:28px;text-shadow:0 1px 2px rgba(0,0,0,0.4);
+  ">${label}</span>` : "";
   return L.divIcon({
     className: "",
     html: `<div style="
       width:28px;height:28px;border-radius:50%;
-      background:${color};${border}
+      background:${color};border:3px solid white;
       box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    "></div>`,
+      display:flex;align-items:center;justify-content:center;
+    ">${text}</div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
     popupAnchor: [0, -16],
@@ -66,6 +67,7 @@ export default function MapView({ date }: Props) {
   const { crews, appointments, rforceOrders } = useData();
   const [geoCache, setGeoCache] = useState<Map<string, GeoResult>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [refining, setRefining] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
 
   const dateStr = format(date, "yyyy-MM-dd");
@@ -99,14 +101,30 @@ export default function MapView({ date }: Props) {
     }
     let cancelled = false;
     setLoading(true);
-    geocodeBatch(allAddresses, (done, total) => {
-      if (!cancelled) setProgress({ done, total });
-    }).then((results) => {
-      if (!cancelled) {
-        setGeoCache(results);
-        setLoading(false);
-      }
+    setRefining(false);
+
+    geocodeFastZip(allAddresses).then((fastResults) => {
+      if (cancelled) return;
+      setGeoCache(new Map(fastResults));
+      setLoading(false);
+      setRefining(true);
+
+      geocodeBatch(allAddresses, (done, total) => {
+        if (!cancelled) setProgress({ done, total });
+      }).then((preciseResults) => {
+        if (!cancelled) {
+          setGeoCache((prev) => {
+            const merged = new Map(prev);
+            for (const [addr, geo] of preciseResults) {
+              merged.set(addr, geo);
+            }
+            return merged;
+          });
+          setRefining(false);
+        }
+      });
     });
+
     return () => { cancelled = true; };
   }, [dateStr, allAddresses]);
 
@@ -155,6 +173,17 @@ export default function MapView({ date }: Props) {
     return items;
   }, [dayAppointments, dayRForceItems, geoCache, crews]);
 
+  const crewOrder = useMemo(() => {
+    const order = new Map<string, number>();
+    const counters = new Map<string, number>();
+    for (const m of mapItems) {
+      const count = (counters.get(m.crewId) || 0) + 1;
+      counters.set(m.crewId, count);
+      order.set(m.id, count);
+    }
+    return order;
+  }, [mapItems]);
+
   const positions: [number, number][] = mapItems.map((m) => [m.geo.lat, m.geo.lng]);
   const totalItems = dayAppointments.length + dayRForceItems.length;
 
@@ -165,7 +194,7 @@ export default function MapView({ date }: Props) {
       <div className="flex-1 flex flex-col items-center justify-center gap-3">
         <Loader2 size={32} className="animate-spin text-primary" />
         <div className="text-sm text-muted">
-          Geocoding addresses... {progress.done}/{progress.total}
+          Loading map...
         </div>
       </div>
     );
@@ -181,6 +210,15 @@ export default function MapView({ date }: Props) {
 
   return (
     <div className="flex-1 relative">
+      {refining && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-lg px-4 py-2 shadow-lg z-[1000] flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin text-amber-600" />
+          <span className="text-xs text-amber-700 dark:text-amber-300">
+            Showing approximate locations — refining to exact addresses... {progress.done}/{progress.total}
+          </span>
+        </div>
+      )}
+
       <MapContainer
         center={positions.length > 0 ? positions[0] : defaultCenter}
         zoom={11}
@@ -196,7 +234,7 @@ export default function MapView({ date }: Props) {
           <Marker
             key={m.id}
             position={[m.geo.lat, m.geo.lng]}
-            icon={crewMarkerIcon(m.crewColor, false)}
+            icon={crewMarkerIcon(m.crewColor, crewOrder.get(m.id))}
           >
             <Popup>
               <div className="text-sm min-w-[200px]">
@@ -245,7 +283,7 @@ export default function MapView({ date }: Props) {
         ))}
       </MapContainer>
 
-      {mapItems.length < totalItems && (
+      {!refining && mapItems.length < totalItems && (
         <div className="absolute bottom-4 left-4 bg-background/90 backdrop-blur border border-border rounded-lg px-3 py-2 text-xs text-muted shadow-lg z-[1000]">
           Showing {mapItems.length} of {totalItems} items (some addresses could not be geocoded)
         </div>
