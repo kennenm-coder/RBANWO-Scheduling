@@ -15,7 +15,6 @@ export async function fetchCrews(): Promise<Crew[]> {
   const { data } = await sb
     .from("sched_crews")
     .select("*")
-    .eq("is_active", true)
     .order("sort_order", { ascending: true });
   return (data as Crew[]) ?? [];
 }
@@ -39,6 +38,15 @@ export async function deactivateCrew(id: string): Promise<void> {
   await sb
     .from("sched_crews")
     .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq("id", id);
+}
+
+export async function toggleCrewActive(id: string, isActive: boolean): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  await sb
+    .from("sched_crews")
+    .update({ is_active: isActive, updated_at: new Date().toISOString() })
     .eq("id", id);
 }
 

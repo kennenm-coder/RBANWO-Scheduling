@@ -39,6 +39,13 @@ export async function saveGeocode(address: string, lat: number, lng: number): Pr
   });
 }
 
+async function deleteCachedGeocode(address: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const hash = addressHash(address);
+  await sb.from("sched_geocode_cache").delete().eq("address_hash", hash);
+}
+
 function extractZip(address: string): string | null {
   const match = address.match(/\b(\d{5})\b/);
   return match ? match[1] : null;
@@ -92,6 +99,27 @@ function parseAddressParts(address: string): { street: string; city: string; sta
   const match = cleaned.match(/^(.+?),\s*(.+?),\s*(\w+)\s+(\d{5})/);
   if (!match) return null;
   return { street: match[1].trim(), city: match[2].trim(), state: match[3].trim(), zip: match[4] };
+}
+
+const STATE_BOUNDS: Record<string, { latMin: number; latMax: number; lngMin: number; lngMax: number }> = {
+  OH: { latMin: 38.4, latMax: 42.0, lngMin: -84.9, lngMax: -80.5 },
+  MI: { latMin: 41.7, latMax: 48.3, lngMin: -90.5, lngMax: -82.1 },
+  IN: { latMin: 37.8, latMax: 41.8, lngMin: -88.1, lngMax: -84.8 },
+  PA: { latMin: 39.7, latMax: 42.3, lngMin: -80.6, lngMax: -74.7 },
+  WV: { latMin: 37.2, latMax: 40.7, lngMin: -82.7, lngMax: -77.7 },
+  KY: { latMin: 36.5, latMax: 39.2, lngMin: -89.6, lngMax: -81.9 },
+};
+
+function extractState(address: string): string | null {
+  const match = address.match(/,\s*(\w{2})\s+\d{5}/);
+  return match ? match[1].toUpperCase() : null;
+}
+
+function isResultInState(geo: GeoResult, state: string): boolean {
+  const bounds = STATE_BOUNDS[state];
+  if (!bounds) return true;
+  return geo.lat >= bounds.latMin && geo.lat <= bounds.latMax &&
+         geo.lng >= bounds.lngMin && geo.lng <= bounds.lngMax;
 }
 
 async function nominatimLookup(query: string): Promise<GeoResult | null> {
@@ -171,18 +199,32 @@ async function nominatimZipFallback(zip: string): Promise<GeoResult | null> {
 
 export async function geocodeAddress(address: string): Promise<GeoResult | null> {
   const cached = await getCachedGeocode(address);
-  if (cached) return cached;
+  const state = extractState(address);
+
+  if (cached) {
+    if (state && !isResultInState(cached, state)) {
+      await deleteCachedGeocode(address);
+    } else {
+      return cached;
+    }
+  }
+
+  function validate(geo: GeoResult | null): GeoResult | null {
+    if (!geo) return null;
+    if (state && !isResultInState(geo, state)) return null;
+    return geo;
+  }
 
   try {
     // 1. Try US Census geocoder first (free, no rate limit, best for US addresses)
-    const censusResult = await censusGeocode(address);
+    const censusResult = validate(await censusGeocode(address));
     if (censusResult) {
       await saveGeocode(address, censusResult.lat, censusResult.lng);
       return censusResult;
     }
 
     // 2. Try Nominatim free-form
-    const result = await nominatimLookup(address);
+    const result = validate(await nominatimLookup(address));
     if (result) {
       await saveGeocode(address, result.lat, result.lng);
       return result;
@@ -192,7 +234,7 @@ export async function geocodeAddress(address: string): Promise<GeoResult | null>
     const parts = parseAddressParts(address);
     if (parts) {
       await new Promise((r) => setTimeout(r, 1100));
-      const structured = await nominatimStructured(parts);
+      const structured = validate(await nominatimStructured(parts));
       if (structured) {
         await saveGeocode(address, structured.lat, structured.lng);
         return structured;
@@ -204,7 +246,7 @@ export async function geocodeAddress(address: string): Promise<GeoResult | null>
     for (const variant of variants) {
       if (variant === address) continue;
       await new Promise((r) => setTimeout(r, 1100));
-      const vResult = await nominatimLookup(variant);
+      const vResult = validate(await nominatimLookup(variant));
       if (vResult) {
         await saveGeocode(address, vResult.lat, vResult.lng);
         return vResult;

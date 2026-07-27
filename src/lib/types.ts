@@ -4,6 +4,8 @@ export type CrewType =
   | "install_sub"
   | "jip"
   | "svc"
+  | "second"
+  | "management"
   | "misc";
 
 export type AppointmentType =
@@ -31,6 +33,8 @@ export type TimeBlock =
   | "4-6"
   | "full_day";
 
+export type ManagesType = "install" | "service" | "jip";
+
 export interface Crew {
   id: string;
   name: string;
@@ -39,6 +43,8 @@ export interface Crew {
   is_active: boolean;
   notes: string | null;
   aliases: string[] | null;
+  manages: ManagesType[] | null;
+  primary_crew_id: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;

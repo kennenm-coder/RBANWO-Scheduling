@@ -182,6 +182,10 @@ export function crewTypeLabel(type: Crew["crew_type"]): string {
       return "JIP";
     case "svc":
       return "Service";
+    case "second":
+      return "Second";
+    case "management":
+      return "Management";
     case "misc":
       return "Misc";
   }

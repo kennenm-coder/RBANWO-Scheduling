@@ -85,8 +85,10 @@ export default function CrewLaneDayView({
     return false;
   }
 
-  const filteredCrews = crews.filter((c) => {
-    if (c.crew_type === "misc") return false;
+  const activeCrews = crews.filter((c) => c.is_active);
+
+  const filteredCrews = activeCrews.filter((c) => {
+    if (c.crew_type === "misc" || c.crew_type === "second" || c.crew_type === "management") return false;
     if (filterType === "all") return true;
     if (filterType === "tech_measure") return c.crew_type === "measure_tech";
     if (filterType === "install")
@@ -108,6 +110,21 @@ export default function CrewLaneDayView({
       c.crew_type === "jip" ||
       c.crew_type === "svc"
   );
+
+  const managementCrews = activeCrews.filter((c) => c.crew_type === "management");
+  const installManagers = managementCrews.filter((c) => c.manages?.includes("install"));
+  const serviceManagers = managementCrews.filter((c) => c.manages?.includes("service"));
+  const jipManagers = managementCrews.filter((c) => c.manages?.includes("jip"));
+
+  const secondCrews = activeCrews.filter((c) => c.crew_type === "second");
+  const installSeconds = secondCrews.filter((c) => {
+    const primary = activeCrews.find((p) => p.id === c.primary_crew_id);
+    return primary && (primary.crew_type === "install_in_house" || primary.crew_type === "install_sub");
+  });
+  const jipSeconds = secondCrews.filter((c) => {
+    const primary = activeCrews.find((p) => p.id === c.primary_crew_id);
+    return primary && primary.crew_type === "jip";
+  });
 
   return (
     <div className="flex-1 overflow-auto">
@@ -134,6 +151,96 @@ export default function CrewLaneDayView({
           <CrewSection
             title="Install / Service / JIP"
             crews={installCrews}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
+
+      {(filterType === "all" || filterType === "install") &&
+        installSeconds.length > 0 && (
+          <CrewSection
+            title="Install Seconds"
+            crews={installSeconds}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
+
+      {(filterType === "all" || filterType === "jip") &&
+        jipSeconds.length > 0 && (
+          <CrewSection
+            title="JIP Seconds"
+            crews={jipSeconds}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
+
+      {(filterType === "all" || filterType === "install") &&
+        installManagers.length > 0 && (
+          <CrewSection
+            title="Install Management"
+            crews={installManagers}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
+
+      {(filterType === "all" || filterType === "service") &&
+        serviceManagers.length > 0 && (
+          <CrewSection
+            title="Service Management"
+            crews={serviceManagers}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
+
+      {(filterType === "all" || filterType === "jip") &&
+        jipManagers.length > 0 && (
+          <CrewSection
+            title="JIP Management"
+            crews={jipManagers}
             timeBlocks={INSTALL_TIME_BLOCKS}
             date={date}
             appointments={appointments}

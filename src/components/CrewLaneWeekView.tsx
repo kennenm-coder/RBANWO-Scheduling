@@ -86,14 +86,15 @@ export default function CrewLaneWeekView({
     return false;
   }
 
-  const installCrews = crews.filter(
+  const activeCrews = crews.filter((c) => c.is_active && c.crew_type !== "misc" && c.crew_type !== "second" && c.crew_type !== "management");
+  const installCrews = activeCrews.filter(
     (c) =>
       c.crew_type === "install_in_house" ||
       c.crew_type === "install_sub" ||
       c.crew_type === "jip" ||
       c.crew_type === "svc"
   );
-  const measureCrews = crews.filter((c) => c.crew_type === "measure_tech");
+  const measureCrews = activeCrews.filter((c) => c.crew_type === "measure_tech");
   const allCrews = [...measureCrews, ...installCrews];
 
   return (
