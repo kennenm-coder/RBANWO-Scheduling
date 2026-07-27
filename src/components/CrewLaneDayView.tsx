@@ -9,6 +9,7 @@ import ScheduleModal from "./ScheduleModal";
 import {
   Appointment,
   Crew,
+  CrewType,
   TimeBlock,
   RForceOrder,
   AppointmentType,
@@ -87,29 +88,20 @@ export default function CrewLaneDayView({
 
   const activeCrews = crews.filter((c) => c.is_active);
 
-  const filteredCrews = activeCrews.filter((c) => {
-    if (c.crew_type === "misc" || c.crew_type === "second" || c.crew_type === "management") return false;
-    if (filterType === "all") return true;
-    if (filterType === "tech_measure") return c.crew_type === "measure_tech";
-    if (filterType === "install")
-      return (
-        c.crew_type === "install_in_house" || c.crew_type === "install_sub"
-      );
-    if (filterType === "service") return c.crew_type === "svc";
-    if (filterType === "jip") return c.crew_type === "jip";
-    return true;
-  });
+  function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
+    if (types.includes(crew.crew_type)) return true;
+    if (crew.additional_types) {
+      return crew.additional_types.some((t) => types.includes(t));
+    }
+    return false;
+  }
 
-  const measureCrews = filteredCrews.filter(
-    (c) => c.crew_type === "measure_tech"
-  );
-  const installCrews = filteredCrews.filter(
-    (c) =>
-      c.crew_type === "install_in_house" ||
-      c.crew_type === "install_sub" ||
-      c.crew_type === "jip" ||
-      c.crew_type === "svc"
-  );
+  const mainCrews = activeCrews.filter((c) => !crewHasType(c, "misc", "second", "management"));
+
+  const measureCrews = mainCrews.filter((c) => crewHasType(c, "measure_tech"));
+  const installCrews = mainCrews.filter((c) => crewHasType(c, "install_in_house", "install_sub"));
+  const jipCrews = mainCrews.filter((c) => crewHasType(c, "jip"));
+  const serviceCrews = mainCrews.filter((c) => crewHasType(c, "svc"));
 
   const managementCrews = activeCrews.filter((c) => c.crew_type === "management");
   const measureManagers = managementCrews.filter((c) => c.manages?.includes("measure"));
@@ -147,60 +139,6 @@ export default function CrewLaneDayView({
           />
         )}
 
-      {(filterType === "all" || filterType !== "tech_measure") &&
-        installCrews.length > 0 && (
-          <CrewSection
-            title="Install / Service / JIP"
-            crews={installCrews}
-            timeBlocks={INSTALL_TIME_BLOCKS}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
-            isCrewOff={isCrewOff}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-          />
-        )}
-
-      {(filterType === "all" || filterType === "install") &&
-        installSeconds.length > 0 && (
-          <CrewSection
-            title="Install Seconds"
-            crews={installSeconds}
-            timeBlocks={INSTALL_TIME_BLOCKS}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
-            isCrewOff={isCrewOff}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-          />
-        )}
-
-      {(filterType === "all" || filterType === "jip") &&
-        jipSeconds.length > 0 && (
-          <CrewSection
-            title="JIP Seconds"
-            crews={jipSeconds}
-            timeBlocks={INSTALL_TIME_BLOCKS}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
-            isCrewOff={isCrewOff}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-          />
-        )}
-
       {(filterType === "all" || filterType === "tech_measure") &&
         measureManagers.length > 0 && (
           <CrewSection
@@ -219,6 +157,41 @@ export default function CrewLaneDayView({
           />
         )}
 
+      {/* Install section + seconds + management */}
+      {(filterType === "all" || filterType === "install") &&
+        installCrews.length > 0 && (
+          <CrewSection
+            title="Install"
+            crews={installCrews}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
+      {(filterType === "all" || filterType === "install") &&
+        installSeconds.length > 0 && (
+          <CrewSection
+            title="Install Seconds"
+            crews={installSeconds}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
       {(filterType === "all" || filterType === "install") &&
         installManagers.length > 0 && (
           <CrewSection
@@ -237,6 +210,24 @@ export default function CrewLaneDayView({
           />
         )}
 
+      {/* Service section + management */}
+      {(filterType === "all" || filterType === "service") &&
+        serviceCrews.length > 0 && (
+          <CrewSection
+            title="Service"
+            crews={serviceCrews}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
       {(filterType === "all" || filterType === "service") &&
         serviceManagers.length > 0 && (
           <CrewSection
@@ -255,6 +246,41 @@ export default function CrewLaneDayView({
           />
         )}
 
+      {/* JIP section + seconds + management */}
+      {(filterType === "all" || filterType === "jip") &&
+        jipCrews.length > 0 && (
+          <CrewSection
+            title="JIP"
+            crews={jipCrews}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
+      {(filterType === "all" || filterType === "jip") &&
+        jipSeconds.length > 0 && (
+          <CrewSection
+            title="JIP Seconds"
+            crews={jipSeconds}
+            timeBlocks={INSTALL_TIME_BLOCKS}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+          />
+        )}
       {(filterType === "all" || filterType === "jip") &&
         jipManagers.length > 0 && (
           <CrewSection

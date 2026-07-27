@@ -44,6 +44,7 @@ export interface Crew {
   notes: string | null;
   aliases: string[] | null;
   manages: ManagesType[] | null;
+  additional_types: CrewType[] | null;
   primary_crew_id: string | null;
   sort_order: number;
   created_at: string;

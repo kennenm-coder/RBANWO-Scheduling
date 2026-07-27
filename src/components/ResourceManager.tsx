@@ -304,6 +304,11 @@ export default function ResourceManager() {
                       {c.notes && (
                         <span className="text-[11px] text-muted">{c.notes}</span>
                       )}
+                      {c.additional_types && c.additional_types.length > 0 && (
+                        <span className="text-[10px] text-cyan-600 dark:text-cyan-400">
+                          Also: {c.additional_types.map(crewTypeLabel).join(", ")}
+                        </span>
+                      )}
                       {c.manages && c.manages.length > 0 && (
                         <span className="text-[10px] text-purple-600 dark:text-purple-400">
                           Manages: {c.manages.join(", ")}
