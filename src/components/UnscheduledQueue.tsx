@@ -135,22 +135,22 @@ export default function UnscheduledQueue() {
               key={item.workOrderNumber}
               className="px-4 py-3 hover:bg-surface"
             >
-              <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm truncate">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-sm">
                       {item.customerName || "Unknown"}
                     </span>
                     <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color}`}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${cfg.color}`}
                     >
                       <Icon size={10} />
                       {cfg.label}
                     </span>
                   </div>
                   <div className="flex items-center gap-1 text-xs text-muted mt-0.5">
-                    <MapPin size={10} />
-                    <span className="truncate">{item.address}</span>
+                    <MapPin size={10} className="shrink-0" />
+                    <span className="break-words">{item.address}</span>
                   </div>
                   <div className="flex items-center gap-3 text-xs text-muted mt-1 flex-wrap">
                     {item.workOrderType && (
