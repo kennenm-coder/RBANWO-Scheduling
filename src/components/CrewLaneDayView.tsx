@@ -351,15 +351,15 @@ function CrewSection({
               const off = isCrewOff(crew);
               return (
                 <tr key={crew.id}>
-                  <td className={`p-2 text-xs font-medium border-b border-border whitespace-nowrap sticky left-0 z-10 ${off ? "bg-amber-50 dark:bg-amber-900/10" : "bg-background"}`}>
+                  <td className={`p-2 text-xs font-medium border-b border-border whitespace-nowrap sticky left-0 z-10 ${off ? "bg-amber-100 dark:bg-amber-900/40" : "bg-background"}`}>
                     <div className="flex items-center gap-1.5">
                       <div
                         className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
                         style={{ backgroundColor: crew.color }}
                       />
-                      <span className={off ? "opacity-50 line-through" : ""}>{crew.name}</span>
+                      <span className={off ? "opacity-60 line-through" : ""}>{crew.name}</span>
                       {off && (
-                        <Palmtree size={12} className="text-amber-500 shrink-0" />
+                        <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />
                       )}
                     </div>
                     {!off && crew.notes && (
@@ -368,7 +368,7 @@ function CrewSection({
                       </div>
                     )}
                     {off && (
-                      <div className="text-[10px] text-amber-600 dark:text-amber-400 font-normal mt-0.5 pl-[18px]">
+                      <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">
                         Time Off
                       </div>
                     )}
@@ -391,10 +391,10 @@ function CrewSection({
                       return (
                         <td
                           key={block}
-                          className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-50/50 dark:bg-amber-900/5"
+                          className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-100/60 dark:bg-amber-900/30"
                         >
-                          <div className="w-full h-12 rounded-lg bg-amber-100/50 dark:bg-amber-900/10 border border-dashed border-amber-300/40 dark:border-amber-700/30 flex items-center justify-center">
-                            <Palmtree size={12} className="text-amber-400/40" />
+                          <div className="w-full h-12 rounded-lg bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
+                            <Palmtree size={14} className="text-amber-500/70 dark:text-amber-400/60" />
                           </div>
                         </td>
                       );
@@ -403,7 +403,7 @@ function CrewSection({
                     return (
                       <td
                         key={block}
-                        className={`p-1 border-b border-border border-l border-l-border/50 align-top min-h-[60px] ${off ? "bg-amber-50/30 dark:bg-amber-900/5" : ""}`}
+                        className={`p-1 border-b border-border border-l border-l-border/50 align-top min-h-[60px] ${off ? "bg-amber-100/40 dark:bg-amber-900/25" : ""}`}
                       >
                         {hasContent ? (
                           <div className="space-y-1">

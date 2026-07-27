@@ -151,10 +151,10 @@ export default function CrewLaneWeekView({
                     return (
                       <td
                         key={day.toISOString()}
-                        className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-50/50 dark:bg-amber-900/5"
+                        className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-100/60 dark:bg-amber-900/30"
                       >
-                        <div className="w-full h-8 rounded bg-amber-100/50 dark:bg-amber-900/10 border border-dashed border-amber-300/40 dark:border-amber-700/30 flex items-center justify-center">
-                          <Palmtree size={10} className="text-amber-400/40" />
+                        <div className="w-full h-8 rounded bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
+                          <Palmtree size={12} className="text-amber-500/70 dark:text-amber-400/60" />
                         </div>
                       </td>
                     );
@@ -163,7 +163,7 @@ export default function CrewLaneWeekView({
                   return (
                     <td
                       key={day.toISOString()}
-                      className={`p-1 border-b border-border border-l border-l-border/50 align-top ${off ? "bg-amber-50/30 dark:bg-amber-900/5" : ""}`}
+                      className={`p-1 border-b border-border border-l border-l-border/50 align-top ${off ? "bg-amber-100/40 dark:bg-amber-900/25" : ""}`}
                     >
                       {hasContent ? (
                         <div className="space-y-1">
