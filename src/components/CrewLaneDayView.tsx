@@ -435,7 +435,7 @@ function CrewSection({
                     )}
                   </div>
                   <div
-                    className="flex-1 relative min-h-[52px] cursor-pointer"
+                    className="flex-1 relative min-h-[90px] cursor-pointer"
                     onClick={() => onCellClick(crew.id, "full_day")}
                   >
                     {/* Off-hours shading */}
@@ -475,14 +475,14 @@ function CrewSection({
                       return (
                         <div
                           key={a.id}
-                          className="absolute top-1 bottom-1 z-[2]"
+                          className="absolute top-1 bottom-1 z-[2] overflow-hidden"
                           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                           onClick={(e) => { e.stopPropagation(); onCardClick(a); }}
                         >
                           <AppointmentCard
                             appointment={a}
                             crew={crew}
-                            compact
+                            compact={false}
                             hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
                             onClick={() => onCardClick(a)}
                           />
@@ -499,7 +499,7 @@ function CrewSection({
                       return (
                         <div
                           key={rf.rforceOrder.work_order_number}
-                          className="absolute top-1 bottom-1 z-[2]"
+                          className="absolute top-1 bottom-1 z-[2] overflow-hidden"
                           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -509,7 +509,7 @@ function CrewSection({
                           <RForceCard
                             order={rf.rforceOrder}
                             crew={crew}
-                            compact
+                            compact={false}
                             onClick={() =>
                               openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number)
                             }
