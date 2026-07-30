@@ -21,7 +21,7 @@ import {
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { crewHasType, sortByFirstName } from "@/lib/crew-utils";
-import { openSalesforce } from "@/lib/salesforce";
+import RForceDetailSheet from "./RForceDetailSheet";
 import { Plus, Palmtree, MapPinned } from "lucide-react";
 import { format } from "date-fns";
 import dynamic from "next/dynamic";
@@ -44,6 +44,7 @@ export default function CrewLaneDayView({
     block: TimeBlock;
   } | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
+  const [selectedRForce, setSelectedRForce] = useState<{ order: RForceOrder; crew?: Crew } | null>(null);
 
   const dateStr = format(date, "yyyy-MM-dd");
   const offToday = useMemo(
@@ -124,6 +125,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
 
@@ -141,10 +143,28 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
 
-      {/* Install section + seconds + management */}
+      {/* Install management bridge, then install + seconds */}
+      {(filterType === "all" || filterType === "install") &&
+        installManagers.length > 0 && (
+          <CrewSection
+            title="Install Management"
+            crews={installManagers}
+            date={date}
+            appointments={appointments}
+            rforceOrders={rforceOrders}
+            rforceItems={rforceItems}
+            isCrewOff={isCrewOff}
+            onCardClick={setSelectedAppt}
+            onCellClick={(crewId, block) =>
+              setScheduleTarget({ crewId, block })
+            }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+          />
+        )}
       {(filterType === "all" || filterType === "install") &&
         installCrews.length > 0 && (
           <CrewSection
@@ -159,6 +179,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
       {(filterType === "all" || filterType === "install") &&
@@ -175,22 +196,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
-          />
-        )}
-      {(filterType === "all" || filterType === "install") &&
-        installManagers.length > 0 && (
-          <CrewSection
-            title="Install Management"
-            crews={installManagers}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
-            isCrewOff={isCrewOff}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
 
@@ -209,6 +215,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
       {(filterType === "all" || filterType === "service") &&
@@ -225,6 +232,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
 
@@ -243,6 +251,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
       {(filterType === "all" || filterType === "jip") &&
@@ -259,6 +268,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
       {(filterType === "all" || filterType === "jip") &&
@@ -275,6 +285,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
 
@@ -303,6 +314,14 @@ export default function CrewLaneDayView({
           date={date}
           editingAppointment={editingAppt}
           onClose={() => setEditingAppt(null)}
+        />
+      )}
+
+      {selectedRForce && (
+        <RForceDetailSheet
+          order={selectedRForce.order}
+          crew={selectedRForce.crew}
+          onClose={() => setSelectedRForce(null)}
         />
       )}
     </div>
@@ -342,6 +361,7 @@ function CrewSection({
   isCrewOff,
   onCardClick,
   onCellClick,
+  onRForceClick,
 }: {
   title: string;
   crews: Crew[];
@@ -352,6 +372,7 @@ function CrewSection({
   isCrewOff: (crew: Crew) => boolean;
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
+  onRForceClick: (order: RForceOrder, crew: Crew) => void;
 }) {
   const [showMap, setShowMap] = useState(false);
 
@@ -495,7 +516,7 @@ function CrewSection({
                           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                           onClick={(e) => {
                             e.stopPropagation();
-                            openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number);
+                            onRForceClick(rf.rforceOrder, crew);
                           }}
                         >
                           <RForceCard
@@ -503,7 +524,7 @@ function CrewSection({
                             crew={crew}
                             compact={false}
                             onClick={() =>
-                              openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number)
+                              onRForceClick(rf.rforceOrder, crew)
                             }
                           />
                         </div>

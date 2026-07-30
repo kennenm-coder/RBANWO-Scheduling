@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ViewMode } from "@/lib/types";
 import { formatDateFull, formatWeekRange } from "@/lib/calendar-utils";
 import {
@@ -10,9 +10,14 @@ import {
   LayoutGrid,
   Search,
   X,
+  Sun,
+  Moon,
+  Monitor,
+  AlertTriangle,
 } from "lucide-react";
 import { useData } from "./DataProvider";
 import { parseISO } from "date-fns";
+import { Theme, getSavedTheme, applyTheme } from "@/lib/theme";
 
 interface Props {
   currentDate: Date;
@@ -24,6 +29,8 @@ interface Props {
   onDateChange?: (date: Date) => void;
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
+  flagCount?: number;
+  onFlagsClick?: () => void;
 }
 
 export default function CalendarHeader({
@@ -36,12 +43,27 @@ export default function CalendarHeader({
   onDateChange,
   searchQuery = "",
   onSearchChange,
+  flagCount = 0,
+  onFlagsClick,
 }: Props) {
   const { connected } = useData();
   const [searchOpen, setSearchOpen] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [theme, setTheme] = useState<Theme>("system");
   const searchRef = useRef<HTMLInputElement>(null);
   const dateRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const saved = getSavedTheme();
+    setTheme(saved);
+    applyTheme(saved);
+  }, []);
+
+  function cycleTheme() {
+    const next: Theme = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+    setTheme(next);
+    applyTheme(next);
+  }
 
   function handleSearchToggle() {
     if (searchOpen) {
@@ -174,6 +196,21 @@ export default function CalendarHeader({
         >
           <Search size={16} />
         </button>
+        {onFlagsClick && (
+          <button
+            onClick={onFlagsClick}
+            className="relative p-1.5 rounded-full hover:bg-surface"
+            aria-label={`${flagCount} issues`}
+            title={`${flagCount} scheduling issues`}
+          >
+            <AlertTriangle size={16} className={flagCount > 0 ? "text-warning" : "text-muted"} />
+            {flagCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] bg-danger text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5">
+                {flagCount > 99 ? "99+" : flagCount}
+              </span>
+            )}
+          </button>
+        )}
         <div
           className={`w-2 h-2 rounded-full ${connected ? "bg-success" : "bg-danger"}`}
           title={connected ? "Connected" : "Disconnected"}
@@ -194,6 +231,15 @@ export default function CalendarHeader({
           title="Week view"
         >
           <LayoutGrid size={16} />
+        </button>
+        <div className="w-px h-4 bg-border mx-0.5" />
+        <button
+          onClick={cycleTheme}
+          className="p-1.5 rounded-full hover:bg-surface"
+          aria-label={`Theme: ${theme}`}
+          title={`Theme: ${theme} (click to cycle)`}
+        >
+          {theme === "light" ? <Sun size={16} /> : theme === "dark" ? <Moon size={16} /> : <Monitor size={16} />}
         </button>
       </div>
     </header>

@@ -215,6 +215,27 @@ export async function fetchTimeOffRequests(): Promise<TimeOffRequest[]> {
   return (data as TimeOffRequest[]) ?? [];
 }
 
+export async function createTimeOffRequest(
+  req: Omit<TimeOffRequest, "id" | "created_at">
+): Promise<TimeOffRequest | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("time_off_requests")
+    .insert(req)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as TimeOffRequest;
+}
+
+export async function deleteTimeOffRequest(id: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb.from("time_off_requests").delete().eq("id", id);
+  if (error) throw error;
+}
+
 export function getTimeOffForDate(
   requests: TimeOffRequest[],
   dateStr: string

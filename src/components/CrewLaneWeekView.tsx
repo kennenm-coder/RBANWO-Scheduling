@@ -5,10 +5,12 @@ import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
 import AppointmentSheet from "./AppointmentSheet";
+import RForceDetailSheet from "./RForceDetailSheet";
 import ScheduleModal from "./ScheduleModal";
 import {
   Appointment,
   Crew,
+  RForceOrder,
   TimeBlock,
   AppointmentType,
 } from "@/lib/types";
@@ -25,7 +27,6 @@ import { getTimeOffForDate } from "@/lib/store";
 import { getDepartmentSections } from "@/lib/crew-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
-import { openSalesforce } from "@/lib/salesforce";
 import { format, isToday, parseISO, addDays } from "date-fns";
 import { Plus, Palmtree, ChevronDown, ChevronRight } from "lucide-react";
 
@@ -60,6 +61,7 @@ export default function CrewLaneWeekView({
     crewId: string;
     timeBlock?: TimeBlock;
   } | null>(null);
+  const [selectedRForce, setSelectedRForce] = useState<{ order: RForceOrder; crew?: Crew } | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
 
   const offByDay = useMemo(() => {
@@ -240,6 +242,7 @@ export default function CrewLaneWeekView({
                                 searchQuery={searchQuery}
                                 crewObj={crewObj}
                                 onCardClick={setSelectedAppt}
+                                onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
                                 onSchedule={(block) =>
                                   setScheduleTarget({ date: day, crewId: crew.id, timeBlock: block })
                                 }
@@ -261,6 +264,7 @@ export default function CrewLaneWeekView({
                               searchQuery={searchQuery}
                               crewObj={crewObj}
                               onCardClick={setSelectedAppt}
+                              onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
                               onSchedule={() =>
                                 setScheduleTarget({ date: day, crewId: crew.id })
                               }
@@ -286,6 +290,14 @@ export default function CrewLaneWeekView({
             setEditingAppt(selectedAppt);
             setSelectedAppt(null);
           }}
+        />
+      )}
+
+      {selectedRForce && (
+        <RForceDetailSheet
+          order={selectedRForce.order}
+          crew={selectedRForce.crew}
+          onClose={() => setSelectedRForce(null)}
         />
       )}
 
@@ -320,6 +332,7 @@ function MeasureTimeLaneCell({
   searchQuery,
   crewObj,
   onCardClick,
+  onRForceClick,
   onSchedule,
   getMultiDayLabel,
 }: {
@@ -333,6 +346,7 @@ function MeasureTimeLaneCell({
   searchQuery: string;
   crewObj: Crew | undefined;
   onCardClick: (a: Appointment) => void;
+  onRForceClick: (order: RForceOrder) => void;
   onSchedule: (block: TimeBlock) => void;
   getMultiDayLabel: (a: Appointment, d: Date) => string | null;
 }) {
@@ -408,9 +422,7 @@ function MeasureTimeLaneCell({
                           <WeekCard
                             key={rf.rforceOrder.work_order_number}
                             dimmed={dimmed}
-                            onClick={() =>
-                              openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number)
-                            }
+                            onClick={() => onRForceClick(rf.rforceOrder)}
                           >
                             <CompactRForceContent order={rf.rforceOrder} crew={crewObj} />
                           </WeekCard>
@@ -453,6 +465,7 @@ function StandardCell({
   crewObj,
   onCardClick,
   onSchedule,
+  onRForceClick,
   getMultiDayLabel,
 }: {
   crew: Crew;
@@ -466,6 +479,7 @@ function StandardCell({
   crewObj: Crew | undefined;
   onCardClick: (a: Appointment) => void;
   onSchedule: () => void;
+  onRForceClick: (order: RForceOrder) => void;
   getMultiDayLabel: (a: Appointment, d: Date) => string | null;
 }) {
   const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
@@ -526,9 +540,7 @@ function StandardCell({
               <WeekCard
                 key={rf.rforceOrder.work_order_number}
                 dimmed={dimmed}
-                onClick={() =>
-                  openSalesforce(rf.rforceOrder.work_order_number, rf.rforceOrder.order_number)
-                }
+                onClick={() => onRForceClick(rf.rforceOrder)}
               >
                 <CompactRForceContent order={rf.rforceOrder} crew={crewObj} />
               </WeekCard>

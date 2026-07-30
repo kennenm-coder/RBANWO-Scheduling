@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { addDays, subDays, startOfWeek, addWeeks, subWeeks } from "date-fns";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { addDays, subDays, startOfWeek, addWeeks, subWeeks, parseISO, format } from "date-fns";
 import { useSwipe } from "@/hooks/useSwipe";
 import { useData } from "@/components/DataProvider";
 import CalendarHeader from "@/components/CalendarHeader";
@@ -11,7 +11,10 @@ import CrewLaneDayView from "@/components/CrewLaneDayView";
 import CrewLaneWeekView from "@/components/CrewLaneWeekView";
 import UnscheduledQueue from "@/components/UnscheduledQueue";
 import { ViewMode, AppointmentType } from "@/lib/types";
-import { Loader2, PanelLeftOpen, PanelLeftClose } from "lucide-react";
+import TimeOffEditor from "@/components/TimeOffEditor";
+import IssueCenter from "@/components/IssueCenter";
+import { detectFlags } from "@/lib/flags";
+import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff } from "lucide-react";
 
 const VIEW_STORAGE_KEY = "rbanwo-sched-view";
 
@@ -21,17 +24,45 @@ function getSavedView(): ViewMode {
 }
 
 export default function CalendarPage() {
-  const { loading, ensureDateRange } = useData();
+  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [filterType, setFilterType] = useState<AppointmentType | "all">("all");
   const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [timeOffOpen, setTimeOffOpen] = useState(false);
+  const [issuesOpen, setIssuesOpen] = useState(false);
+
+  const flagCount = useMemo(
+    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests).length,
+    [appointments, crews, rforceOrders, timeOffRequests]
+  );
+
+  const initializedRef = useRef(false);
 
   useEffect(() => {
-    setViewMode(getSavedView());
+    const hash = window.location.hash.slice(1);
+    const params = new URLSearchParams(hash);
+    const dateParam = params.get("date");
+    const viewParam = params.get("view") as ViewMode | null;
+    if (dateParam) {
+      try { setCurrentDate(parseISO(dateParam)); } catch {}
+    }
+    if (viewParam === "day" || viewParam === "week") {
+      setViewMode(viewParam);
+      localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
+    } else {
+      setViewMode(getSavedView());
+    }
+    initializedRef.current = true;
   }, []);
+
+  useEffect(() => {
+    if (!initializedRef.current) return;
+    const hash = `date=${format(currentDate, "yyyy-MM-dd")}&view=${viewMode}`;
+    window.history.replaceState(null, "", `#${hash}`);
+  }, [currentDate, viewMode]);
 
   useEffect(() => {
     ensureDateRange(currentDate);
@@ -74,18 +105,31 @@ export default function CalendarPage() {
 
   return (
     <div className="flex h-full">
-      {/* Queue toggle button */}
-      <button
-        onClick={() => setQueueOpen(!queueOpen)}
-        className="shrink-0 w-8 flex flex-col items-center justify-center bg-surface border-r border-border hover:bg-border transition-colors z-20"
-        aria-label={queueOpen ? "Close queue" : "Open queue"}
-        title={queueOpen ? "Close queue" : "Open queue"}
-      >
-        {queueOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-        <span className="text-[9px] text-muted mt-1 [writing-mode:vertical-lr] tracking-wider uppercase">
-          Queue
-        </span>
-      </button>
+      {/* Side rail: Queue toggle + Time Off */}
+      <div className="shrink-0 w-8 flex flex-col bg-surface border-r border-border z-20">
+        <button
+          onClick={() => setQueueOpen(!queueOpen)}
+          className="flex-1 flex flex-col items-center justify-center hover:bg-border transition-colors"
+          aria-label={queueOpen ? "Close queue" : "Open queue"}
+          title={queueOpen ? "Close queue" : "Open queue"}
+        >
+          {queueOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+          <span className="text-[9px] text-muted mt-1 [writing-mode:vertical-lr] tracking-wider uppercase">
+            Queue
+          </span>
+        </button>
+        <button
+          onClick={() => setTimeOffOpen(true)}
+          className="py-3 flex flex-col items-center justify-center hover:bg-border transition-colors border-t border-border"
+          aria-label="Manage time off"
+          title="Manage time off"
+        >
+          <CalendarOff size={16} />
+          <span className="text-[9px] text-muted mt-1 [writing-mode:vertical-lr] tracking-wider uppercase">
+            PTO
+          </span>
+        </button>
+      </div>
 
       {/* Queue panel */}
       <div
@@ -115,6 +159,8 @@ export default function CalendarPage() {
           onDateChange={setCurrentDate}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          flagCount={flagCount}
+          onFlagsClick={() => setIssuesOpen(true)}
         />
 
         <WeekSummary
@@ -152,6 +198,20 @@ export default function CalendarPage() {
           )}
         </div>
       </div>
+      {timeOffOpen && (
+        <TimeOffEditor onClose={() => setTimeOffOpen(false)} />
+      )}
+
+      {issuesOpen && (
+        <IssueCenter
+          onClose={() => setIssuesOpen(false)}
+          onNavigate={(date) => {
+            setCurrentDate(parseISO(date));
+            handleViewChange("day");
+            setIssuesOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -78,9 +78,9 @@ export function getDepartmentSections(crews: Crew[]): DepartmentSection[] {
 
   if (d.measure.length) sections.push({ key: "measure", title: "Measure Techs", crews: d.measure, filterType: "tech_measure" });
   if (d.measureManagement.length) sections.push({ key: "measure-mgmt", title: "Measure Management", crews: d.measureManagement, filterType: "tech_measure" });
+  if (d.installManagement.length) sections.push({ key: "install-mgmt", title: "Install Management", crews: d.installManagement, filterType: "install" });
   if (d.install.length) sections.push({ key: "install", title: "Install", crews: d.install, filterType: "install" });
   if (d.installSeconds.length) sections.push({ key: "install-seconds", title: "Install Seconds", crews: d.installSeconds, filterType: "install" });
-  if (d.installManagement.length) sections.push({ key: "install-mgmt", title: "Install Management", crews: d.installManagement, filterType: "install" });
   if (d.service.length) sections.push({ key: "service", title: "Service", crews: d.service, filterType: "service" });
   if (d.serviceManagement.length) sections.push({ key: "service-mgmt", title: "Service Management", crews: d.serviceManagement, filterType: "service" });
   if (d.jip.length) sections.push({ key: "jip", title: "JIP", crews: d.jip, filterType: "jip" });

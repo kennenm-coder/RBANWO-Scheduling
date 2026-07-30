@@ -23,6 +23,8 @@ import {
   createAppointment as createApptInDb,
   updateAppointment as updateApptInDb,
   cancelAppointment as cancelApptInDb,
+  createTimeOffRequest as createTimeOffInDb,
+  deleteTimeOffRequest as deleteTimeOffInDb,
 } from "@/lib/store";
 import { subscribeToAppointments } from "@/lib/realtime";
 import { addDays, subDays, format } from "date-fns";
@@ -49,6 +51,8 @@ interface DataContextValue {
   ) => Promise<void>;
   refreshData: () => Promise<void>;
   ensureDateRange: (date: Date) => void;
+  addTimeOff: (req: Omit<TimeOffRequest, "id" | "created_at">) => Promise<TimeOffRequest | null>;
+  removeTimeOff: (id: string) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -173,6 +177,25 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handleAddTimeOff = useCallback(
+    async (req: Omit<TimeOffRequest, "id" | "created_at">) => {
+      const result = await createTimeOffInDb(req);
+      if (result) {
+        setTimeOffRequests((prev) => [...prev, result]);
+      }
+      return result;
+    },
+    []
+  );
+
+  const handleRemoveTimeOff = useCallback(
+    async (id: string) => {
+      await deleteTimeOffInDb(id);
+      setTimeOffRequests((prev) => prev.filter((r) => r.id !== id));
+    },
+    []
+  );
+
   return (
     <DataContext.Provider
       value={{
@@ -187,6 +210,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         cancelAppointment: handleCancel,
         refreshData: loadData,
         ensureDateRange,
+        addTimeOff: handleAddTimeOff,
+        removeTimeOff: handleRemoveTimeOff,
       }}
     >
       {children}
