@@ -6,6 +6,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from "react";
 import {
@@ -47,6 +48,7 @@ interface DataContextValue {
     reason?: string
   ) => Promise<void>;
   refreshData: () => Promise<void>;
+  ensureDateRange: (date: Date) => void;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -64,11 +66,12 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
+  const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
 
   const loadData = useCallback(async () => {
     const today = new Date();
     const start = format(subDays(today, 30), "yyyy-MM-dd");
-    const end = format(addDays(today, 90), "yyyy-MM-dd");
+    const end = format(addDays(today, 180), "yyyy-MM-dd");
 
     const [c, a, r, t] = await Promise.all([
       fetchCrews(),
@@ -81,8 +84,28 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     setAppointments(a);
     setRforceOrders(r);
     setTimeOffRequests(t);
+    loadedRangeRef.current = { start, end };
     setLoading(false);
   }, []);
+
+  const ensureDateRange = useCallback(
+    (date: Date) => {
+      if (!loadedRangeRef.current) return;
+      const dateStr = format(date, "yyyy-MM-dd");
+      const margin = format(addDays(date, 14), "yyyy-MM-dd");
+      const marginBefore = format(subDays(date, 14), "yyyy-MM-dd");
+      const { start, end } = loadedRangeRef.current;
+      if (margin > end || marginBefore < start) {
+        const newStart = format(subDays(date, 60), "yyyy-MM-dd");
+        const newEnd = format(addDays(date, 180), "yyyy-MM-dd");
+        loadedRangeRef.current = { start: newStart, end: newEnd };
+        fetchAppointments(newStart, newEnd).then((a) => {
+          setAppointments(a);
+        });
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     loadData();
@@ -163,6 +186,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         updateAppointment: handleUpdate,
         cancelAppointment: handleCancel,
         refreshData: loadData,
+        ensureDateRange,
       }}
     >
       {children}

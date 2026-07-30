@@ -2,6 +2,7 @@
 
 import { Appointment, Crew } from "@/lib/types";
 import { typeLabel } from "@/lib/calendar-utils";
+import { parseCity } from "@/lib/crew-utils";
 import { MapPin, Unlink, AlertTriangle } from "lucide-react";
 
 interface Props {
@@ -20,6 +21,7 @@ export default function AppointmentCard({
   onClick,
 }: Props) {
   const bgColor = crew?.color || "#1a73e8";
+  const city = parseCity(appointment.address);
 
   return (
     <div
@@ -36,7 +38,9 @@ export default function AppointmentCard({
           <Unlink size={10} className="shrink-0 opacity-70" />
         )}
       </div>
-      {!compact && (
+      {compact ? (
+        <div className="truncate opacity-85 mt-0.5">{city}</div>
+      ) : (
         <>
           <div className="flex items-center gap-1 mt-0.5 opacity-90">
             <MapPin size={10} />

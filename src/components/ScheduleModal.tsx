@@ -105,6 +105,7 @@ export default function ScheduleModal({
   const validation = selectedCrew
     ? validateAppointment(
         {
+          id: editingAppointment?.id,
           appointment_type: type,
           time_block: selectedBlock,
           product_count: productCount ? parseInt(productCount) : null,

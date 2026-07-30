@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { addDays, subDays, startOfWeek, addWeeks, subWeeks } from "date-fns";
 import { useSwipe } from "@/hooks/useSwipe";
 import { useData } from "@/components/DataProvider";
@@ -13,13 +13,34 @@ import UnscheduledQueue from "@/components/UnscheduledQueue";
 import { ViewMode, AppointmentType } from "@/lib/types";
 import { Loader2, PanelLeftOpen, PanelLeftClose } from "lucide-react";
 
+const VIEW_STORAGE_KEY = "rbanwo-sched-view";
+
+function getSavedView(): ViewMode {
+  if (typeof window === "undefined") return "week";
+  return (localStorage.getItem(VIEW_STORAGE_KEY) as ViewMode) || "week";
+}
+
 export default function CalendarPage() {
-  const { loading } = useData();
+  const { loading, ensureDateRange } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<ViewMode>("day");
+  const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [filterType, setFilterType] = useState<AppointmentType | "all">("all");
   const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    setViewMode(getSavedView());
+  }, []);
+
+  useEffect(() => {
+    ensureDateRange(currentDate);
+  }, [currentDate, ensureDateRange]);
+
+  const handleViewChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem(VIEW_STORAGE_KEY, mode);
+  }, []);
 
   const navigate = useCallback(
     (direction: "prev" | "next") => {
@@ -57,6 +78,7 @@ export default function CalendarPage() {
       <button
         onClick={() => setQueueOpen(!queueOpen)}
         className="shrink-0 w-8 flex flex-col items-center justify-center bg-surface border-r border-border hover:bg-border transition-colors z-20"
+        aria-label={queueOpen ? "Close queue" : "Open queue"}
         title={queueOpen ? "Close queue" : "Open queue"}
       >
         {queueOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
@@ -89,14 +111,17 @@ export default function CalendarPage() {
           onPrev={() => navigate("prev")}
           onNext={() => navigate("next")}
           onToday={() => setCurrentDate(new Date())}
-          onViewChange={setViewMode}
+          onViewChange={handleViewChange}
+          onDateChange={setCurrentDate}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
         />
 
         <WeekSummary
           currentDate={currentDate}
           onDayClick={(date) => {
             setCurrentDate(date);
-            setViewMode("day");
+            handleViewChange("day");
           }}
         />
 
@@ -117,9 +142,11 @@ export default function CalendarPage() {
           ) : (
             <CrewLaneWeekView
               currentDate={currentDate}
+              filterType={filterType}
+              searchQuery={searchQuery}
               onDayClick={(date) => {
                 setCurrentDate(date);
-                setViewMode("day");
+                handleViewChange("day");
               }}
             />
           )}

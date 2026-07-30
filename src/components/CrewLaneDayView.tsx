@@ -9,7 +9,6 @@ import ScheduleModal from "./ScheduleModal";
 import {
   Appointment,
   Crew,
-  CrewType,
   TimeBlock,
   RForceOrder,
   AppointmentType,
@@ -21,6 +20,7 @@ import {
   RForceCalendarItem,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
+import { crewHasType, sortByFirstName } from "@/lib/crew-utils";
 import { openSalesforce } from "@/lib/salesforce";
 import { Plus, Palmtree, MapPinned } from "lucide-react";
 import { format } from "date-fns";
@@ -85,36 +85,28 @@ export default function CrewLaneDayView({
 
   const activeCrews = crews.filter((c) => c.is_active);
 
-  function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
-    if (types.includes(crew.crew_type)) return true;
-    if (crew.additional_types) {
-      return crew.additional_types.some((t) => types.includes(t));
-    }
-    return false;
-  }
-
   const mainCrews = activeCrews.filter((c) => !crewHasType(c, "misc", "second", "management"));
 
-  const measureCrews = mainCrews.filter((c) => crewHasType(c, "measure_tech"));
-  const installCrews = mainCrews.filter((c) => crewHasType(c, "install_in_house", "install_sub"));
-  const jipCrews = mainCrews.filter((c) => crewHasType(c, "jip"));
-  const serviceCrews = mainCrews.filter((c) => crewHasType(c, "svc"));
+  const measureCrews = sortByFirstName(mainCrews.filter((c) => crewHasType(c, "measure_tech")));
+  const installCrews = sortByFirstName(mainCrews.filter((c) => crewHasType(c, "install_in_house", "install_sub")));
+  const jipCrews = sortByFirstName(mainCrews.filter((c) => crewHasType(c, "jip")));
+  const serviceCrews = sortByFirstName(mainCrews.filter((c) => crewHasType(c, "svc")));
 
   const managementCrews = activeCrews.filter((c) => c.crew_type === "management");
-  const measureManagers = managementCrews.filter((c) => c.manages?.includes("measure"));
-  const installManagers = managementCrews.filter((c) => c.manages?.includes("install"));
-  const serviceManagers = managementCrews.filter((c) => c.manages?.includes("service"));
-  const jipManagers = managementCrews.filter((c) => c.manages?.includes("jip"));
+  const measureManagers = sortByFirstName(managementCrews.filter((c) => c.manages?.includes("measure")));
+  const installManagers = sortByFirstName(managementCrews.filter((c) => c.manages?.includes("install")));
+  const serviceManagers = sortByFirstName(managementCrews.filter((c) => c.manages?.includes("service")));
+  const jipManagers = sortByFirstName(managementCrews.filter((c) => c.manages?.includes("jip")));
 
   const secondCrews = activeCrews.filter((c) => c.crew_type === "second");
-  const installSeconds = secondCrews.filter((c) => {
+  const installSeconds = sortByFirstName(secondCrews.filter((c) => {
     const primary = activeCrews.find((p) => p.id === c.primary_crew_id);
     return primary && (primary.crew_type === "install_in_house" || primary.crew_type === "install_sub");
-  });
-  const jipSeconds = secondCrews.filter((c) => {
+  }));
+  const jipSeconds = sortByFirstName(secondCrews.filter((c) => {
     const primary = activeCrews.find((p) => p.id === c.primary_crew_id);
     return primary && primary.crew_type === "jip";
-  });
+  }));
 
   return (
     <div className="flex-1 overflow-auto">
