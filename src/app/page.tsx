@@ -15,7 +15,7 @@ import IssueCenter from "@/components/IssueCenter";
 import { detectFlags } from "@/lib/flags";
 import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff, ExternalLink } from "lucide-react";
 
-const DUCK_FORCE_PTO_URL = "https://betterthengooglecal-5taw.vercel.app/time-off";
+const DUCK_FORCE_PTO_URL = "https://betterthengooglecal-5taw.vercel.app/time-off?from=scheduler";
 
 const VIEW_STORAGE_KEY = "rbanwo-sched-view";
 
