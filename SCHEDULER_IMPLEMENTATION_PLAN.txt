@@ -1,0 +1,511 @@
+RBANWO SCHEDULING APP — FULL IMPLEMENTATION PLAN
+Prepared from Alyssa's scheduler feedback
+Prepared July 30, 2026
+
+PURPOSE
+
+This is an implementation handoff for a coding agent. The week view is the primary scheduler workspace and must receive the most attention. Preserve the current logo/branding; "Cool logo" is positive feedback, not a change request.
+
+============================================================
+0. MANDATORY GIT SAFETY — DO THIS BEFORE EDITING ANY CODE
+============================================================
+
+The coding agent must not work directly on main.
+
+1. Run:
+   git status --short --branch
+2. Preserve all existing user changes and untracked files. Do not reset, discard, overwrite, or include unrelated changes.
+3. Update refs safely:
+   git fetch origin
+4. Create and switch to a development branch before the first code change:
+   git switch -c codex/scheduler-team-improvements
+   If that branch already exists, switch to it or create a new timestamped branch such as:
+   codex/scheduler-team-improvements-2026-07-30
+5. Immediately verify:
+   git branch --show-current
+   The result must not be main or master.
+6. Add a local guard script and/or package script that fails when implementation/migration commands are run from main. At minimum, every future coding session must verify the branch before editing or committing.
+7. Make small, focused commits by phase. Never commit secrets or .env.local.
+8. Run all tests and a production build before requesting review.
+9. Push the dev branch and open a draft pull request into main. Do not merge it automatically.
+
+Recommended commit groups:
+
+- feat: add scheduler search and week-view foundations
+- feat: add time-aware scheduling and rescheduling
+- feat: add resource roles, recurring time off, and conflicts
+- feat: add accounts, preferences, and appointment audit history
+- feat: add queue drag-drop and flagged issue center
+- fix: constrain map geocoding and improve navigation/accessibility
+- test: cover scheduling conflicts, recurrence, search, and permissions
+
+============================================================
+1. CURRENT APP FINDINGS (READ BEFORE IMPLEMENTING)
+============================================================
+
+The app is Next.js 16/React 19 with Supabase.
+
+Important existing behavior:
+
+- The calendar currently defaults to day view, although Alyssa says week view is the main workspace.
+- Day view has departments, hourly columns, maps, management sections, seconds, time-off indicators, appointment sheets, and edit-modal wiring.
+- Week view is currently a simpler crew-by-seven-days table. Its cells show compact appointment/rForce cards, but it does not expose department sections or measure time slots.
+- The current week view only permits adding an appointment from an empty crew/day cell. A non-empty cell has no add control. This likely explains "when you add an appointment for MT you cannot add another one."
+- Tech-measure blocks already exist in code: 9–10, 10–12, 12–2, 2–4, and 4–6. The schedule modal can select a block, but week view does not display or directly target those blocks.
+- App-created appointments can open an AppointmentSheet with Edit and Cancel actions. Raw rForce cards open Salesforce directly. The scheduler's "cannot make changes" report may refer to rForce-only cards, an undiscoverable click target, or a broken save path. Treat it as a workflow defect and test both card types.
+- The database has scheduled_by, created_at, updated_at, and version fields, but new appointments currently set scheduled_by to null. There is no complete user identity or change-history system.
+- "Delete" is presently implemented as appointment cancellation and crew deactivation, which is safer than hard deletion.
+- Crew types already include measure tech, in-house install, subcontract install, service, JIP, second, management, and misc. Crews can also have additional types; seconds can link to a primary crew; managers can manage multiple departments.
+- Time off is read from an existing time_off_requests table and displayed, but there is no complete scheduler UI for editing it or creating recurring availability blocks.
+- Time-off conflict warnings partially exist. Visual conflict treatment needs to become much stronger and consistent.
+- Geocoding already attempts state bounds validation, but cached/fallback coordinates and records without consistently parsed state can still produce incorrect map locations.
+- Calendar appointments are only initially fetched from 30 days ago through 90 days ahead. This will break reliable navigation/search "months out" unless fetching becomes range-aware.
+- Header view controls are icon-only and lack accessible labels/tooltips.
+- There is no scheduled/unscheduled search, queue drag/drop, flag center, per-user color preference, or real light/dark preference control.
+
+============================================================
+2. PRODUCT DECISIONS / INTERPRETATION OF EACH NOTE
+============================================================
+
+1. "Cool logo"
+   Interpretation: Keep the existing logo and branding unchanged.
+
+2. "Search Bar for unscheduled jobs"
+   Add queue search across homeowner/customer name, order number, work-order number, street address, city, ZIP, work-order type, and assigned resource. Search must be case-insensitive, tolerate punctuation/spaces, show a result count, and have a one-click clear action.
+
+3. "Search bar for scheduled jobs (in week view would be best)"
+   Add a persistent scheduled-job search in the week-view toolbar. Matching jobs remain emphasized; nonmatches should be dimmed or optionally hidden. Results must jump/focus the matching date/crew and work across the currently loaded range. Search the same fields as queue search plus crew name, appointment notes, and flag text.
+
+4. "In week view show homeowner name and address/city"
+   Week cards must display homeowner/customer name and at least city at normal density. On wider screens show street + city; on narrow screens show city with full address in a tooltip/detail sheet. Do this for MT, Install, Service, and JIP/rForce cards.
+
+5. "Week view is where we spend most of our time"
+   Make week view the default and persist the user's last selected view. Build it as the primary high-density desktop workflow. Keep day view available for detailed route/time inspection.
+
+6. "Week view — show time slots for measures and keep them in time order"
+   Within each measure-tech/day cell, render labeled time lanes in chronological order: 9–10, 10–12, 12–2, 2–4, 4–6. Sort both app appointments and rForce-only items by actual scheduled start. Never sort by creation order.
+
+7. "Click on the time you want; can add 2pm before 10am"
+   Every empty time lane is independently clickable. Clicking 2–4 pre-fills that exact block; later clicking 10–12 must still work. Keep an always-visible add affordance for additional appointments even when other blocks are occupied.
+
+8. "After adding one MT appointment, cannot add another"
+   Fix the week-cell design and conflict logic so multiple MT appointments are allowed on the same tech/date when their time blocks do not overlap. The unique database constraint should continue preventing the same crew/date/block combination. Editing an appointment must exclude its own ID from conflict checks.
+
+9. "How do reschedules look — moving from day or installer"
+   Create an explicit reschedule workflow. Dragging or using "Reschedule" can move an appointment to a new date, time block, and/or crew. Show an impact confirmation with old and new assignment, warnings, and a required reason when changing date/crew. Save status/history as a reschedule event without losing the active appointment. Provide Undo immediately after a drag where practical.
+
+10. "Different accounts so we can have the colors as we wish"
+    Add authenticated user accounts and roles. Recommended roles: Scheduler, Manager/Admin, Read Only. Store per-user preferences separately from shared crew data: theme, week/day default, department filters, compact/comfortable density, and optional personal crew-color overrides. Shared default crew colors remain admin-managed.
+
+11. "Day mode vs night mode"
+    Add Light, Dark, and System theme choices. Persist per account, prevent flash on load, and test map/cards/warnings in both modes for readable contrast.
+
+12. "Fix map view since it shows homes not in Ohio"
+    Validate geocodes against the parsed state and expected RBANWO service region before rendering or caching. Do not place a ZIP-center fallback as though it were an exact home. Mark approximate/unresolved locations distinctly. Add an admin action to clear/re-geocode a bad cached address and store provider, precision, validation state, and timestamp. Decide with the business whether valid Michigan/Indiana jobs should also display; do not globally assume Ohio-only if the NWO territory includes border states.
+
+13. "Time off — edit it; recurring blocks"
+    Build a scheduler-managed availability/time-off section. Support create, edit, deactivate/delete, date range, all-day or time range, reason/type, notes, and recurrence. Minimum recurrence: weekly on selected weekdays, start date, optional end date, and per-occurrence exceptions. Example supported rule: Josh McIntyre is SVC Monday/Wednesday/Friday and MT Tuesday/Thursday. Model recurring work-role availability separately from vacation/PTO so "working as MT today" is not displayed as "off."
+
+14. "MAKE THE DEACTIVE MORE UNDERSTANDABLE"
+    Rename ambiguous "Deactivate" actions to "Archive resource" or "Remove from active schedule." Explain that historical appointments remain. Add a confirmation showing impact, an Inactive/Archived badge, a clear Reactivate action, and separate active/archived lists. Never silently delete history.
+
+15. "Add in seconds and 3rd — we go through them quick"
+    Expand helper assignment from a single secondary_crew_id to a many-to-many appointment_resources model with role values Primary, Second, Third/Helper, and optional work dates for multi-day jobs. Provide quick-add helper chips in appointment create/edit, allow rapid reassignment, prevent the same helper from being double-booked, and display helper names compactly on cards. Retain/migrate existing secondary_crew_id data.
+
+16. "Need to be able to delete — but maybe not?"
+    Recommended decision: do not hard-delete normal appointments. Use Cancel with a required reason, cancelled_by/cancelled_at, audit history, and manager-only Restore. Allow permanent deletion only for Admin and only for obvious test/duplicate records, with a second confirmation and audit entry. Resources should be archived, not deleted.
+
+17. "Show who created/changed the appointment"
+    Add immutable audit history. Every create/edit/reschedule/cancel/restore/assignment change records actor ID/name, timestamp, action, and before/after values. Appointment details show "Created by/on," "Last changed by/on," and an expandable history timeline. scheduled_by must no longer be null for authenticated writes.
+
+18. "Make time off more noticeable"
+    Use a high-contrast banner/pattern across the affected crew/time area, label the reason/type, and add an icon plus text (not color alone). Keep the warning visible behind/alongside scheduled work.
+
+19. "If someone is off and there is a job scheduled, make that more known"
+    Treat this as a conflict state: red/amber conflict border, warning icon on both crew row and appointment, conflict count in the header/flag center, and confirmation before scheduling. Do not silently block legitimate manager overrides; require an override reason and log it.
+
+20. "Know installer vs MT vs SVC and use slots per work-order type"
+    Derive eligible resources and time-slot behavior from appointment/work-order type:
+    - Tech Measure: measure techs; measure time blocks.
+    - Install: installer/JIP as allowed by rules; full-day or multi-day.
+    - Service: service resources; configurable timed or full-day blocks.
+    - JIP: JIP resources; configurable full-day/timed behavior.
+    - Management/helper roles appear only when eligible.
+    Prefill type from rForce work_order_type, then filter crew choices accordingly. Permit manager override with a warning/audit entry rather than hiding unusual valid assignments.
+
+21. "Make edits to existing appointments; currently opens rForce"
+    Clicking any calendar card must open a unified local detail sheet first. For app-linked items, Edit changes the scheduler appointment. For rForce-only items, clearly say "Imported from rForce — not yet linked" and offer Schedule/Link plus a separate "Open in rForce" button. Never make the entire card an automatic external navigation. Verify editing date, crew, time, helpers, duration, customer/address, notes, and type.
+
+22. "Make it easier to get months out"
+    Add date picker with month/year selection, "Go to date," and quick jumps (+4 weeks, +8 weeks, +3 months). Make data fetching range-aware and load the visible date range instead of the current fixed +90-day window. Preserve URL/query state so a copied/reloaded URL returns to the same week/date.
+
+23. "Management section between install and MT in day view"
+    Clarify and implement department ordering. Recommended day order:
+    Measure Techs
+    Measure Management
+    Install Management (the requested management bridge)
+    Install
+    Install Helpers
+    Service
+    Service Management
+    JIP
+    JIP Management
+    If schedulers prefer one combined Management section, make the order configurable rather than duplicating a manager in several places.
+
+24. "Week view make individual departments work"
+    Give week view collapsible department sections and make the existing All/Measure/Install/Service/JIP filters work there too. Each section has its own resource rows, management/helper rows as configured, sticky header, job count, conflict count, and collapse state. Deduplicate multi-role people within a section while allowing them in relevant separate sections.
+
+25. "Show the days it is scheduled for, e.g. 9/14–9/21, in day and week"
+    For multi-day appointments show an explicit inclusive range on every card/detail, e.g. "Sep 14–Sep 21 (8 days)." Render the appointment on every covered day, visually connect consecutive days in week view where possible, and clearly identify Start / Day N / End. Date math must be inclusive and timezone-safe.
+
+26. "Add city in week view for installers, SVC, and JIP"
+    Apply the same address/city card treatment to every department, not only MT. Parse city into structured data during import if possible; do not repeatedly guess it in display components.
+
+27. "Alphabetize first names in week and day views"
+    Within each department sort active resource display names case-insensitively by first name, then remaining name as a stable tie-breaker. Management/helper placement rules take priority over alphabetizing across sections. Add an admin-configurable manual order only if later requested.
+
+28. "Drag and drop with Queue"
+    Queue cards become draggable to valid week/day targets. Highlight eligible targets based on work-order type/resource role and show invalid targets with a reason. Dropping opens a compact confirmation/pre-filled schedule form instead of immediately saving. Support keyboard-accessible "Schedule to..." as an equivalent. Keep search/filter state after scheduling and remove/reconcile the item only after a successful save.
+
+29. "Flagged items — top list or bottom tab"
+    Add a top-right flag button with count plus a bottom-nav Issues destination on small screens. The issue center combines automatic flags (time-off conflict, double booking, app/rForce discrepancy, bad/unresolved map, unmatched resource, missing address, stale import) and manual flags (reason, note, severity, assignee, status). Support Open, Snoozed, and Resolved; retain resolution audit history. Clicking a flag navigates to and highlights the job.
+
+============================================================
+3. TARGET UX / INFORMATION ARCHITECTURE
+============================================================
+
+Calendar header:
+
+- Search scheduled jobs (week-first).
+- Date title plus date picker / Go to date.
+- Previous, Today, Next, quick month jumps.
+- Day/Week toggle with visible labels or accessible tooltips.
+- Light/Dark/System theme menu.
+- Flagged issue button and count.
+- Account/profile menu.
+
+Week view:
+
+- Default landing view.
+- Sticky day and resource headers.
+- Department filters and collapsible department sections.
+- First-name alphabetical resource rows.
+- Measure rows contain chronological labeled time lanes.
+- Other department cells display ordered full-day/timed cards as configured.
+- Customer, city/address, date span, helpers, time, type, flags, and time-off conflicts visible without leaving the grid.
+- Add controls remain available in partially occupied cells.
+- Queue drawer remains searchable and supports drag/drop.
+
+Day view:
+
+- Retain detailed timeline and maps.
+- Apply the same department ordering, sorting, unified card click, date spans, conflict treatment, and role rules as week view.
+
+Appointment detail/edit:
+
+- Unified internal detail sheet for local and rForce-only jobs.
+- Edit, Reschedule, Cancel, Restore (permission-based), Flag, Map, and Open in rForce are separate labeled actions.
+- Show audit metadata and full change history.
+
+Admin/resources:
+
+- Clear active vs archived resources.
+- Role/additional-role/helper management.
+- Shared colors and optional per-user color overrides.
+- Recurring availability and time-off editor.
+- Bad-geocode review/retry.
+- User/role administration.
+
+============================================================
+4. DATA MODEL AND MIGRATIONS
+============================================================
+
+Create additive, idempotent Supabase migrations. Do not edit already-applied migration files.
+
+A. Accounts/preferences
+
+- sched_profiles:
+  id (auth.users FK), display_name, role, active, created_at, updated_at
+- sched_user_preferences:
+  user_id, theme, default_view, density, department_filters, color_overrides JSONB, updated_at
+
+B. Appointment audit/cancellation
+
+- Add created_by, updated_by, cancelled_by, cancelled_at, cancellation_reason, last_rescheduled_at as needed.
+- Keep existing created_at, updated_at, scheduled_by, and version.
+- sched_appointment_events:
+  id, appointment_id, action, actor_id, actor_name_snapshot, before JSONB, after JSONB, reason, created_at
+- Write events transactionally with mutations, preferably via RPC/database function so client failure cannot skip history.
+
+C. Multiple assigned resources
+
+- sched_appointment_resources:
+  id, appointment_id, crew_id, role (primary/second/third/helper), start_date, end_date, created_at
+- Unique appointment/crew/role rules as appropriate.
+- Backfill primary crew_id and secondary_crew_id.
+- Keep legacy columns during a compatibility period; remove only in a later reviewed migration.
+
+D. Time off and recurring availability
+
+- If the existing time_off_requests table is externally owned, do not mutate its contract. Add app-owned sched_availability_rules and sched_availability_exceptions.
+- Fields: crew_id, kind (pto/unavailable/role_assignment/block), role/department, start/end time, recurrence rule or selected weekdays, effective_start, effective_end, reason, active, created_by, timestamps.
+- Exceptions support skip/modify a single occurrence.
+- Resolve recurrence into visible occurrences in a tested utility or database view.
+
+E. Flags/issues
+
+- sched_flags:
+  id, appointment_id/rforce_order_id, source (manual/automatic), code, severity, title, detail, status, assignee_id, snoozed_until, created_by, resolved_by, timestamps
+- Prevent duplicate open automatic flags for the same entity/code.
+
+F. Geocache
+
+- Add state, precision (rooftop/street/ZIP), provider, validation_status, validation_message, reviewed_by, updated_at.
+- Invalidate existing cache rows outside their parsed state bounds.
+
+G. Structured location
+
+- Prefer adding customer city/state/ZIP fields to scheduler appointments and imported rForce records or creating a normalized parsing layer. Preserve original address text.
+
+H. Constraints/RLS
+
+- Keep database enforcement for exact crew/date/time conflicts.
+- Add overlap checks for helpers and timed ranges.
+- Update RLS for Scheduler, Manager/Admin, and Read Only.
+- Only admins can hard-delete or manage user roles.
+- All authenticated users can read scheduling data as required; write permissions follow roles.
+
+============================================================
+5. IMPLEMENTATION PHASES
+============================================================
+
+PHASE 1 — Safety, baseline, and tests
+
+1. Create dev branch as specified in Section 0.
+2. Record current build/lint results before code changes.
+3. Add a test framework if none exists (unit/component plus Playwright or equivalent end-to-end).
+4. Add reusable helpers for normalized search, first-name sorting, city/address parsing, visible-range fetching, and type-to-resource/time-block rules.
+5. Add accessible labels to existing icon-only calendar controls.
+
+PHASE 2 — Week-view foundation and search (highest priority)
+
+1. Default/persist week view.
+2. Refactor week view into department sections with working department filters.
+3. Alphabetize resource names by first name within sections.
+4. Add measure time lanes in chronological order.
+5. Keep add buttons in every free lane/cell even when other appointments exist.
+6. Sort all cards by scheduled time.
+7. Show customer, city/address, appointment time, type, helpers, and multi-day range.
+8. Add scheduled search.
+9. Add unscheduled queue search.
+10. Make visible-range data loading support weeks/months beyond +90 days.
+
+PHASE 3 — Unified appointment editing and rescheduling
+
+1. Route every card click to the internal detail sheet.
+2. Separate Open in rForce from card click.
+3. Support Schedule/Link for rForce-only cards.
+4. Fix editing and self-conflict validation.
+5. Add explicit Reschedule action and drag/move support between crew/date/time targets.
+6. Add cancel/restore rather than ordinary hard delete.
+7. Display multi-day jobs across all covered dates.
+
+PHASE 4 — Roles, helpers, time off, and conflict clarity
+
+1. Centralize eligible-resource/time-slot rules.
+2. Implement many-to-many Primary/Second/Third/Helper assignments.
+3. Add quick helper assignment and helper conflict checks.
+4. Build recurring availability/time-off editor.
+5. Add high-contrast time-off overlays and scheduled-while-off conflicts.
+6. Improve archive/deactivate language and behavior.
+7. Finalize management section ordering in day and week views.
+
+PHASE 5 — Accounts, preferences, and audit
+
+1. Add Supabase Auth integration and profile roles.
+2. Populate actor fields on every write.
+3. Add appointment event history.
+4. Add Light/Dark/System preferences.
+5. Add per-user view/filter/density/color preferences.
+6. Enforce RLS and UI permissions.
+
+PHASE 6 — Queue drag/drop and issue center
+
+1. Add accessible queue drag/drop to calendar targets.
+2. Open confirmation form on drop.
+3. Add manual and automatic flag persistence.
+4. Add top flag count and mobile Issues nav.
+5. Navigate from issue to highlighted calendar item.
+
+PHASE 7 — Map reliability and polish
+
+1. Add structured state validation and precision display.
+2. Repair/invalidate bad cached geocodes.
+3. Add bad-location admin review/retry.
+4. Improve month navigation and URL state.
+5. Verify responsive layouts, theme contrast, keyboard behavior, and performance with production-size data.
+
+============================================================
+6. ACCEPTANCE TESTS
+============================================================
+
+Git/process:
+
+- Implementation branch is codex/* and main remains unchanged.
+- No unrelated or secret files are committed.
+- Draft PR targets main only after tests/build pass.
+
+Week view:
+
+- App opens to week view for a new user and restores saved preference afterward.
+- All/Measure/Install/Service/JIP filters correctly change week sections.
+- Names sort by first name within each section.
+- Search finds scheduled jobs by customer, WO/order, address, city, ZIP, crew, notes, and flags.
+- Cards show customer and city/address for MT, Install, Service, and JIP.
+- A multi-day Sep 14–Sep 21 job appears on every applicable date and shows that exact range.
+- A measure tech can be booked at 2–4 first and 10–12 afterward.
+- A second booking in an occupied time block is rejected; a free block succeeds.
+- Editing an appointment without changing its block does not conflict with itself.
+
+Appointment editing/rescheduling:
+
+- Clicking local or rForce-only cards opens the internal detail sheet, never immediately leaves the app.
+- Local appointment fields can be edited and persist after reload.
+- rForce-only detail offers Schedule/Link and a separate Open in rForce action.
+- Moving date, crew, or time records an audit event and reason.
+- Cancelled appointments retain history and can be restored by an authorized user.
+
+Roles/helpers:
+
+- Work-order type preselects valid appointment type, eligible resource roles, and correct time blocks.
+- A job can have Primary, Second, and Third/Helper assignments.
+- A helper cannot be double-booked without an explicit authorized override.
+
+Time off:
+
+- Create/edit a recurring weekly rule and a one-date exception.
+- Josh McIntyre can show SVC M/W/F and MT T/Th without being mislabeled as on PTO.
+- Scheduling on actual time off produces a prominent warning and flag.
+- Authorized override requires a reason and appears in audit history.
+
+Accounts/audit/theme:
+
+- Scheduler, Manager/Admin, and Read Only permissions work in UI and RLS.
+- Creator and last editor appear in appointment detail.
+- Full before/after history is visible and immutable to ordinary users.
+- Light, Dark, and System themes persist and all warning states remain readable.
+- Personal color overrides do not change another user's display.
+
+Queue/issues:
+
+- Queue search filters correctly and clears cleanly.
+- Dragging an unscheduled job highlights only eligible targets.
+- Drop opens confirmation; cancelling it makes no data change.
+- Successful scheduling reconciles/removes the queue item without losing filters.
+- Automatic and manual flags appear in the issue count and can be resolved with history.
+
+Map/navigation:
+
+- An Ohio address cannot render at coordinates outside Ohio.
+- Supported border-state jobs follow the configured service-region policy.
+- ZIP fallback is marked approximate and not presented as a house-level pin.
+- Admin can clear/retry a bad geocode.
+- Go to date can navigate more than three months out and loads appointments for that range.
+- Reloading a dated URL restores the same week/date/filter where appropriate.
+
+Quality:
+
+- npm run lint passes.
+- npm run build passes.
+- Unit, component, and end-to-end tests pass.
+- No obvious console errors.
+- Week view remains usable with realistic crew/job counts at common scheduler desktop widths.
+- Keyboard-only users can search, open details, schedule from queue, and select a target without drag/drop.
+
+============================================================
+7. FILE/COMPONENT IMPACT GUIDE
+============================================================
+
+Likely existing files to refactor:
+
+- src/app/page.tsx — default/persisted view, URL date state, search/flag toolbar integration
+- src/components/CalendarHeader.tsx — search, date picker, view labels, theme/account/flags
+- src/components/CrewLaneWeekView.tsx — primary week workspace redesign
+- src/components/CrewLaneDayView.tsx — ordering, sorting, common cards/conflicts
+- src/components/AppointmentCard.tsx — richer card information and flags
+- src/components/RForceCard.tsx — unified internal detail click
+- src/components/AppointmentSheet.tsx — edit/reschedule/audit/cancel/restore
+- src/components/ScheduleModal.tsx — role-aware slots, helpers, conflict fixes, actor fields
+- src/components/UnscheduledQueue.tsx — search and accessible drag/drop
+- src/components/ResourceManager.tsx — archive clarity, roles, helpers, colors
+- src/components/MapView.tsx and src/components/SectionMap.tsx — precision/validation
+- src/lib/calendar-utils.ts — time ordering, multi-day rendering, role/time rules
+- src/lib/scheduling-rules.ts — overlap, helper, off-work, and self-edit validation
+- src/lib/store.ts and src/components/DataProvider.tsx — range loading, audits, new entities
+- src/lib/geocode.ts — state/service-region validation and cache precision
+- src/lib/types.ts — new profile, preferences, resources, recurrence, events, flags
+- src/app/globals.css — theme, conflicts, time-off patterns, density
+
+Recommended new modules/components:
+
+- ScheduledSearch.tsx
+- DateJumpControl.tsx
+- DepartmentWeekSection.tsx
+- MeasureTimeLanes.tsx
+- AppointmentDetailSheet.tsx (or evolve AppointmentSheet)
+- RescheduleDialog.tsx
+- AssignmentResourcePicker.tsx
+- AvailabilityManager.tsx
+- FlagCenter.tsx
+- ThemeProvider / user-preferences hook
+- search-utils.ts
+- availability-utils.ts
+- assignment-rules.ts
+- audit store/service
+
+Do not combine every feature into CrewLaneWeekView.tsx. Split department, cell, time-lane, card, and drag-target concerns so each is testable.
+
+============================================================
+8. OPEN BUSINESS QUESTIONS — DO NOT LET THESE BLOCK FOUNDATIONAL WORK
+============================================================
+
+Use the recommended defaults below, but present these choices to Alyssa/management before final rollout:
+
+1. Map territory: Ohio only, or also specific Michigan/Indiana/other border counties?
+   Recommended: configurable service-region bounds, not Ohio-only hardcoding.
+
+2. Service/JIP slots: full day, measure-style blocks, or a separate configured set?
+   Recommended: department-configurable slot templates.
+
+3. Combined management section versus managers repeated under departments?
+   Recommended: configurable; default to relevant department sections with deduplication.
+
+4. Permanent delete policy?
+   Recommended: Cancel/Restore for normal use; admin-only hard delete for test/duplicate data.
+
+5. Personal colors: override all crew colors or only selected crews?
+   Recommended: sparse per-user overrides layered over shared defaults.
+
+6. What should automatic flags include and what severity should each receive?
+   Recommended initial high severity: double booking and scheduled while off; medium: rForce discrepancy/unmatched resource/bad map; low: missing optional details/stale import.
+
+7. Should drag/drop save immediately?
+   Recommended: no. Always show a compact confirmation, particularly for schedule-impacting moves.
+
+8. Are recurring role assignments (SVC vs MT workdays) availability or a visible department schedule?
+   Recommended: model them as recurring role availability and use them to place the person in the correct department for each date.
+
+============================================================
+9. DEFINITION OF DONE
+============================================================
+
+This work is done only when:
+
+- The week view is demonstrably the fastest and clearest primary scheduling workspace.
+- Every Alyssa note above is either implemented, explicitly accepted as already satisfied, or documented as a business decision with approval.
+- Search, multiple MT slots, editing, rescheduling, recurring availability, helper assignments, account preferences, audit history, conflicts, flags, map validation, and long-range navigation work together.
+- All schema changes are additive/idempotent and RLS is tested.
+- Accessibility includes labels, non-color conflict cues, keyboard scheduling alternative, and theme contrast.
+- Tests and production build pass.
+- Changes exist only on a codex/* development branch with a reviewed draft PR into main.
+- main was never used as the working branch and was not directly modified.
