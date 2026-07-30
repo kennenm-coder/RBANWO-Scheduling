@@ -11,10 +11,11 @@ import CrewLaneDayView from "@/components/CrewLaneDayView";
 import CrewLaneWeekView from "@/components/CrewLaneWeekView";
 import UnscheduledQueue from "@/components/UnscheduledQueue";
 import { ViewMode, AppointmentType } from "@/lib/types";
-import TimeOffEditor from "@/components/TimeOffEditor";
 import IssueCenter from "@/components/IssueCenter";
 import { detectFlags } from "@/lib/flags";
-import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff } from "lucide-react";
+import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff, ExternalLink } from "lucide-react";
+
+const DUCK_FORCE_PTO_URL = "https://betterthengooglecal-5taw.vercel.app/time-off";
 
 const VIEW_STORAGE_KEY = "rbanwo-sched-view";
 
@@ -31,7 +32,6 @@ export default function CalendarPage() {
   const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [timeOffOpen, setTimeOffOpen] = useState(false);
   const [issuesOpen, setIssuesOpen] = useState(false);
 
   const flagCount = useMemo(
@@ -146,17 +146,20 @@ export default function CalendarPage() {
             Queue
           </span>
         </button>
-        <button
-          onClick={() => setTimeOffOpen(true)}
+        <a
+          href={DUCK_FORCE_PTO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
           className="py-3 flex flex-col items-center justify-center hover:bg-border transition-colors border-t border-border"
-          aria-label="Manage time off"
-          title="Manage time off"
+          aria-label="Open PTO in Duck Force"
+          title="Open PTO in Duck Force"
         >
           <CalendarOff size={16} />
           <span className="text-[9px] text-muted mt-1 [writing-mode:vertical-lr] tracking-wider uppercase">
             PTO
           </span>
-        </button>
+          <ExternalLink size={8} className="text-muted mt-0.5" />
+        </a>
       </div>
 
       {/* Queue panel */}
@@ -226,10 +229,6 @@ export default function CalendarPage() {
           )}
         </div>
       </div>
-      {timeOffOpen && (
-        <TimeOffEditor onClose={() => setTimeOffOpen(false)} />
-      )}
-
       {issuesOpen && (
         <IssueCenter
           onClose={() => setIssuesOpen(false)}
