@@ -90,6 +90,34 @@ export default function CalendarPage() {
     [viewMode]
   );
 
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      switch (e.key) {
+        case "ArrowLeft":
+          navigate("prev");
+          break;
+        case "ArrowRight":
+          navigate("next");
+          break;
+        case "t":
+          if (!e.metaKey && !e.ctrlKey) setCurrentDate(new Date());
+          break;
+        case "d":
+          if (!e.metaKey && !e.ctrlKey) handleViewChange("day");
+          break;
+        case "w":
+          if (!e.metaKey && !e.ctrlKey) handleViewChange("week");
+          break;
+        case "q":
+          if (!e.metaKey && !e.ctrlKey) setQueueOpen((prev) => !prev);
+          break;
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [navigate, handleViewChange]);
+
   const swipeRef = useSwipe({
     onSwipeLeft: () => navigate("next"),
     onSwipeRight: () => navigate("prev"),
@@ -134,11 +162,11 @@ export default function CalendarPage() {
       {/* Queue panel */}
       <div
         className={`shrink-0 border-r border-border bg-background overflow-hidden transition-all duration-300 ${
-          queueOpen ? "w-[380px]" : "w-0"
+          queueOpen ? "w-full sm:w-[380px]" : "w-0"
         }`}
       >
         {queueOpen && (
-          <div className="w-[380px] h-full flex flex-col">
+          <div className="w-full sm:w-[380px] h-full flex flex-col">
             <div className="px-3 py-2 border-b border-border bg-surface flex items-center justify-between">
               <h2 className="text-sm font-semibold">Unscheduled Queue</h2>
             </div>

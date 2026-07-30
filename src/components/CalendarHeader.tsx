@@ -16,6 +16,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useData } from "./DataProvider";
+import ProfileMenu from "./ProfileMenu";
 import { parseISO } from "date-fns";
 import { Theme, getSavedTheme, applyTheme } from "@/lib/theme";
 
@@ -241,6 +242,7 @@ export default function CalendarHeader({
         >
           {theme === "light" ? <Sun size={16} /> : theme === "dark" ? <Moon size={16} /> : <Monitor size={16} />}
         </button>
+        <ProfileMenu />
       </div>
     </header>
   );

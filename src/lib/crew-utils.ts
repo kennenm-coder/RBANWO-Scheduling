@@ -1,4 +1,4 @@
-import { Crew, CrewType } from "./types";
+import { Crew, CrewType, AppointmentType } from "./types";
 
 export function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
   if (types.includes(crew.crew_type)) return true;
@@ -88,4 +88,21 @@ export function getDepartmentSections(crews: Crew[]): DepartmentSection[] {
   if (d.jipManagement.length) sections.push({ key: "jip-mgmt", title: "JIP Management", crews: d.jipManagement, filterType: "jip" });
 
   return sections;
+}
+
+const ELIGIBLE_CREW_TYPES: Record<AppointmentType, CrewType[]> = {
+  tech_measure: ["measure_tech"],
+  install: ["install_in_house", "install_sub", "jip"],
+  service: ["svc"],
+  jip: ["jip"],
+  lswp: ["install_in_house", "install_sub"],
+  hoa: ["install_in_house", "install_sub"],
+  paint_stain: ["install_in_house", "install_sub"],
+};
+
+export function getEligibleCrews(crews: Crew[], appointmentType: AppointmentType): Crew[] {
+  const eligible = ELIGIBLE_CREW_TYPES[appointmentType] || [];
+  return crews.filter(
+    (c) => c.is_active && (eligible.length === 0 || crewHasType(c, ...eligible))
+  );
 }

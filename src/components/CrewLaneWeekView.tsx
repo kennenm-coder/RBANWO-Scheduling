@@ -29,6 +29,7 @@ import { parseCity } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { format, isToday, parseISO, addDays } from "date-fns";
 import { Plus, Palmtree, ChevronDown, ChevronRight } from "lucide-react";
+import { getDraggedOrder } from "@/lib/drag-context";
 
 interface Props {
   currentDate: Date;
@@ -56,10 +57,12 @@ export default function CrewLaneWeekView({
   const days = getWeekDays(currentDate);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
+  const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     date: Date;
     crewId: string;
     timeBlock?: TimeBlock;
+    prefill?: RForceOrder;
   } | null>(null);
   const [selectedRForce, setSelectedRForce] = useState<{ order: RForceOrder; crew?: Crew } | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
@@ -269,6 +272,9 @@ export default function CrewLaneWeekView({
                                 setScheduleTarget({ date: day, crewId: crew.id })
                               }
                               getMultiDayLabel={getMultiDayLabel}
+                              onDrop={(order) =>
+                                setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
+                              }
                             />
                           );
                         })}
@@ -290,6 +296,10 @@ export default function CrewLaneWeekView({
             setEditingAppt(selectedAppt);
             setSelectedAppt(null);
           }}
+          onReschedule={() => {
+            setReschedulingAppt(selectedAppt);
+            setSelectedAppt(null);
+          }}
         />
       )}
 
@@ -309,11 +319,21 @@ export default function CrewLaneWeekView({
         />
       )}
 
+      {reschedulingAppt && (
+        <ScheduleModal
+          date={new Date(reschedulingAppt.scheduled_date)}
+          editingAppointment={reschedulingAppt}
+          rescheduleMode
+          onClose={() => setReschedulingAppt(null)}
+        />
+      )}
+
       {scheduleTarget && (
         <ScheduleModal
           date={scheduleTarget.date}
           crewId={scheduleTarget.crewId}
           timeBlock={scheduleTarget.timeBlock}
+          prefill={scheduleTarget.prefill}
           onClose={() => setScheduleTarget(null)}
         />
       )}
@@ -467,6 +487,7 @@ function StandardCell({
   onSchedule,
   onRForceClick,
   getMultiDayLabel,
+  onDrop,
 }: {
   crew: Crew;
   day: Date;
@@ -481,8 +502,27 @@ function StandardCell({
   onSchedule: () => void;
   onRForceClick: (order: RForceOrder) => void;
   getMultiDayLabel: (a: Appointment, d: Date) => string | null;
+  onDrop?: (order: RForceOrder) => void;
 }) {
+  const [dragOver, setDragOver] = useState(false);
   const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOver(true);
+  }
+
+  function handleDragLeave() {
+    setDragOver(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const order = getDraggedOrder();
+    if (order && onDrop) onDrop(order);
+  }
 
   const sortedAppts = [...cellAppts].sort((a, b) =>
     (a.start_time || "08:00").localeCompare(b.start_time || "08:00")
@@ -490,7 +530,12 @@ function StandardCell({
 
   if (off && !hasContent) {
     return (
-      <td className="p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-100/60 dark:bg-amber-900/30">
+      <td
+        className={`p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-100/60 dark:bg-amber-900/30 ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <div className="w-full h-8 rounded bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
           <Palmtree size={12} className="text-amber-500/70 dark:text-amber-400/60" />
         </div>
@@ -506,7 +551,10 @@ function StandardCell({
           : off
             ? "bg-amber-100/40 dark:bg-amber-900/25"
             : ""
-      }`}
+      } ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       {hasConflict && (
         <div className="text-[9px] text-danger font-semibold px-0.5 flex items-center gap-0.5 mb-0.5">

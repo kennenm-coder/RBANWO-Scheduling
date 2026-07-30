@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import DataProvider from "@/components/DataProvider";
+import AuthProvider from "@/components/AuthProvider";
 import BottomNav from "@/components/BottomNav";
 import "./globals.css";
 
@@ -47,12 +48,14 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body className="h-full flex flex-col">
-        <DataProvider>
-          <main className="flex-1 flex flex-col overflow-hidden">
-            {children}
-          </main>
-          <BottomNav />
-        </DataProvider>
+        <AuthProvider>
+          <DataProvider>
+            <main className="flex-1 flex flex-col overflow-hidden">
+              {children}
+            </main>
+            <BottomNav />
+          </DataProvider>
+        </AuthProvider>
       </body>
     </html>
   );

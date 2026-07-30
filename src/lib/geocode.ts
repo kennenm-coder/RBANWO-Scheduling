@@ -1,8 +1,11 @@
 import { getSupabase } from "./supabase";
 
+export type GeoPrecision = "rooftop" | "street" | "zip" | "unknown";
+
 export interface GeoResult {
   lat: number;
   lng: number;
+  precision?: GeoPrecision;
 }
 
 function addressHash(address: string): string {
@@ -253,14 +256,14 @@ export async function geocodeAddress(address: string): Promise<GeoResult | null>
       }
     }
 
-    // 5. Fall back to zip code center (~2 mile accuracy)
+    // 5. Fall back to zip code center (~2 mile accuracy, marked approximate)
     const zip = extractZip(address);
     if (zip) {
       await new Promise((r) => setTimeout(r, 1100));
       const zipResult = await nominatimZipFallback(zip);
       if (zipResult) {
         await saveGeocode(address, zipResult.lat, zipResult.lng);
-        return zipResult;
+        return { ...zipResult, precision: "zip" as GeoPrecision };
       }
     }
 
@@ -269,6 +272,13 @@ export async function geocodeAddress(address: string): Promise<GeoResult | null>
     return null;
   }
 }
+
+export async function clearAndReGeocode(address: string): Promise<GeoResult | null> {
+  await deleteCachedGeocode(address);
+  return geocodeAddress(address);
+}
+
+export { extractState, isResultInState, STATE_BOUNDS };
 
 async function bulkCacheLookup(addresses: string[]): Promise<Map<string, GeoResult>> {
   const results = new Map<string, GeoResult>();

@@ -15,19 +15,26 @@ import {
   Link2,
   Trash2,
   RotateCcw,
+  ArrowRightLeft,
+  Flag,
 } from "lucide-react";
 import { useState } from "react";
+import EventHistory from "./EventHistory";
 
 interface Props {
   appointment: Appointment;
   onClose: () => void;
   onEdit: () => void;
+  onReschedule?: () => void;
+  onFlag?: () => void;
 }
 
 export default function AppointmentSheet({
   appointment,
   onClose,
   onEdit,
+  onReschedule,
+  onFlag,
 }: Props) {
   const { crews, cancelAppointment, updateAppointment } = useData();
   const [cancelling, setCancelling] = useState(false);
@@ -38,6 +45,9 @@ export default function AppointmentSheet({
   const crew = crews.find((c) => c.id === appointment.crew_id);
   const secondaryCrew = appointment.secondary_crew_id
     ? crews.find((c) => c.id === appointment.secondary_crew_id)
+    : null;
+  const tertiaryCrew = appointment.tertiary_crew_id
+    ? crews.find((c) => c.id === appointment.tertiary_crew_id)
     : null;
   const isCancelled = appointment.status === "cancelled";
 
@@ -114,6 +124,7 @@ export default function AppointmentSheet({
           <InfoRow icon={<User size={16} />} label="Crew">
             {crew?.name || "Unknown"}
             {secondaryCrew && ` + ${secondaryCrew.name}`}
+            {tertiaryCrew && ` + ${tertiaryCrew.name}`}
           </InfoRow>
 
           <InfoRow icon={<Calendar size={16} />} label="Date">
@@ -183,6 +194,8 @@ export default function AppointmentSheet({
             </div>
           )}
 
+          <EventHistory appointmentId={appointment.id} />
+
           {isCancelled ? (
             <div className="pt-4 border-t border-border space-y-3">
               {appointment.reschedule_reason && (
@@ -231,19 +244,44 @@ export default function AppointmentSheet({
               </div>
             </div>
           ) : (
-            <div className="flex gap-2 pt-4 border-t border-border">
-              <button
-                onClick={onEdit}
-                className="flex-1 py-2.5 bg-primary text-white rounded-lg font-medium hover:opacity-90"
-              >
-                Edit
-              </button>
-              <button
-                onClick={() => setShowCancelForm(true)}
-                className="px-4 py-2.5 bg-danger text-white rounded-lg font-medium hover:opacity-90"
-              >
-                <Trash2 size={16} />
-              </button>
+            <div className="pt-4 border-t border-border space-y-2">
+              <div className="flex gap-2">
+                <button
+                  onClick={onEdit}
+                  className="flex-1 py-2.5 bg-primary text-white rounded-lg font-medium hover:opacity-90"
+                >
+                  Edit
+                </button>
+                {onReschedule && (
+                  <button
+                    onClick={onReschedule}
+                    className="px-4 py-2.5 border border-border rounded-lg font-medium hover:bg-surface flex items-center gap-1.5 text-sm"
+                    title="Reschedule to a different date, time, or crew"
+                  >
+                    <ArrowRightLeft size={14} />
+                    Reschedule
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {onFlag && (
+                  <button
+                    onClick={onFlag}
+                    className="px-3 py-1.5 border border-border rounded-lg text-xs hover:bg-surface flex items-center gap-1"
+                  >
+                    <Flag size={12} />
+                    Flag
+                  </button>
+                )}
+                <div className="flex-1" />
+                <button
+                  onClick={() => setShowCancelForm(true)}
+                  className="px-3 py-1.5 bg-danger text-white rounded-lg text-xs hover:opacity-90 flex items-center gap-1"
+                >
+                  <Trash2 size={12} />
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
         </div>

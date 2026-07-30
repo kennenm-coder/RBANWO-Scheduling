@@ -44,6 +44,7 @@ export default function CrewLaneDayView({
     block: TimeBlock;
   } | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
+  const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
   const [selectedRForce, setSelectedRForce] = useState<{ order: RForceOrder; crew?: Crew } | null>(null);
 
   const dateStr = format(date, "yyyy-MM-dd");
@@ -297,6 +298,10 @@ export default function CrewLaneDayView({
             setEditingAppt(selectedAppt);
             setSelectedAppt(null);
           }}
+          onReschedule={() => {
+            setReschedulingAppt(selectedAppt);
+            setSelectedAppt(null);
+          }}
         />
       )}
 
@@ -314,6 +319,15 @@ export default function CrewLaneDayView({
           date={date}
           editingAppointment={editingAppt}
           onClose={() => setEditingAppt(null)}
+        />
+      )}
+
+      {reschedulingAppt && (
+        <ScheduleModal
+          date={date}
+          editingAppointment={reschedulingAppt}
+          rescheduleMode
+          onClose={() => setReschedulingAppt(null)}
         />
       )}
 
