@@ -192,3 +192,34 @@ export interface TimeOffRequest {
   end_date: string | null;
   created_at: string;
 }
+
+export type AvailabilityKind = "pto" | "unavailable" | "role_assignment" | "block";
+
+export interface AvailabilityRule {
+  id: string;
+  crew_id: string;
+  kind: AvailabilityKind;
+  department: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  weekdays: number[];
+  repeat_interval: number;
+  effective_start: string;
+  effective_end: string | null;
+  reason: string | null;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AvailabilityException {
+  id: string;
+  rule_id: string;
+  exception_date: string;
+  action: "skip" | "modify";
+  override_start_time: string | null;
+  override_end_time: string | null;
+  reason: string | null;
+  created_at: string;
+}

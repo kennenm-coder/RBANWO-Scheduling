@@ -20,10 +20,17 @@ export const metadata: Metadata = {
   title: "RBANWO Scheduling",
   description: "Renewal by Andersen NWO — Scheduling Workspace",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "Scheduling",
+  },
+  other: {
+    google: "notranslate",
   },
 };
 
@@ -32,7 +39,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: "#1a73e8",
+  themeColor: "#3B7A33",
 };
 
 export default function RootLayout({
@@ -43,11 +50,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full`}
+      translate="no"
+      className={`${geistSans.variable} ${geistMono.variable} h-full notranslate`}
     >
-      <head>
-        <link rel="apple-touch-icon" href="/icon-192.png" />
-      </head>
       <body className="h-full flex flex-col">
         <AuthProvider>
           <DataProvider>

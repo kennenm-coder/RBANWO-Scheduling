@@ -6,6 +6,8 @@ import {
   CsvImport,
   TimeOffRequest,
   AppointmentEvent,
+  AvailabilityRule,
+  AvailabilityException,
 } from "./types";
 
 // ── Crews ──
@@ -269,4 +271,81 @@ export function getTimeOffForDate(
     const end = r.end_date || r.start_date;
     return dateStr >= start && dateStr <= end;
   });
+}
+
+// ── Availability Rules ──
+
+export async function fetchAvailabilityRules(): Promise<{
+  rules: AvailabilityRule[];
+  exceptions: AvailabilityException[];
+}> {
+  const sb = getSupabase();
+  if (!sb) return { rules: [], exceptions: [] };
+  const { data } = await sb
+    .from("sched_availability_rules")
+    .select("*, sched_availability_exceptions(*)")
+    .eq("is_active", true);
+  if (!data) return { rules: [], exceptions: [] };
+  const rules: AvailabilityRule[] = [];
+  const exceptions: AvailabilityException[] = [];
+  for (const row of data) {
+    const { sched_availability_exceptions: excs, ...rule } = row;
+    rules.push(rule as AvailabilityRule);
+    if (Array.isArray(excs)) {
+      exceptions.push(...(excs as AvailabilityException[]));
+    }
+  }
+  return { rules, exceptions };
+}
+
+export async function upsertAvailabilityRule(
+  rule: Partial<AvailabilityRule> & {
+    crew_id: string;
+    kind: AvailabilityRule["kind"];
+    effective_start: string;
+  }
+): Promise<AvailabilityRule | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_availability_rules")
+    .upsert({ ...rule, updated_at: new Date().toISOString() })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as AvailabilityRule | null;
+}
+
+export async function deleteAvailabilityRule(id: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("sched_availability_rules")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function upsertAvailabilityException(
+  exc: Omit<AvailabilityException, "id" | "created_at">
+): Promise<AvailabilityException | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_availability_exceptions")
+    .upsert(exc)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as AvailabilityException | null;
+}
+
+export async function deleteAvailabilityException(id: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("sched_availability_exceptions")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
 }
