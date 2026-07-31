@@ -15,6 +15,7 @@ import {
 } from "@/lib/calendar-utils";
 import { buildSalesforceUrl } from "@/lib/salesforce";
 import { validateAppointment } from "@/lib/scheduling-rules";
+import { getEligibleCrews } from "@/lib/crew-utils";
 import { useData } from "./DataProvider";
 import { X, AlertTriangle, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
@@ -25,6 +26,7 @@ interface Props {
   timeBlock?: TimeBlock;
   prefill?: RForceOrder;
   editingAppointment?: Appointment;
+  rescheduleMode?: boolean;
   onClose: () => void;
 }
 
@@ -34,6 +36,7 @@ export default function ScheduleModal({
   timeBlock: initialTimeBlock,
   prefill,
   editingAppointment,
+  rescheduleMode,
   onClose,
 }: Props) {
   const {
@@ -57,6 +60,9 @@ export default function ScheduleModal({
   );
   const [secondaryCrewId, setSecondaryCrewId] = useState(
     editingAppointment?.secondary_crew_id || ""
+  );
+  const [tertiaryCrewId, setTertiaryCrewId] = useState(
+    editingAppointment?.tertiary_crew_id || ""
   );
   const [selectedDate, setSelectedDate] = useState(
     editingAppointment?.scheduled_date || format(date, "yyyy-MM-dd")
@@ -89,10 +95,13 @@ export default function ScheduleModal({
   const [notes, setNotes] = useState(
     editingAppointment?.notes || ""
   );
+  const [rescheduleReason, setRescheduleReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const timeBlocks = getTimeBlocksForType(type);
+  const eligibleCrews = getEligibleCrews(crews, type);
+  const otherCrews = crews.filter((c) => c.is_active && !eligibleCrews.some((e) => e.id === c.id));
   const selectedCrew = crews.find((c) => c.id === selectedCrewId);
 
   const dayAppts = appointments.filter(
@@ -105,6 +114,7 @@ export default function ScheduleModal({
   const validation = selectedCrew
     ? validateAppointment(
         {
+          id: editingAppointment?.id,
           appointment_type: type,
           time_block: selectedBlock,
           product_count: productCount ? parseInt(productCount) : null,
@@ -121,6 +131,10 @@ export default function ScheduleModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCrewId || !customerName || !address) return;
+    if (rescheduleMode && !rescheduleReason.trim()) {
+      setError("A reason is required when rescheduling.");
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -138,6 +152,7 @@ export default function ScheduleModal({
           {
             crew_id: selectedCrewId,
             secondary_crew_id: secondaryCrewId || null,
+            tertiary_crew_id: tertiaryCrewId || null,
             appointment_type: type,
             scheduled_date: selectedDate,
             start_time: start,
@@ -151,12 +166,17 @@ export default function ScheduleModal({
             product_count: productCount ? parseInt(productCount) : null,
             notes: notes || null,
             salesforce_url: salesforceUrl,
+            ...(rescheduleMode ? {
+              reschedule_reason: rescheduleReason.trim(),
+              status: "rescheduled" as const,
+            } : {}),
           }
         );
       } else {
         await createAppointment({
           crew_id: selectedCrewId,
           secondary_crew_id: secondaryCrewId || null,
+          tertiary_crew_id: tertiaryCrewId || null,
           appointment_type: type,
           scheduled_date: selectedDate,
           start_time: start,
@@ -200,7 +220,7 @@ export default function ScheduleModal({
       <div className="relative bg-background rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg max-h-[90vh] overflow-y-auto animate-slide-up safe-area-bottom">
         <div className="sticky top-0 bg-background p-4 flex items-center justify-between border-b border-border z-10">
           <h2 className="text-lg font-semibold">
-            {editingAppointment ? "Edit Appointment" : "New Appointment"}
+            {rescheduleMode ? "Reschedule Appointment" : editingAppointment ? "Edit Appointment" : "New Appointment"}
           </h2>
           <button
             onClick={onClose}
@@ -257,11 +277,20 @@ export default function ScheduleModal({
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
               >
                 <option value="">Select crew...</option>
-                {crews.map((c) => (
+                {eligibleCrews.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
+                {otherCrews.length > 0 && (
+                  <optgroup label="Other (override)">
+                    {otherCrews.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
             <div>
@@ -285,41 +314,61 @@ export default function ScheduleModal({
           </div>
 
           {type !== "tech_measure" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-muted mb-1">
-                  Duration (days)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={durationDays}
-                  onChange={(e) => setDurationDays(e.target.value)}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">
-                  Secondary Crew
-                </label>
-                <select
-                  value={secondaryCrewId}
-                  onChange={(e) => setSecondaryCrewId(e.target.value)}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
-                >
-                  <option value="">None</option>
-                  {crews
-                    .filter((c) => c.id !== selectedCrewId)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
+            <div>
+              <label className="block text-xs text-muted mb-1">
+                Duration (days)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={durationDays}
+                onChange={(e) => setDurationDays(e.target.value)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+              />
             </div>
           )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-muted mb-1">
+                Second
+              </label>
+              <select
+                value={secondaryCrewId}
+                onChange={(e) => setSecondaryCrewId(e.target.value)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+              >
+                <option value="">None</option>
+                {crews
+                  .filter((c) => c.is_active && c.id !== selectedCrewId && c.id !== tertiaryCrewId)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-muted mb-1">
+                Third / Helper
+              </label>
+              <select
+                value={tertiaryCrewId}
+                onChange={(e) => setTertiaryCrewId(e.target.value)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+              >
+                <option value="">None</option>
+                {crews
+                  .filter((c) => c.is_active && c.id !== selectedCrewId && c.id !== secondaryCrewId)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
 
           <div>
             <label className="block text-xs text-muted mb-1">
@@ -423,6 +472,22 @@ export default function ScheduleModal({
             </div>
           )}
 
+          {rescheduleMode && (
+            <div>
+              <label className="block text-xs text-muted mb-1">
+                Reschedule Reason <span className="text-danger">*</span>
+              </label>
+              <textarea
+                value={rescheduleReason}
+                onChange={(e) => setRescheduleReason(e.target.value)}
+                placeholder="e.g. Customer requested different date, crew conflict..."
+                required
+                rows={2}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background resize-none"
+              />
+            </div>
+          )}
+
           {error && (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-800 dark:text-red-200">
               {error}
@@ -436,9 +501,11 @@ export default function ScheduleModal({
           >
             {saving
               ? "Saving..."
-              : editingAppointment
-                ? "Update Appointment"
-                : "Schedule Appointment"}
+              : rescheduleMode
+                ? "Reschedule Appointment"
+                : editingAppointment
+                  ? "Update Appointment"
+                  : "Schedule Appointment"}
           </button>
         </form>
       </div>

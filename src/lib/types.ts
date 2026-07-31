@@ -55,6 +55,7 @@ export interface Appointment {
   id: string;
   crew_id: string;
   secondary_crew_id: string | null;
+  tertiary_crew_id: string | null;
   appointment_type: AppointmentType;
   order_number: string | null;
   work_order_number: string | null;
@@ -150,6 +151,29 @@ export interface ReconciliationResult {
   windows?: number;
   patioDoors?: number;
   doors?: number;
+}
+
+export type AppointmentEventAction =
+  | "created"
+  | "updated"
+  | "rescheduled"
+  | "cancelled"
+  | "restored"
+  | "helper_added"
+  | "helper_removed"
+  | "linked"
+  | "flagged";
+
+export interface AppointmentEvent {
+  id: string;
+  appointment_id: string;
+  action: AppointmentEventAction;
+  actor_id: string | null;
+  actor_name_snapshot: string | null;
+  before_state: Record<string, unknown> | null;
+  after_state: Record<string, unknown> | null;
+  reason: string | null;
+  created_at: string;
 }
 
 export type ViewMode = "day" | "week";

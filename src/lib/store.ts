@@ -5,6 +5,7 @@ import {
   RForceOrder,
   CsvImport,
   TimeOffRequest,
+  AppointmentEvent,
 } from "./types";
 
 // ── Crews ──
@@ -213,6 +214,50 @@ export async function fetchTimeOffRequests(): Promise<TimeOffRequest[]> {
     .select("*")
     .order("start_date", { ascending: true });
   return (data as TimeOffRequest[]) ?? [];
+}
+
+export async function createTimeOffRequest(
+  req: Omit<TimeOffRequest, "id" | "created_at">
+): Promise<TimeOffRequest | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("time_off_requests")
+    .insert(req)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as TimeOffRequest;
+}
+
+export async function deleteTimeOffRequest(id: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb.from("time_off_requests").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ── Appointment Events ──
+
+export async function createAppointmentEvent(
+  event: Omit<AppointmentEvent, "id" | "created_at">
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  await sb.from("sched_appointment_events").insert(event);
+}
+
+export async function fetchAppointmentEvents(
+  appointmentId: string
+): Promise<AppointmentEvent[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("sched_appointment_events")
+    .select("*")
+    .eq("appointment_id", appointmentId)
+    .order("created_at", { ascending: false });
+  return (data as AppointmentEvent[]) ?? [];
 }
 
 export function getTimeOffForDate(

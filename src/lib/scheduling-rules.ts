@@ -9,7 +9,7 @@ interface ValidationResult {
 }
 
 export function validateAppointment(
-  appointment: Partial<Appointment>,
+  appointment: Partial<Appointment> & { id?: string },
   existingForDay: Appointment[],
   crew: Crew,
   allCrews: Crew[],
@@ -17,6 +17,10 @@ export function validateAppointment(
 ): ValidationResult {
   const warnings: string[] = [];
   const errors: string[] = [];
+
+  const otherAppts = existingForDay.filter(
+    (a) => a.status !== "cancelled" && a.id !== appointment.id
+  );
 
   if (appointment.scheduled_date && timeOffRequests) {
     const offToday = getTimeOffForDate(timeOffRequests, appointment.scheduled_date);
@@ -33,9 +37,7 @@ export function validateAppointment(
   }
 
   if (appointment.appointment_type === "tech_measure") {
-    const crewAppts = existingForDay.filter(
-      (a) => a.crew_id === crew.id && a.status !== "cancelled"
-    );
+    const crewAppts = otherAppts.filter((a) => a.crew_id === crew.id);
     if (crewAppts.length >= 4) {
       warnings.push(
         `${crew.name} already has ${crewAppts.length} appointments this day (max recommended: 3-4)`
@@ -51,11 +53,8 @@ export function validateAppointment(
     appointment.appointment_type === "install" ||
     appointment.appointment_type === "jip"
   ) {
-    const crewAppts = existingForDay.filter(
-      (a) =>
-        a.crew_id === crew.id &&
-        a.status !== "cancelled" &&
-        a.time_block === "full_day"
+    const crewAppts = otherAppts.filter(
+      (a) => a.crew_id === crew.id && a.time_block === "full_day"
     );
     if (crewAppts.length > 0) {
       errors.push(
@@ -72,11 +71,10 @@ export function validateAppointment(
     }
   }
 
-  const blockConflict = existingForDay.find(
+  const blockConflict = otherAppts.find(
     (a) =>
       a.crew_id === crew.id &&
-      a.time_block === appointment.time_block &&
-      a.status !== "cancelled"
+      a.time_block === appointment.time_block
   );
   if (blockConflict) {
     errors.push(

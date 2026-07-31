@@ -48,7 +48,7 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([style*="color-scheme: light"]) {
     --background: #1f1f1f;
     --foreground: #e8eaed;
     --primary: #8ab4f8;
@@ -59,6 +59,18 @@ body {
     --rba-green: #6aad4a;
     --rba-green-light: #2d3a27;
   }
+}
+
+:root.dark {
+  --background: #1f1f1f;
+  --foreground: #e8eaed;
+  --primary: #8ab4f8;
+  --primary-light: #303134;
+  --border: #3c4043;
+  --muted: #9aa0a6;
+  --surface: #303134;
+  --rba-green: #6aad4a;
+  --rba-green-light: #2d3a27;
 }
 
 * {

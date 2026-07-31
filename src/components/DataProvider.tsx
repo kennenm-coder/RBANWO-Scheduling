@@ -6,6 +6,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from "react";
 import {
@@ -22,6 +23,8 @@ import {
   createAppointment as createApptInDb,
   updateAppointment as updateApptInDb,
   cancelAppointment as cancelApptInDb,
+  createTimeOffRequest as createTimeOffInDb,
+  deleteTimeOffRequest as deleteTimeOffInDb,
 } from "@/lib/store";
 import { subscribeToAppointments } from "@/lib/realtime";
 import { addDays, subDays, format } from "date-fns";
@@ -47,6 +50,9 @@ interface DataContextValue {
     reason?: string
   ) => Promise<void>;
   refreshData: () => Promise<void>;
+  ensureDateRange: (date: Date) => void;
+  addTimeOff: (req: Omit<TimeOffRequest, "id" | "created_at">) => Promise<TimeOffRequest | null>;
+  removeTimeOff: (id: string) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -64,11 +70,12 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
+  const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
 
   const loadData = useCallback(async () => {
     const today = new Date();
     const start = format(subDays(today, 30), "yyyy-MM-dd");
-    const end = format(addDays(today, 90), "yyyy-MM-dd");
+    const end = format(addDays(today, 180), "yyyy-MM-dd");
 
     const [c, a, r, t] = await Promise.all([
       fetchCrews(),
@@ -81,8 +88,28 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     setAppointments(a);
     setRforceOrders(r);
     setTimeOffRequests(t);
+    loadedRangeRef.current = { start, end };
     setLoading(false);
   }, []);
+
+  const ensureDateRange = useCallback(
+    (date: Date) => {
+      if (!loadedRangeRef.current) return;
+      const dateStr = format(date, "yyyy-MM-dd");
+      const margin = format(addDays(date, 14), "yyyy-MM-dd");
+      const marginBefore = format(subDays(date, 14), "yyyy-MM-dd");
+      const { start, end } = loadedRangeRef.current;
+      if (margin > end || marginBefore < start) {
+        const newStart = format(subDays(date, 60), "yyyy-MM-dd");
+        const newEnd = format(addDays(date, 180), "yyyy-MM-dd");
+        loadedRangeRef.current = { start: newStart, end: newEnd };
+        fetchAppointments(newStart, newEnd).then((a) => {
+          setAppointments(a);
+        });
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     loadData();
@@ -150,6 +177,25 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handleAddTimeOff = useCallback(
+    async (req: Omit<TimeOffRequest, "id" | "created_at">) => {
+      const result = await createTimeOffInDb(req);
+      if (result) {
+        setTimeOffRequests((prev) => [...prev, result]);
+      }
+      return result;
+    },
+    []
+  );
+
+  const handleRemoveTimeOff = useCallback(
+    async (id: string) => {
+      await deleteTimeOffInDb(id);
+      setTimeOffRequests((prev) => prev.filter((r) => r.id !== id));
+    },
+    []
+  );
+
   return (
     <DataContext.Provider
       value={{
@@ -163,6 +209,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         updateAppointment: handleUpdate,
         cancelAppointment: handleCancel,
         refreshData: loadData,
+        ensureDateRange,
+        addTimeOff: handleAddTimeOff,
+        removeTimeOff: handleRemoveTimeOff,
       }}
     >
       {children}

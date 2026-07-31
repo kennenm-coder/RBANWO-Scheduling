@@ -21,7 +21,10 @@ import {
   CheckCircle2,
   Clock,
   XCircle,
+  Search,
+  X,
 } from "lucide-react";
+import { setDraggedOrder } from "@/lib/drag-context";
 
 const STATUS_CONFIG: Record<
   ReconciliationStatus,
@@ -74,6 +77,7 @@ const STATUS_CONFIG: Record<
 export default function UnscheduledQueue() {
   const { rforceOrders, appointments, crews } = useData();
   const [filter, setFilter] = useState<ReconciliationStatus | "all">("unscheduled");
+  const [searchQuery, setSearchQuery] = useState("");
   const [scheduleOrder, setScheduleOrder] = useState<RForceOrder | null>(null);
   const [linkRForceOrder, setLinkRForceOrder] = useState<RForceOrder | null>(null);
   const [linkAppointment, setLinkAppointment] = useState<Appointment | null>(null);
@@ -84,10 +88,24 @@ export default function UnscheduledQueue() {
     (r) => !STATUS_CONFIG[r.status].hidden
   );
 
-  const filtered =
+  const preFiltered =
     filter === "all"
       ? activeResults
       : allResults.filter((r) => r.status === filter);
+
+  const filtered = searchQuery.trim()
+    ? preFiltered.filter((r) => {
+        const q = searchQuery.toLowerCase();
+        return (
+          r.customerName?.toLowerCase().includes(q) ||
+          r.workOrderNumber?.toLowerCase().includes(q) ||
+          r.orderNumber?.toLowerCase().includes(q) ||
+          r.address?.toLowerCase().includes(q) ||
+          r.workOrderType?.toLowerCase().includes(q) ||
+          r.rforceCrew?.toLowerCase().includes(q)
+        );
+      })
+    : preFiltered;
 
   const counts = allResults.reduce(
     (acc, r) => {
@@ -103,6 +121,26 @@ export default function UnscheduledQueue() {
 
   return (
     <div className="flex-1 overflow-auto">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+        <div className="flex items-center gap-1 flex-1 bg-surface border border-border rounded-full px-2 py-1">
+          <Search size={12} className="text-muted shrink-0" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search queue..."
+            className="bg-transparent text-xs outline-none w-full"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery("")} className="p-0.5 text-muted hover:text-foreground">
+              <X size={10} />
+            </button>
+          )}
+        </div>
+        {searchQuery && (
+          <span className="text-[10px] text-muted shrink-0">{filtered.length} results</span>
+        )}
+      </div>
       <div className="flex gap-1 px-4 py-3 overflow-x-auto border-b border-border">
         <FilterChip
           label={`All (${activeResults.length})`}
@@ -133,7 +171,21 @@ export default function UnscheduledQueue() {
           return (
             <div
               key={item.workOrderNumber}
-              className="px-4 py-3 hover:bg-surface"
+              draggable={item.status === "unscheduled" || item.status === "scheduled_rforce_only"}
+              onDragStart={(e) => {
+                const rf = rforceOrders.find((r) => r.work_order_number === item.workOrderNumber);
+                if (rf) {
+                  setDraggedOrder(rf);
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", item.workOrderNumber);
+                }
+              }}
+              onDragEnd={() => setDraggedOrder(null)}
+              className={`px-4 py-3 hover:bg-surface ${
+                (item.status === "unscheduled" || item.status === "scheduled_rforce_only")
+                  ? "cursor-grab active:cursor-grabbing"
+                  : ""
+              }`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">

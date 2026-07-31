@@ -8,7 +8,7 @@ import { Crew, CrewType, ManagesType } from "@/lib/types";
 import { findUnmatchedNames } from "@/lib/unmatched-resources";
 import {
   Plus, Pencil, Trash2, X, Save, AlertTriangle,
-  UserPlus, Link2, ToggleLeft, ToggleRight,
+  UserPlus, Link2, ToggleLeft, ToggleRight, Archive, RotateCcw,
 } from "lucide-react";
 
 const TYPE_ORDER: CrewType[] = [
@@ -101,14 +101,20 @@ export default function ResourceManager() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Remove this resource?")) return;
-    await deactivateCrew(id);
+  const handleArchive = async (crew: Crew) => {
+    if (!confirm(`Archive "${crew.name}"? They will be hidden from the calendar but can be reactivated later.`)) return;
+    await toggleCrewActive(crew.id, false);
     await refreshData();
   };
 
-  const handleToggleActive = async (crew: Crew) => {
-    await toggleCrewActive(crew.id, !crew.is_active);
+  const handleReactivate = async (crew: Crew) => {
+    await toggleCrewActive(crew.id, true);
+    await refreshData();
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Permanently remove this resource? This cannot be undone. Consider archiving instead.")) return;
+    await deactivateCrew(id);
     await refreshData();
   };
 
@@ -148,7 +154,7 @@ export default function ResourceManager() {
         <div>
           <h3 className="text-sm font-semibold">All Resources</h3>
           <p className="text-xs text-muted mt-0.5">
-            {activeCount} active{inactiveCount > 0 && `, ${inactiveCount} inactive`}
+            {activeCount} active{inactiveCount > 0 && `, ${inactiveCount} archived`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -161,7 +167,7 @@ export default function ResourceManager() {
                   : "text-muted border-border hover:bg-surface"
               }`}
             >
-              {showInactive ? "Hide" : "Show"} Inactive
+              {showInactive ? "Hide" : "Show"} Archived
             </button>
           )}
           <button
@@ -272,17 +278,23 @@ export default function ResourceManager() {
                     !c.is_active ? "opacity-40" : ""
                   }`}
                 >
-                  <button
-                    onClick={() => handleToggleActive(c)}
-                    className="shrink-0 text-muted hover:text-foreground"
-                    title={c.is_active ? "Deactivate" : "Activate"}
-                  >
-                    {c.is_active ? (
-                      <ToggleRight size={18} className="text-green-500" />
-                    ) : (
-                      <ToggleLeft size={18} className="text-muted" />
-                    )}
-                  </button>
+                  {c.is_active ? (
+                    <button
+                      onClick={() => handleArchive(c)}
+                      className="shrink-0 text-green-500 hover:text-foreground"
+                      title="Archive resource"
+                    >
+                      <ToggleRight size={18} />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleReactivate(c)}
+                      className="shrink-0 text-muted hover:text-green-500"
+                      title="Reactivate resource"
+                    >
+                      <ToggleLeft size={18} />
+                    </button>
+                  )}
                   <div
                     className="w-4 h-4 rounded-full shrink-0 border border-white shadow-sm"
                     style={{ backgroundColor: c.color }}
@@ -291,8 +303,8 @@ export default function ResourceManager() {
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">{c.name}</span>
                       {!c.is_active && (
-                        <span className="text-[9px] text-muted px-1 py-0.5 border border-border rounded">
-                          Inactive
+                        <span className="text-[9px] text-amber-600 dark:text-amber-400 px-1 py-0.5 border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded">
+                          Archived
                         </span>
                       )}
                       {c.aliases && c.aliases.length > 0 && (
@@ -329,15 +341,36 @@ export default function ResourceManager() {
                         setAliasInput("");
                       }}
                       className="p-1.5 rounded hover:bg-border text-muted"
+                      title="Edit"
                     >
                       <Pencil size={12} />
                     </button>
-                    <button
-                      onClick={() => handleDelete(c.id)}
-                      className="p-1.5 rounded hover:bg-border text-muted"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    {c.is_active ? (
+                      <button
+                        onClick={() => handleArchive(c)}
+                        className="p-1.5 rounded hover:bg-border text-muted"
+                        title="Archive"
+                      >
+                        <Archive size={12} />
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleReactivate(c)}
+                          className="p-1.5 rounded hover:bg-border text-green-500"
+                          title="Reactivate"
+                        >
+                          <RotateCcw size={12} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(c.id)}
+                          className="p-1.5 rounded hover:bg-border text-red-400"
+                          title="Permanently remove"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}

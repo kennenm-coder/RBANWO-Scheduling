@@ -1,9 +1,8 @@
 "use client";
 
 import { RForceOrder, Crew } from "@/lib/types";
-import { typeLabel, typeColor } from "@/lib/calendar-utils";
-import { openSalesforce } from "@/lib/salesforce";
-import { MapPin, ExternalLink } from "lucide-react";
+import { parseCity } from "@/lib/crew-utils";
+import { MapPin } from "lucide-react";
 
 interface Props {
   order: RForceOrder;
@@ -12,19 +11,9 @@ interface Props {
   onClick?: () => void;
 }
 
-function woTypeToApptType(woType: string | null): string {
-  if (!woType) return "install";
-  const lower = woType.toLowerCase();
-  if (lower.includes("tech measure")) return "tech_measure";
-  if (lower.includes("install")) return "install";
-  if (lower.includes("service")) return "service";
-  if (lower.includes("job site") || lower.includes("jip")) return "jip";
-  if (lower.includes("hoa")) return "hoa";
-  return "install";
-}
-
 export default function RForceCard({ order, crew, compact, onClick }: Props) {
   const borderColor = crew?.color || "#888";
+  const city = parseCity(order.address || "");
 
   return (
     <div
@@ -36,7 +25,9 @@ export default function RForceCard({ order, crew, compact, onClick }: Props) {
         {order.customer_name || "Unknown"}
         <span className="text-[9px] opacity-70 font-normal ml-auto shrink-0 bg-white/20 px-1 rounded">rForce</span>
       </div>
-      {!compact && (
+      {compact ? (
+        city && <div className="truncate opacity-85 mt-0.5">{city}</div>
+      ) : (
         <>
           <div className="flex items-center gap-1 mt-0.5 opacity-90">
             <MapPin size={10} />
