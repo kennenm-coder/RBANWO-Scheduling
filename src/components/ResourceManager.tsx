@@ -10,6 +10,7 @@ import {
   Plus, Pencil, Trash2, X, Save, AlertTriangle,
   UserPlus, Link2, ToggleLeft, ToggleRight, Archive, RotateCcw,
 } from "lucide-react";
+import AvailabilityEditor from "./AvailabilityEditor";
 
 const TYPE_ORDER: CrewType[] = [
   "measure_tech",
@@ -556,6 +557,13 @@ export default function ResourceManager() {
                 </div>
               )}
             </div>
+
+            {editing.id && (
+              <AvailabilityEditor
+                crewId={editing.id}
+                onChanged={refreshData}
+              />
+            )}
 
             <button
               onClick={handleSave}

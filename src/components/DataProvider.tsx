@@ -14,12 +14,15 @@ import {
   Crew,
   RForceOrder,
   TimeOffRequest,
+  AvailabilityRule,
+  AvailabilityException,
 } from "@/lib/types";
 import {
   fetchCrews,
   fetchAppointments,
   fetchRForceOrders,
   fetchTimeOffRequests,
+  fetchAvailabilityRules,
   createAppointment as createApptInDb,
   updateAppointment as updateApptInDb,
   cancelAppointment as cancelApptInDb,
@@ -34,6 +37,8 @@ interface DataContextValue {
   appointments: Appointment[];
   rforceOrders: RForceOrder[];
   timeOffRequests: TimeOffRequest[];
+  availabilityRules: AvailabilityRule[];
+  availabilityExceptions: AvailabilityException[];
   loading: boolean;
   connected: boolean;
   createAppointment: (
@@ -68,6 +73,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [rforceOrders, setRforceOrders] = useState<RForceOrder[]>([]);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
+  const [availabilityRules, setAvailabilityRules] = useState<AvailabilityRule[]>([]);
+  const [availabilityExceptions, setAvailabilityExceptions] = useState<AvailabilityException[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
@@ -77,17 +84,20 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const start = format(subDays(today, 30), "yyyy-MM-dd");
     const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-    const [c, a, r, t] = await Promise.all([
+    const [c, a, r, t, av] = await Promise.all([
       fetchCrews(),
       fetchAppointments(start, end),
       fetchRForceOrders(),
       fetchTimeOffRequests(),
+      fetchAvailabilityRules(),
     ]);
 
     setCrews(c);
     setAppointments(a);
     setRforceOrders(r);
     setTimeOffRequests(t);
+    setAvailabilityRules(av.rules);
+    setAvailabilityExceptions(av.exceptions);
     loadedRangeRef.current = { start, end };
     setLoading(false);
   }, []);
@@ -203,6 +213,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         appointments,
         rforceOrders,
         timeOffRequests,
+        availabilityRules,
+        availabilityExceptions,
         loading,
         connected,
         createAppointment: handleCreate,

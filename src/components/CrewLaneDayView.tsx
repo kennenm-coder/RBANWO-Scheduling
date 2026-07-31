@@ -12,6 +12,8 @@ import {
   TimeBlock,
   RForceOrder,
   AppointmentType,
+  AvailabilityRule,
+  AvailabilityException,
 } from "@/lib/types";
 import {
   getAppointmentsForCrewAndDay,
@@ -22,8 +24,9 @@ import {
 import { getTimeOffForDate } from "@/lib/store";
 import { crewHasType, sortByFirstName } from "@/lib/crew-utils";
 import RForceDetailSheet from "./RForceDetailSheet";
-import { Plus, Palmtree, MapPinned } from "lucide-react";
+import { Plus, Palmtree, MapPinned, Ban } from "lucide-react";
 import { format } from "date-fns";
+import { getCrewAvailability, CrewDayAvailability } from "@/lib/availability";
 import dynamic from "next/dynamic";
 
 const SectionMap = dynamic(() => import("./SectionMap"), { ssr: false });
@@ -37,7 +40,7 @@ export default function CrewLaneDayView({
   date,
   filterType = "all",
 }: Props) {
-  const { crews, appointments, rforceOrders, timeOffRequests } = useData();
+  const { crews, appointments, rforceOrders, timeOffRequests, availabilityRules, availabilityExceptions } = useData();
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
@@ -122,6 +125,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -140,6 +145,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -159,6 +166,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -176,6 +185,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -193,6 +204,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -212,6 +225,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -229,6 +244,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -248,6 +265,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -265,6 +284,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -282,6 +303,8 @@ export default function CrewLaneDayView({
             rforceOrders={rforceOrders}
             rforceItems={rforceItems}
             isCrewOff={isCrewOff}
+            availabilityRules={availabilityRules}
+            availabilityExceptions={availabilityExceptions}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -373,6 +396,8 @@ function CrewSection({
   rforceOrders,
   rforceItems,
   isCrewOff,
+  availabilityRules,
+  availabilityExceptions,
   onCardClick,
   onCellClick,
   onRForceClick,
@@ -384,14 +409,13 @@ function CrewSection({
   rforceOrders: RForceOrder[];
   rforceItems: RForceCalendarItem[];
   isCrewOff: (crew: Crew) => boolean;
+  availabilityRules: AvailabilityRule[];
+  availabilityExceptions: AvailabilityException[];
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
   onRForceClick: (order: RForceOrder, crew: Crew) => void;
 }) {
   const [showMap, setShowMap] = useState(false);
-
-  const offHoursLeftPct = ((WORK_START - TIMELINE_START) / TIMELINE_HOURS) * 100;
-  const offHoursRightPct = ((TIMELINE_END - WORK_END) / TIMELINE_HOURS) * 100;
 
   return (
     <div className="mb-6">
@@ -442,37 +466,50 @@ function CrewSection({
               const crewAppts = getAppointmentsForCrewAndDay(appointments, crew.id, date)
                 .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
               const crewRForce = rforceItems.filter((r) => r.crewId === crew.id);
+              const avail = getCrewAvailability(crew.id, date, availabilityRules, availabilityExceptions);
+              const crewUnavailable = !avail.available;
+
+              const [wsH, wsM] = avail.workStart.split(":").map(Number);
+              const [weH, weM] = avail.workEnd.split(":").map(Number);
+              const crewWorkStart = wsH + (wsM || 0) / 60;
+              const crewWorkEnd = weH + (weM || 0) / 60;
+              const crewOffLeft = ((Math.max(crewWorkStart, TIMELINE_START) - TIMELINE_START) / TIMELINE_HOURS) * 100;
+              const crewOffRight = ((TIMELINE_END - Math.min(crewWorkEnd, TIMELINE_END)) / TIMELINE_HOURS) * 100;
 
               return (
-                <div key={crew.id} className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : ""}`}>
-                  <div className={`w-36 shrink-0 p-2 text-xs font-medium ${off ? "bg-amber-100 dark:bg-amber-900/40" : "bg-background"}`}>
+                <div key={crew.id} className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : crewUnavailable ? "bg-muted/5" : ""}`}>
+                  <div className={`w-36 shrink-0 p-2 text-xs font-medium ${off ? "bg-amber-100 dark:bg-amber-900/40" : crewUnavailable ? "bg-muted/5" : "bg-background"}`}>
                     <div className="flex items-center gap-1.5">
                       <div
-                        className={`w-3 h-3 rounded-full shrink-0 ${off ? "opacity-40" : ""}`}
+                        className={`w-3 h-3 rounded-full shrink-0 ${off || crewUnavailable ? "opacity-40" : ""}`}
                         style={{ backgroundColor: crew.color }}
                       />
-                      <span className={off ? "opacity-60 line-through" : ""}>{crew.name}</span>
+                      <span className={off ? "opacity-60 line-through" : crewUnavailable ? "opacity-50" : ""}>{crew.name}</span>
                       {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}
+                      {!off && crewUnavailable && <Ban size={12} className="text-muted/40 shrink-0" />}
                     </div>
-                    {!off && crew.notes && (
+                    {!off && !crewUnavailable && crew.notes && (
                       <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">{crew.notes}</div>
                     )}
                     {off && (
                       <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">Time Off</div>
+                    )}
+                    {!off && crewUnavailable && (
+                      <div className="text-[10px] text-muted/50 mt-0.5 pl-[18px]">{avail.reason || "Unavailable"}</div>
                     )}
                   </div>
                   <div
                     className="flex-1 relative min-h-[90px] cursor-pointer"
                     onClick={() => onCellClick(crew.id, "full_day")}
                   >
-                    {/* Off-hours shading */}
+                    {/* Off-hours shading — per-crew custom hours */}
                     <div
                       className="absolute top-0 bottom-0 left-0 bg-muted/5 dark:bg-muted/10 z-0"
-                      style={{ width: `${offHoursLeftPct}%` }}
+                      style={{ width: `${crewOffLeft}%` }}
                     />
                     <div
                       className="absolute top-0 bottom-0 right-0 bg-muted/5 dark:bg-muted/10 z-0"
-                      style={{ width: `${offHoursRightPct}%` }}
+                      style={{ width: `${crewOffRight}%` }}
                     />
                     {/* Hour gridlines */}
                     {HOUR_LABELS.map((_, i) => {
@@ -490,6 +527,12 @@ function CrewSection({
                     {off && crewAppts.length === 0 && crewRForce.length === 0 && (
                       <div className="absolute inset-0 bg-amber-200/40 dark:bg-amber-800/20 flex items-center justify-center z-[1]">
                         <Palmtree size={14} className="text-amber-500/50 dark:text-amber-400/40" />
+                      </div>
+                    )}
+                    {/* Availability-based unavailable overlay */}
+                    {!off && crewUnavailable && crewAppts.length === 0 && crewRForce.length === 0 && (
+                      <div className="absolute inset-0 bg-muted/8 flex items-center justify-center z-[1]">
+                        <Ban size={14} className="text-muted/25" />
                       </div>
                     )}
                     {/* Appointment cards positioned on timeline */}

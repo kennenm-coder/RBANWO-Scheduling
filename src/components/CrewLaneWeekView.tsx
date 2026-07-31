@@ -35,6 +35,8 @@ import { getEligibleCrews } from "@/lib/crew-utils";
 import { timeBlockStartEnd, appointmentSpansBlock } from "@/lib/calendar-utils";
 import { updateAppointment as updateApptInDb, createAppointmentEvent } from "@/lib/store";
 import { useToast } from "./Toast";
+import { getAllCrewsAvailabilityForWeek, isTimeBlockAvailable, CrewDayAvailability } from "@/lib/availability";
+import { Ban } from "lucide-react";
 
 interface Props {
   currentDate: Date;
@@ -57,7 +59,7 @@ export default function CrewLaneWeekView({
   filterType = "all",
   searchQuery = "",
 }: Props) {
-  const { crews, appointments, rforceOrders, timeOffRequests, updateAppointment } = useData();
+  const { crews, appointments, rforceOrders, timeOffRequests, availabilityRules, availabilityExceptions, updateAppointment } = useData();
   const { showToast } = useToast();
 
   const days = getWeekDays(currentDate);
@@ -89,6 +91,11 @@ export default function CrewLaneWeekView({
     }
     return map;
   }, [days, timeOffRequests]);
+
+  const crewAvailability = useMemo(() => {
+    const crewIds = crews.filter((c) => c.is_active).map((c) => c.id);
+    return getAllCrewsAvailabilityForWeek(crewIds, days[0], availabilityRules, availabilityExceptions);
+  }, [crews, days, availabilityRules, availabilityExceptions]);
 
   const rforceByDay = useMemo(() => {
     const map = new Map<string, RForceCalendarItem[]>();
@@ -386,6 +393,7 @@ export default function CrewLaneWeekView({
                             const cellRForce = dayRForce.filter((r) => r.crewId === crew.id);
                             const hasConflict = off && cellAppts.length > 0;
                             const crewObj = crews.find((c) => c.id === crew.id);
+                            const dayAvail = crewAvailability.get(crew.id)?.get(dateStr);
 
                             if (showTimeLanes) {
                               const blockedFromOtherSections = !isMeasure
@@ -407,6 +415,7 @@ export default function CrewLaneWeekView({
                                   blockedBlocks={blockedFromOtherSections}
                                   sectionType={section.filterType}
                                   timeOffColor={timeOffColor}
+                                  availability={dayAvail}
                                   onCardClick={setSelectedAppt}
                                   onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
                                   onSchedule={(block) =>
@@ -437,6 +446,7 @@ export default function CrewLaneWeekView({
                                 searchQuery={searchQuery}
                                 crewObj={crewObj}
                                 timeOffColor={timeOffColor}
+                                availability={dayAvail}
                                 onCardClick={setSelectedAppt}
                                 onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
                                 onSchedule={() =>
@@ -529,6 +539,7 @@ function MeasureTimeLaneCell({
   blockedBlocks,
   sectionType,
   timeOffColor,
+  availability,
   onCardClick,
   onRForceClick,
   onSchedule,
@@ -549,6 +560,7 @@ function MeasureTimeLaneCell({
   blockedBlocks: Set<TimeBlock>;
   sectionType: string;
   timeOffColor?: string;
+  availability?: CrewDayAvailability;
   onCardClick: (a: Appointment) => void;
   onRForceClick: (order: RForceOrder) => void;
   onSchedule: (block: TimeBlock) => void;
@@ -608,6 +620,7 @@ function MeasureTimeLaneCell({
         <div>
           {MEASURE_TIME_BLOCKS.map((block) => {
             const isBlocked = blockedBlocks.has(block);
+            const isUnavailable = availability ? availability.unavailableBlocks.has(block) : false;
             const blockAppts = allApptsSorted.filter((a) => appointmentSpansBlock(a, block));
             const blockRForce = allRForceSorted.filter((r) => r.timeBlock === block);
             const hasItems = blockAppts.length > 0 || blockRForce.length > 0;
@@ -658,6 +671,10 @@ function MeasureTimeLaneCell({
                   {isFromOtherSection ? (
                     <div className="h-full min-h-[18px] rounded-sm bg-surface/60 flex items-center justify-center">
                       <span className="text-[7px] text-muted/50">booked</span>
+                    </div>
+                  ) : isUnavailable && !hasItems ? (
+                    <div className="h-full min-h-[18px] rounded-sm bg-muted/8 flex items-center justify-center">
+                      <span className="text-[7px] text-muted/40">off</span>
                     </div>
                   ) : hasItems ? (
                     <div>
@@ -732,6 +749,7 @@ function StandardCell({
   searchQuery,
   crewObj,
   timeOffColor,
+  availability,
   onCardClick,
   onSchedule,
   onRForceClick,
@@ -749,6 +767,7 @@ function StandardCell({
   searchQuery: string;
   crewObj: Crew | undefined;
   timeOffColor?: string;
+  availability?: CrewDayAvailability;
   onCardClick: (a: Appointment) => void;
   onSchedule: () => void;
   onRForceClick: (order: RForceOrder) => void;
@@ -759,6 +778,7 @@ function StandardCell({
   const [dragOver, setDragOver] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
   const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
+  const crewUnavailable = availability ? !availability.available : false;
 
   function handleDragOver(e: React.DragEvent) {
     e.preventDefault();
@@ -808,6 +828,21 @@ function StandardCell({
           style={timeOffColor ? { ...offStyle, ...offBorderStyle } : undefined}
         >
           <Palmtree size={10} style={timeOffColor ? { color: `${timeOffColor}90` } : undefined} className={timeOffColor ? "" : "text-time-off/50"} />
+        </div>
+      </td>
+    );
+  }
+
+  if (crewUnavailable && !hasContent) {
+    return (
+      <td
+        className={`p-0.5 border-b border-border border-l border-l-border/30 align-top bg-muted/5 ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <div className="w-full h-6 rounded-sm flex items-center justify-center border border-dashed bg-muted/5 border-muted/20">
+          <Ban size={9} className="text-muted/30" />
         </div>
       </td>
     );
