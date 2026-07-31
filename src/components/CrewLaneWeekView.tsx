@@ -24,12 +24,17 @@ import {
   RForceCalendarItem,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
-import { getDepartmentSections } from "@/lib/crew-utils";
-import { parseCity } from "@/lib/crew-utils";
+import { getDepartmentSections, isDualRole, getBlockedTimeBlocks } from "@/lib/crew-utils";
+import { parseCity, crewHasType } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
+import { getPreferences } from "@/lib/preferences";
 import { format, isToday, parseISO, addDays } from "date-fns";
 import { Plus, Palmtree, ChevronDown, ChevronRight } from "lucide-react";
-import { getDraggedOrder } from "@/lib/drag-context";
+import { getDraggedOrder, getDraggedAppointment, setDraggedAppointment, getResizingAppointment, setResizingAppointment } from "@/lib/drag-context";
+import { getEligibleCrews } from "@/lib/crew-utils";
+import { timeBlockStartEnd, appointmentSpansBlock } from "@/lib/calendar-utils";
+import { updateAppointment as updateApptInDb, createAppointmentEvent } from "@/lib/store";
+import { useToast } from "./Toast";
 
 interface Props {
   currentDate: Date;
@@ -52,7 +57,8 @@ export default function CrewLaneWeekView({
   filterType = "all",
   searchQuery = "",
 }: Props) {
-  const { crews, appointments, rforceOrders, timeOffRequests } = useData();
+  const { crews, appointments, rforceOrders, timeOffRequests, updateAppointment } = useData();
+  const { showToast } = useToast();
 
   const days = getWeekDays(currentDate);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
@@ -66,6 +72,9 @@ export default function CrewLaneWeekView({
   } | null>(null);
   const [selectedRForce, setSelectedRForce] = useState<{ order: RForceOrder; crew?: Crew } | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+
+  const prefs = useMemo(() => getPreferences(), []);
+  const timeOffColor = prefs.time_off_color || undefined;
 
   const offByDay = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -144,6 +153,149 @@ export default function CrewLaneWeekView({
     });
   }
 
+  async function handleAppointmentDrop(
+    appointmentId: string,
+    _sourceCrewId: string,
+    _sourceDate: string,
+    _sourceTimeBlock: TimeBlock | null,
+    targetCrewId: string,
+    targetDate: string,
+    targetTimeBlock: TimeBlock | null
+  ) {
+    const appt = appointments.find((a) => a.id === appointmentId);
+    if (!appt) return;
+
+    if (appt.crew_id === targetCrewId && appt.scheduled_date === targetDate && appt.time_block === targetTimeBlock) return;
+
+    const targetCrew = crews.find((c) => c.id === targetCrewId);
+    if (!targetCrew) return;
+
+    const eligible = getEligibleCrews(crews, appt.appointment_type);
+    if (!eligible.find((c) => c.id === targetCrewId)) {
+      showToast(`${targetCrew.name} cannot handle ${appt.appointment_type.replace(/_/g, " ")} appointments`, "error");
+      return;
+    }
+
+    const existing = appointments.filter(
+      (a) => a.id !== appt.id && a.status !== "cancelled" && a.crew_id === targetCrewId && a.scheduled_date === targetDate
+    );
+    if (targetTimeBlock && targetTimeBlock !== "full_day") {
+      const conflict = existing.find((a) => a.time_block === targetTimeBlock);
+      if (conflict) {
+        showToast(`${targetCrew.name} already has an appointment in that time block`, "error");
+        return;
+      }
+    }
+
+    const times = targetTimeBlock ? timeBlockStartEnd(targetTimeBlock) : { start: "08:00", end: "17:00" };
+
+    let manualOverride = appt.manual_override;
+    let overrideSource = appt.override_source;
+
+    if (appt.work_order_number) {
+      const rf = rforceOrders.find((r) => r.work_order_number === appt.work_order_number);
+      if (rf && rf.scheduled_start) {
+        const rfDate = rf.scheduled_start.slice(0, 10);
+        const rfResource = rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
+        if (targetDate !== rfDate || (rfResource && targetCrew.name.toLowerCase() !== rfResource.toLowerCase())) {
+          manualOverride = true;
+          overrideSource = {
+            crew_name: rfResource || undefined,
+            scheduled_date: rfDate,
+            time_block: appt.time_block || undefined,
+          };
+        } else {
+          manualOverride = false;
+          overrideSource = null;
+        }
+      }
+    }
+
+    try {
+      await updateAppointment(appt.id, appt.version, {
+        crew_id: targetCrewId,
+        scheduled_date: targetDate,
+        time_block: targetTimeBlock,
+        start_time: times.start,
+        end_time: times.end,
+        manual_override: manualOverride,
+        override_source: overrideSource,
+      });
+
+      createAppointmentEvent({
+        appointment_id: appt.id,
+        action: "drag_moved",
+        actor_id: null,
+        actor_name_snapshot: null,
+        before_state: { crew_id: appt.crew_id, scheduled_date: appt.scheduled_date, time_block: appt.time_block },
+        after_state: { crew_id: targetCrewId, scheduled_date: targetDate, time_block: targetTimeBlock },
+        reason: null,
+      });
+
+      showToast(`Moved to ${targetCrew.name} on ${targetDate}`, "success");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      if (msg === "VERSION_CONFLICT") {
+        showToast("Someone else just updated this appointment — please try again", "warning");
+      } else if (msg === "DOUBLE_BOOK") {
+        showToast("That slot is already booked", "error");
+      } else {
+        showToast(`Failed to move: ${msg}`, "error");
+      }
+    }
+  }
+
+  async function handleResizeDrop(appointmentId: string, targetBlock: TimeBlock) {
+    const appt = appointments.find((a) => a.id === appointmentId);
+    if (!appt || !appt.time_block) return;
+
+    const startIdx = MEASURE_TIME_BLOCKS.indexOf(appt.time_block);
+    const targetIdx = MEASURE_TIME_BLOCKS.indexOf(targetBlock);
+    if (startIdx < 0 || targetIdx < 0) return;
+
+    const newEnd = targetIdx > startIdx ? targetBlock : null;
+    if (newEnd === (appt.time_block_end || null)) return;
+
+    if (newEnd) {
+      const dateStr = appt.scheduled_date;
+      for (let i = startIdx; i <= targetIdx; i++) {
+        const block = MEASURE_TIME_BLOCKS[i];
+        if (block === appt.time_block) continue;
+        const conflict = appointments.find(
+          (a) => a.id !== appt.id && a.status !== "cancelled" && a.crew_id === appt.crew_id && a.scheduled_date === dateStr && appointmentSpansBlock(a, block)
+        );
+        if (conflict) {
+          showToast(`Cannot extend — ${MEASURE_TIME_BLOCKS[i]} is occupied`, "error");
+          return;
+        }
+      }
+    }
+
+    const endTimes = newEnd ? timeBlockStartEnd(newEnd) : timeBlockStartEnd(appt.time_block);
+
+    try {
+      await updateAppointment(appt.id, appt.version, {
+        time_block_end: newEnd,
+        end_time: endTimes.end,
+      });
+
+      createAppointmentEvent({
+        appointment_id: appt.id,
+        action: "drag_resized",
+        actor_id: null,
+        actor_name_snapshot: null,
+        before_state: { time_block: appt.time_block, time_block_end: appt.time_block_end },
+        after_state: { time_block: appt.time_block, time_block_end: newEnd },
+        reason: null,
+      });
+
+      showToast(newEnd ? `Extended to ${newEnd}` : "Shrunk to single block", "success");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      showToast(`Failed to resize: ${msg}`, "error");
+    }
+  }
+
   return (
     <div className="flex-1 overflow-auto">
       {filteredSections.map((section) => {
@@ -166,31 +318,31 @@ export default function CrewLaneWeekView({
         }
 
         return (
-          <div key={section.key} className="mb-1">
+          <div key={section.key}>
             <button
               onClick={() => toggleSection(section.key)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 bg-surface sticky top-0 z-10 hover:bg-border/50 transition-colors"
+              className="w-full flex items-center gap-1.5 px-2 py-1 bg-surface sticky top-0 z-10 hover:bg-border/50 transition-colors"
             >
-              {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-              <span className="text-xs font-semibold text-muted uppercase tracking-wider">
+              {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+              <span className="text-[10px] font-semibold text-muted uppercase tracking-wider">
                 {section.title}
               </span>
-              <span className="text-[10px] text-muted ml-1">
-                {sectionJobCount} jobs
+              <span className="text-[9px] text-muted">
+                {sectionJobCount}
               </span>
               {sectionConflictCount > 0 && (
-                <span className="text-[10px] bg-danger text-white px-1.5 rounded-full">
-                  {sectionConflictCount} conflicts
+                <span className="text-[9px] bg-danger text-white px-1 rounded-full">
+                  {sectionConflictCount}
                 </span>
               )}
             </button>
 
             {!isCollapsed && (
               <div className="overflow-x-auto">
-                <table className="w-full border-collapse min-w-[900px]">
+                <table className="w-full border-collapse min-w-[800px]">
                   <thead>
                     <tr>
-                      <th className="w-32 p-1.5 text-[10px] text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
+                      <th className="w-28 px-1 py-0.5 text-[9px] text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
                         Crew
                       </th>
                       {days.map((day) => {
@@ -198,42 +350,82 @@ export default function CrewLaneWeekView({
                         return (
                           <th
                             key={day.toISOString()}
-                            className={`p-1.5 text-[10px] font-medium text-center border-b border-border min-w-[120px] cursor-pointer hover:bg-primary-light ${today ? "bg-primary-light" : ""}`}
+                            className={`px-0.5 py-0.5 text-[9px] font-medium text-center border-b border-border min-w-[100px] cursor-pointer hover:bg-primary-light ${today ? "bg-primary-light" : ""}`}
                             onClick={() => onDayClick(day)}
                           >
-                            <div className={today ? "text-primary font-bold" : ""}>
+                            <span className={today ? "text-primary font-bold" : ""}>
                               {format(day, "EEE")}
-                            </div>
-                            <div className="text-muted">{format(day, "M/d")}</div>
+                            </span>
+                            {" "}
+                            <span className="text-muted">{format(day, "M/d")}</span>
                           </th>
                         );
                       })}
                     </tr>
                   </thead>
                   <tbody>
-                    {section.crews.map((crew) => (
-                      <tr key={crew.id}>
-                        <td className="p-1.5 text-xs font-medium border-b border-border sticky left-0 bg-background z-10">
-                          <div className="flex items-center gap-1">
-                            <div
-                              className="w-2.5 h-2.5 rounded-full shrink-0"
-                              style={{ backgroundColor: crew.color }}
-                            />
-                            <span className="truncate">{crew.name}</span>
-                          </div>
-                        </td>
-                        {days.map((day) => {
-                          const off = isCrewOffOnDay(crew, day);
-                          const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
-                          const dateStr = format(day, "yyyy-MM-dd");
-                          const dayRForce = rforceByDay.get(dateStr) || [];
-                          const cellRForce = dayRForce.filter((r) => r.crewId === crew.id);
-                          const hasConflict = off && cellAppts.length > 0;
-                          const crewObj = crews.find((c) => c.id === crew.id);
+                    {section.crews.map((crew) => {
+                      const showTimeLanes = isMeasure || (isDualRole(crew) && crewHasType(crew, "measure_tech"));
 
-                          if (isMeasure) {
+                      return (
+                        <tr key={crew.id}>
+                          <td className="px-1 py-0.5 text-[10px] font-medium border-b border-border sticky left-0 bg-background z-10">
+                            <div className="flex items-center gap-1">
+                              <div
+                                className="w-2 h-2 rounded-full shrink-0"
+                                style={{ backgroundColor: crew.color }}
+                              />
+                              <span className="truncate leading-tight">{crew.name}</span>
+                            </div>
+                          </td>
+                          {days.map((day) => {
+                            const off = isCrewOffOnDay(crew, day);
+                            const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
+                            const dateStr = format(day, "yyyy-MM-dd");
+                            const dayRForce = rforceByDay.get(dateStr) || [];
+                            const cellRForce = dayRForce.filter((r) => r.crewId === crew.id);
+                            const hasConflict = off && cellAppts.length > 0;
+                            const crewObj = crews.find((c) => c.id === crew.id);
+
+                            if (showTimeLanes) {
+                              const blockedFromOtherSections = !isMeasure
+                                ? getBlockedTimeBlocks(crew.id, appointments, dateStr)
+                                : new Set<TimeBlock>();
+
+                              return (
+                                <MeasureTimeLaneCell
+                                  key={day.toISOString()}
+                                  crew={crew}
+                                  day={day}
+                                  off={off}
+                                  hasConflict={hasConflict}
+                                  cellAppts={cellAppts}
+                                  cellRForce={cellRForce}
+                                  rforceOrders={rforceOrders}
+                                  searchQuery={searchQuery}
+                                  crewObj={crewObj}
+                                  blockedBlocks={blockedFromOtherSections}
+                                  sectionType={section.filterType}
+                                  timeOffColor={timeOffColor}
+                                  onCardClick={setSelectedAppt}
+                                  onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
+                                  onSchedule={(block) =>
+                                    setScheduleTarget({ date: day, crewId: crew.id, timeBlock: block })
+                                  }
+                                  getMultiDayLabel={getMultiDayLabel}
+                                  onAppointmentDrop={(apptId, srcCrewId, srcDate, srcBlock, targetBlock) =>
+                                    handleAppointmentDrop(apptId, srcCrewId, srcDate, srcBlock, crew.id, format(day, "yyyy-MM-dd"), targetBlock)
+                                  }
+                                  onResizeDrop={handleResizeDrop}
+                                  onQueueDrop={(order) =>
+                                    setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
+                                  }
+                                />
+                              );
+                            }
+
                             return (
-                              <MeasureTimeLaneCell
+                              <StandardCell
                                 key={day.toISOString()}
                                 crew={crew}
                                 day={day}
@@ -244,42 +436,25 @@ export default function CrewLaneWeekView({
                                 rforceOrders={rforceOrders}
                                 searchQuery={searchQuery}
                                 crewObj={crewObj}
+                                timeOffColor={timeOffColor}
                                 onCardClick={setSelectedAppt}
                                 onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
-                                onSchedule={(block) =>
-                                  setScheduleTarget({ date: day, crewId: crew.id, timeBlock: block })
+                                onSchedule={() =>
+                                  setScheduleTarget({ date: day, crewId: crew.id })
                                 }
                                 getMultiDayLabel={getMultiDayLabel}
+                                onDrop={(order) =>
+                                  setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
+                                }
+                                onAppointmentDrop={(apptId, srcCrewId, srcDate, srcBlock) =>
+                                  handleAppointmentDrop(apptId, srcCrewId, srcDate, srcBlock, crew.id, format(day, "yyyy-MM-dd"), null)
+                                }
                               />
                             );
-                          }
-
-                          return (
-                            <StandardCell
-                              key={day.toISOString()}
-                              crew={crew}
-                              day={day}
-                              off={off}
-                              hasConflict={hasConflict}
-                              cellAppts={cellAppts}
-                              cellRForce={cellRForce}
-                              rforceOrders={rforceOrders}
-                              searchQuery={searchQuery}
-                              crewObj={crewObj}
-                              onCardClick={setSelectedAppt}
-                              onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
-                              onSchedule={() =>
-                                setScheduleTarget({ date: day, crewId: crew.id })
-                              }
-                              getMultiDayLabel={getMultiDayLabel}
-                              onDrop={(order) =>
-                                setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
-                              }
-                            />
-                          );
-                        })}
-                      </tr>
-                    ))}
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -351,10 +526,16 @@ function MeasureTimeLaneCell({
   rforceOrders,
   searchQuery,
   crewObj,
+  blockedBlocks,
+  sectionType,
+  timeOffColor,
   onCardClick,
   onRForceClick,
   onSchedule,
   getMultiDayLabel,
+  onAppointmentDrop,
+  onResizeDrop,
+  onQueueDrop,
 }: {
   crew: Crew;
   day: Date;
@@ -365,11 +546,20 @@ function MeasureTimeLaneCell({
   rforceOrders: any[];
   searchQuery: string;
   crewObj: Crew | undefined;
+  blockedBlocks: Set<TimeBlock>;
+  sectionType: string;
+  timeOffColor?: string;
   onCardClick: (a: Appointment) => void;
   onRForceClick: (order: RForceOrder) => void;
   onSchedule: (block: TimeBlock) => void;
   getMultiDayLabel: (a: Appointment, d: Date) => string | null;
+  onAppointmentDrop?: (apptId: string, srcCrewId: string, srcDate: string, srcBlock: TimeBlock | null, targetBlock: TimeBlock) => void;
+  onResizeDrop?: (apptId: string, targetBlock: TimeBlock) => void;
+  onQueueDrop?: (order: RForceOrder) => void;
 }) {
+  const [blockDragOver, setBlockDragOver] = useState<TimeBlock | null>(null);
+  const dateStr = format(day, "yyyy-MM-dd");
+
   const allApptsSorted = [...cellAppts].sort((a, b) => {
     const blockOrder = MEASURE_TIME_BLOCKS as string[];
     const aIdx = a.time_block ? blockOrder.indexOf(a.time_block) : 99;
@@ -382,50 +572,112 @@ function MeasureTimeLaneCell({
     return blockOrder.indexOf(a.timeBlock) - blockOrder.indexOf(b.timeBlock);
   });
 
+  const offStyle = timeOffColor
+    ? { backgroundColor: `${timeOffColor}15` }
+    : undefined;
+  const offBorderStyle = timeOffColor
+    ? { borderColor: `${timeOffColor}60` }
+    : undefined;
+
   return (
     <td
-      className={`p-0.5 border-b border-border border-l border-l-border/50 align-top ${
+      className={`p-0 border-b border-border border-l border-l-border/30 align-top ${
         hasConflict
-          ? "bg-red-50/60 dark:bg-red-900/20"
+          ? "bg-time-off-conflict/10"
           : off
-            ? "bg-amber-100/40 dark:bg-amber-900/25"
+            ? (timeOffColor ? "" : "bg-time-off-light/60")
             : ""
       }`}
+      style={off && !hasConflict && timeOffColor ? offStyle : hasConflict && timeOffColor ? { backgroundColor: `${timeOffColor}20` } : undefined}
     >
       {hasConflict && (
-        <div className="text-[9px] text-danger font-semibold px-1 flex items-center gap-0.5">
-          <Palmtree size={9} className="text-amber-500" />
-          OFF — jobs scheduled
+        <div className="text-[8px] font-semibold px-0.5 flex items-center gap-0.5" style={timeOffColor ? { color: timeOffColor } : undefined}>
+          <Palmtree size={8} style={timeOffColor ? { color: timeOffColor } : undefined} className={timeOffColor ? "" : "text-time-off"} />
+          <span className={timeOffColor ? "" : "text-time-off-conflict"}>OFF</span>
         </div>
       )}
       {off && cellAppts.length === 0 && cellRForce.length === 0 && (
-        <div className="w-full h-8 rounded bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
-          <Palmtree size={12} className="text-amber-500/70 dark:text-amber-400/60" />
+        <div
+          className={`w-full h-5 flex items-center justify-center rounded-sm border border-dashed ${timeOffColor ? "" : "bg-time-off-light/40 border-time-off/40"}`}
+          style={timeOffColor ? { ...offStyle, ...offBorderStyle } : undefined}
+        >
+          <Palmtree size={9} style={timeOffColor ? { color: `${timeOffColor}90` } : undefined} className={timeOffColor ? "" : "text-time-off/50"} />
         </div>
       )}
       {(!off || cellAppts.length > 0 || cellRForce.length > 0) && (
-        <div className="space-y-0.5">
+        <div>
           {MEASURE_TIME_BLOCKS.map((block) => {
-            const blockAppts = allApptsSorted.filter((a) => a.time_block === block);
+            const isBlocked = blockedBlocks.has(block);
+            const blockAppts = allApptsSorted.filter((a) => appointmentSpansBlock(a, block));
             const blockRForce = allRForceSorted.filter((r) => r.timeBlock === block);
             const hasItems = blockAppts.length > 0 || blockRForce.length > 0;
+            const isFromOtherSection = isBlocked && !hasItems;
+            const isDropTarget = blockDragOver === block;
+
+            function handleBlockDragOver(e: React.DragEvent) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              setBlockDragOver(block);
+            }
+            function handleBlockDragLeave() {
+              setBlockDragOver(null);
+            }
+            function handleBlockDrop(e: React.DragEvent) {
+              e.preventDefault();
+              setBlockDragOver(null);
+              const resizing = getResizingAppointment();
+              if (resizing) {
+                onResizeDrop?.(resizing.appointmentId, block);
+                setResizingAppointment(null);
+                return;
+              }
+              const draggedAppt = getDraggedAppointment();
+              if (draggedAppt) {
+                onAppointmentDrop?.(draggedAppt.appointment.id, draggedAppt.sourceCrewId, draggedAppt.sourceDate, draggedAppt.sourceTimeBlock, block);
+                setDraggedAppointment(null);
+                return;
+              }
+              const order = getDraggedOrder();
+              if (order) {
+                onQueueDrop?.(order);
+              }
+            }
 
             return (
-              <div key={block} className="flex items-stretch gap-0.5 min-h-[22px]">
-                <div className="w-[38px] shrink-0 text-[8px] text-muted flex items-center justify-center bg-surface/50 rounded-sm leading-none">
+              <div
+                key={block}
+                className={`flex items-stretch min-h-[18px] border-b border-border/20 last:border-b-0 ${isDropTarget ? "ring-2 ring-primary ring-inset bg-primary/5" : ""}`}
+                onDragOver={handleBlockDragOver}
+                onDragLeave={handleBlockDragLeave}
+                onDrop={handleBlockDrop}
+              >
+                <div className="w-[32px] shrink-0 text-[7px] text-muted flex items-center justify-center bg-surface/30 leading-none">
                   {SHORT_BLOCK_LABELS[block] || block}
                 </div>
-                <div className="flex-1 min-w-0">
-                  {hasItems ? (
-                    <div className="space-y-0.5">
+                <div className="flex-1 min-w-0 px-0.5">
+                  {isFromOtherSection ? (
+                    <div className="h-full min-h-[18px] rounded-sm bg-surface/60 flex items-center justify-center">
+                      <span className="text-[7px] text-muted/50">booked</span>
+                    </div>
+                  ) : hasItems ? (
+                    <div>
                       {blockAppts.map((a) => {
+                        const isSpanStart = a.time_block === block;
+                        if (!isSpanStart && a.time_block_end) return null;
                         const dimmed = !!searchQuery && !appointmentMatchesSearch(a, crewObj, searchQuery);
                         const multiDay = getMultiDayLabel(a, day);
+                        const spanLen = a.time_block_end ? MEASURE_TIME_BLOCKS.indexOf(a.time_block_end) - MEASURE_TIME_BLOCKS.indexOf(a.time_block!) + 1 : 1;
                         return (
                           <WeekCard
                             key={a.id}
                             dimmed={dimmed}
                             onClick={() => onCardClick(a)}
+                            appointment={a}
+                            sourceCrewId={crew.id}
+                            sourceDate={dateStr}
+                            sourceTimeBlock={block}
+                            spanBlocks={spanLen}
+                            showResizeHandle={true}
                           >
                             <CompactAppointmentContent
                               appointment={a}
@@ -439,28 +691,24 @@ function MeasureTimeLaneCell({
                       {blockRForce.map((rf) => {
                         const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
                         return (
-                          <WeekCard
-                            key={rf.rforceOrder.work_order_number}
-                            dimmed={dimmed}
-                            onClick={() => onRForceClick(rf.rforceOrder)}
-                          >
+                          <WeekCard key={rf.rforceOrder.work_order_number} dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder)}>
                             <CompactRForceContent order={rf.rforceOrder} crew={crewObj} />
                           </WeekCard>
                         );
                       })}
                       <button
                         onClick={() => onSchedule(block)}
-                        className="w-full h-4 rounded border border-dashed border-border/20 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center"
+                        className="w-full h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
                       >
-                        <Plus size={8} className="text-muted/30 hover:text-primary" />
+                        <Plus size={7} className="text-muted/20 hover:text-primary" />
                       </button>
                     </div>
                   ) : (
                     <button
                       onClick={() => onSchedule(block)}
-                      className="w-full h-full min-h-[22px] rounded border border-dashed border-border/20 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center"
+                      className="w-full h-full min-h-[18px] flex items-center justify-center hover:bg-primary-light/30 transition-colors"
                     >
-                      <Plus size={8} className="text-muted/20 group-hover:text-primary" />
+                      <Plus size={7} className="text-muted/15" />
                     </button>
                   )}
                 </div>
@@ -483,11 +731,13 @@ function StandardCell({
   rforceOrders,
   searchQuery,
   crewObj,
+  timeOffColor,
   onCardClick,
   onSchedule,
   onRForceClick,
   getMultiDayLabel,
   onDrop,
+  onAppointmentDrop,
 }: {
   crew: Crew;
   day: Date;
@@ -498,13 +748,16 @@ function StandardCell({
   rforceOrders: any[];
   searchQuery: string;
   crewObj: Crew | undefined;
+  timeOffColor?: string;
   onCardClick: (a: Appointment) => void;
   onSchedule: () => void;
   onRForceClick: (order: RForceOrder) => void;
   getMultiDayLabel: (a: Appointment, d: Date) => string | null;
   onDrop?: (order: RForceOrder) => void;
+  onAppointmentDrop?: (apptId: string, srcCrewId: string, srcDate: string, srcBlock: TimeBlock | null) => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
+  const dateStr = format(day, "yyyy-MM-dd");
   const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
 
   function handleDragOver(e: React.DragEvent) {
@@ -520,6 +773,12 @@ function StandardCell({
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
+    const draggedAppt = getDraggedAppointment();
+    if (draggedAppt) {
+      onAppointmentDrop?.(draggedAppt.appointment.id, draggedAppt.sourceCrewId, draggedAppt.sourceDate, draggedAppt.sourceTimeBlock);
+      setDraggedAppointment(null);
+      return;
+    }
     const order = getDraggedOrder();
     if (order && onDrop) onDrop(order);
   }
@@ -528,16 +787,27 @@ function StandardCell({
     (a.start_time || "08:00").localeCompare(b.start_time || "08:00")
   );
 
+  const offStyle = timeOffColor
+    ? { backgroundColor: `${timeOffColor}15` }
+    : undefined;
+  const offBorderStyle = timeOffColor
+    ? { borderColor: `${timeOffColor}60` }
+    : undefined;
+
   if (off && !hasContent) {
     return (
       <td
-        className={`p-1 border-b border-border border-l border-l-border/50 align-top bg-amber-100/60 dark:bg-amber-900/30 ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+        className={`p-0.5 border-b border-border border-l border-l-border/30 align-top ${timeOffColor ? "" : "bg-time-off-light/40"} ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+        style={timeOffColor ? offStyle : undefined}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <div className="w-full h-8 rounded bg-amber-200/60 dark:bg-amber-800/25 border border-dashed border-amber-400/60 dark:border-amber-600/40 flex items-center justify-center">
-          <Palmtree size={12} className="text-amber-500/70 dark:text-amber-400/60" />
+        <div
+          className={`w-full h-6 rounded-sm flex items-center justify-center border border-dashed ${timeOffColor ? "" : "bg-time-off-light/30 border-time-off/40"}`}
+          style={timeOffColor ? { ...offStyle, ...offBorderStyle } : undefined}
+        >
+          <Palmtree size={10} style={timeOffColor ? { color: `${timeOffColor}90` } : undefined} className={timeOffColor ? "" : "text-time-off/50"} />
         </div>
       </td>
     );
@@ -545,25 +815,32 @@ function StandardCell({
 
   return (
     <td
-      className={`p-1 border-b border-border border-l border-l-border/50 align-top ${
+      className={`p-0.5 border-b border-border border-l border-l-border/30 align-top ${
         hasConflict
-          ? "bg-red-50/60 dark:bg-red-900/20"
+          ? (timeOffColor ? "" : "bg-time-off-conflict/10")
           : off
-            ? "bg-amber-100/40 dark:bg-amber-900/25"
+            ? (timeOffColor ? "" : "bg-time-off-light/40")
             : ""
       } ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+      style={
+        hasConflict && timeOffColor
+          ? { backgroundColor: `${timeOffColor}20` }
+          : off && timeOffColor
+            ? offStyle
+            : undefined
+      }
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {hasConflict && (
-        <div className="text-[9px] text-danger font-semibold px-0.5 flex items-center gap-0.5 mb-0.5">
-          <Palmtree size={9} className="text-amber-500" />
-          OFF
+        <div className="text-[8px] font-semibold px-0.5 flex items-center gap-0.5">
+          <Palmtree size={8} style={timeOffColor ? { color: timeOffColor } : undefined} className={timeOffColor ? "" : "text-time-off"} />
+          <span style={timeOffColor ? { color: timeOffColor } : undefined} className={timeOffColor ? "" : "text-time-off-conflict"}>OFF</span>
         </div>
       )}
       {hasContent ? (
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           {sortedAppts.map((a) => {
             const dimmed = !!searchQuery && !appointmentMatchesSearch(a, crewObj, searchQuery);
             const multiDay = getMultiDayLabel(a, day);
@@ -572,6 +849,10 @@ function StandardCell({
                 key={a.id}
                 dimmed={dimmed}
                 onClick={() => onCardClick(a)}
+                appointment={a}
+                sourceCrewId={crew.id}
+                sourceDate={dateStr}
+                sourceTimeBlock={a.time_block}
               >
                 <CompactAppointmentContent
                   appointment={a}
@@ -585,28 +866,24 @@ function StandardCell({
           {cellRForce.map((rf) => {
             const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
             return (
-              <WeekCard
-                key={rf.rforceOrder.work_order_number}
-                dimmed={dimmed}
-                onClick={() => onRForceClick(rf.rforceOrder)}
-              >
+              <WeekCard key={rf.rforceOrder.work_order_number} dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder)}>
                 <CompactRForceContent order={rf.rforceOrder} crew={crewObj} />
               </WeekCard>
             );
           })}
           <button
             onClick={onSchedule}
-            className="w-full h-5 rounded border border-dashed border-border/20 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center"
+            className="w-full h-4 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
           >
-            <Plus size={8} className="text-muted/20 hover:text-primary" />
+            <Plus size={7} className="text-muted/15 hover:text-primary" />
           </button>
         </div>
       ) : (
         <button
           onClick={onSchedule}
-          className="w-full h-8 rounded border border-dashed border-border/30 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
+          className="w-full h-6 rounded-sm border border-dashed border-border/20 hover:border-primary hover:bg-primary-light/30 transition-colors flex items-center justify-center group"
         >
-          <Plus size={10} className="text-muted/20 group-hover:text-primary" />
+          <Plus size={8} className="text-muted/15 group-hover:text-primary" />
         </button>
       )}
     </td>
@@ -617,19 +894,78 @@ function WeekCard({
   children,
   dimmed,
   onClick,
+  appointment,
+  sourceCrewId,
+  sourceDate,
+  sourceTimeBlock,
+  spanBlocks,
+  showResizeHandle,
 }: {
   children: React.ReactNode;
   dimmed?: boolean;
   onClick: () => void;
+  appointment?: Appointment;
+  sourceCrewId?: string;
+  sourceDate?: string;
+  sourceTimeBlock?: TimeBlock | null;
+  spanBlocks?: number;
+  showResizeHandle?: boolean;
 }) {
+  const isDraggable = !!appointment;
+  const spanHeight = spanBlocks && spanBlocks > 1 ? { height: `${spanBlocks * 18}px`, position: "relative" as const, zIndex: 5 } : undefined;
+
+  function handleDragStart(e: React.DragEvent) {
+    if (!appointment || !sourceCrewId || !sourceDate) return;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", appointment.id);
+    setDraggedAppointment({
+      appointment,
+      sourceCrewId,
+      sourceDate,
+      sourceTimeBlock: sourceTimeBlock ?? null,
+    });
+    (e.currentTarget as HTMLElement).style.opacity = "0.4";
+  }
+
+  function handleDragEnd(e: React.DragEvent) {
+    (e.currentTarget as HTMLElement).style.opacity = "1";
+    setDraggedAppointment(null);
+  }
+
+  function handleResizeDragStart(e: React.DragEvent) {
+    e.stopPropagation();
+    if (!appointment || !appointment.time_block) return;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", `resize:${appointment.id}`);
+    const img = document.createElement("canvas");
+    img.width = 1;
+    img.height = 1;
+    e.dataTransfer.setDragImage(img, 0, 0);
+    setResizingAppointment({
+      appointmentId: appointment.id,
+      originalTimeBlock: appointment.time_block,
+    });
+  }
+
   return (
     <div
+      draggable={isDraggable}
+      onDragStart={isDraggable ? handleDragStart : undefined}
+      onDragEnd={isDraggable ? handleDragEnd : undefined}
       onClick={onClick}
-      className={`rounded p-1 cursor-pointer hover:shadow-md transition-all text-[10px] leading-tight overflow-hidden ${
+      className={`rounded-sm cursor-pointer hover:shadow transition-all text-[9px] leading-tight overflow-hidden group/card ${
         dimmed ? "opacity-30" : ""
-      }`}
+      } ${isDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}
+      style={spanHeight}
     >
       {children}
+      {showResizeHandle && appointment?.time_block && (
+        <div
+          draggable
+          onDragStart={handleResizeDragStart}
+          className="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize opacity-0 group-hover/card:opacity-100 hover:bg-white/30 transition-opacity"
+        />
+      )}
     </div>
   );
 }
@@ -649,16 +985,18 @@ function CompactAppointmentContent({
   const city = parseCity(appointment.address);
 
   return (
-    <div className="rounded p-1 text-white" style={{ backgroundColor: bgColor }}>
+    <div className="rounded-sm px-1 py-0.5 text-white" style={{ backgroundColor: bgColor }}>
       <div className="font-semibold truncate flex items-center gap-0.5">
         {appointment.customer_name}
-        {hasDiscrepancy && (
-          <span className="text-yellow-200 text-[8px]">!</span>
-        )}
+        {appointment.manual_override ? (
+          <span className="text-blue-200 text-[7px] font-bold" title="Manual override">M</span>
+        ) : hasDiscrepancy ? (
+          <span className="text-yellow-200 text-[7px]">!</span>
+        ) : null}
       </div>
-      <div className="truncate opacity-85">{city}</div>
+      {city && <div className="truncate opacity-80 text-[8px]">{city}</div>}
       {multiDayLabel && (
-        <div className="opacity-75 text-[9px]">{multiDayLabel}</div>
+        <div className="opacity-70 text-[8px]">{multiDayLabel}</div>
       )}
     </div>
   );
@@ -675,12 +1013,12 @@ function CompactRForceContent({
   const city = parseCity(order.address || "");
 
   return (
-    <div className="rounded p-1 text-white" style={{ backgroundColor: bgColor }}>
+    <div className="rounded-sm px-1 py-0.5 text-white" style={{ backgroundColor: bgColor }}>
       <div className="font-semibold truncate flex items-center gap-0.5">
         {order.customer_name || "Unknown"}
-        <span className="text-[7px] opacity-60 font-normal ml-auto bg-white/20 px-0.5 rounded">rF</span>
+        <span className="text-[6px] opacity-50 font-normal ml-auto bg-white/20 px-0.5 rounded">rF</span>
       </div>
-      {city && <div className="truncate opacity-85">{city}</div>}
+      {city && <div className="truncate opacity-80 text-[8px]">{city}</div>}
     </div>
   );
 }

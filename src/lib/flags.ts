@@ -5,7 +5,7 @@ export type FlagSeverity = "error" | "warning" | "info";
 
 export interface Flag {
   id: string;
-  type: "time_off_conflict" | "double_booking" | "discrepancy" | "missing_address" | "manual";
+  type: "time_off_conflict" | "double_booking" | "discrepancy" | "missing_address" | "manual" | "manual_override";
   severity: FlagSeverity;
   message: string;
   appointmentId?: string;
@@ -85,15 +85,43 @@ export function detectFlags(
     const linked = activeAppts.find(
       (a) => a.work_order_number === rf.work_order_number
     );
-    if (linked && linked.scheduled_date !== rfDate) {
-      flags.push({
-        id: `disc-${rf.work_order_number}`,
-        type: "discrepancy",
-        severity: "warning",
-        message: `${rf.customer_name || rf.work_order_number}: app says ${linked.scheduled_date} but rForce says ${rfDate}`,
-        appointmentId: linked.id,
-        date: linked.scheduled_date,
-      });
+    if (!linked) continue;
+
+    const rfResource = rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
+    const linkedCrew = crews.find((c) => c.id === linked.crew_id);
+    const crewNameMatch = rfResource && linkedCrew
+      ? linkedCrew.name.toLowerCase().split(" ")[0] === rfResource.toLowerCase().split(" ")[0]
+      : true;
+
+    const dateMismatch = linked.scheduled_date !== rfDate;
+    const crewMismatch = !crewNameMatch;
+
+    if (dateMismatch || crewMismatch) {
+      if (linked.manual_override) {
+        const parts: string[] = [];
+        if (dateMismatch) parts.push(`rForce: ${rfDate}`);
+        if (crewMismatch && rfResource) parts.push(`rForce crew: ${rfResource}`);
+        flags.push({
+          id: `ovr-${rf.work_order_number}`,
+          type: "manual_override",
+          severity: "info",
+          message: `${rf.customer_name || rf.work_order_number}: manually overridden (${parts.join(", ")})`,
+          appointmentId: linked.id,
+          date: linked.scheduled_date,
+        });
+      } else {
+        const details: string[] = [];
+        if (dateMismatch) details.push(`app: ${linked.scheduled_date}, rForce: ${rfDate}`);
+        if (crewMismatch && rfResource) details.push(`crew mismatch: ${rfResource}`);
+        flags.push({
+          id: `disc-${rf.work_order_number}`,
+          type: "discrepancy",
+          severity: "warning",
+          message: `${rf.customer_name || rf.work_order_number}: ${details.join("; ")}`,
+          appointmentId: linked.id,
+          date: linked.scheduled_date,
+        });
+      }
     }
   }
 

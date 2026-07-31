@@ -2,13 +2,19 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useAuth } from "./AuthProvider";
-import { User as UserIcon, LogOut, Settings, Shield } from "lucide-react";
+import { User as UserIcon, LogOut, Settings, Shield, Palette } from "lucide-react";
+import { getPreferences, setPreferences } from "@/lib/preferences";
 import Link from "next/link";
 
 export default function ProfileMenu() {
   const { user, displayName, role, signOut } = useAuth();
   const [open, setOpen] = useState(false);
+  const [timeOffColor, setTimeOffColor] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setTimeOffColor(getPreferences().time_off_color || "");
+  }, []);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -70,6 +76,25 @@ export default function ProfileMenu() {
             <Settings size={14} className="text-muted" />
             Resources
           </Link>
+          <div className="flex items-center gap-2 px-3 py-2 hover:bg-surface">
+            <Palette size={14} className="text-muted" />
+            <span className="text-sm flex-1">Time Off Color</span>
+            <div className="flex items-center gap-1">
+              {["#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#10b981", "#f97316"].map((c) => (
+                <button
+                  key={c}
+                  onClick={() => {
+                    const val = timeOffColor === c ? "" : c;
+                    setTimeOffColor(val);
+                    setPreferences({ time_off_color: val });
+                  }}
+                  className={`w-4 h-4 rounded-full border-2 transition-transform ${timeOffColor === c ? "border-foreground scale-125" : "border-transparent"}`}
+                  style={{ backgroundColor: c }}
+                  title={c}
+                />
+              ))}
+            </div>
+          </div>
           <button
             onClick={() => {
               setOpen(false);

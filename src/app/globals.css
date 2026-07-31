@@ -17,6 +17,9 @@
   --measure: #f59e0b;
   --rba-green: #4a7c2e;
   --rba-green-light: #e8f5e0;
+  --time-off: #f59e0b;
+  --time-off-light: #fef3c7;
+  --time-off-conflict: #ef4444;
 }
 
 @theme inline {
@@ -36,6 +39,9 @@
   --color-measure: var(--measure);
   --color-rba-green: var(--rba-green);
   --color-rba-green-light: var(--rba-green-light);
+  --color-time-off: var(--time-off);
+  --color-time-off-light: var(--time-off-light);
+  --color-time-off-conflict: var(--time-off-conflict);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -58,6 +64,9 @@ body {
     --surface: #303134;
     --rba-green: #6aad4a;
     --rba-green-light: #2d3a27;
+    --time-off: #d97706;
+    --time-off-light: #451a03;
+    --time-off-conflict: #dc2626;
   }
 }
 
@@ -71,6 +80,9 @@ body {
   --surface: #303134;
   --rba-green: #6aad4a;
   --rba-green-light: #2d3a27;
+  --time-off: #d97706;
+  --time-off-light: #451a03;
+  --time-off-conflict: #dc2626;
 }
 
 * {
