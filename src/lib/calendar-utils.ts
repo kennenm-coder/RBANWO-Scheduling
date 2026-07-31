@@ -17,6 +17,25 @@ export const MEASURE_TIME_BLOCKS: TimeBlock[] = [
 
 export const INSTALL_TIME_BLOCKS: TimeBlock[] = ["full_day"];
 
+export function appointmentSpansBlock(appointment: Appointment, block: TimeBlock): boolean {
+  if (!appointment.time_block || block === "full_day") return appointment.time_block === block;
+  if (!appointment.time_block_end) return appointment.time_block === block;
+  const startIdx = MEASURE_TIME_BLOCKS.indexOf(appointment.time_block);
+  const endIdx = MEASURE_TIME_BLOCKS.indexOf(appointment.time_block_end);
+  const blockIdx = MEASURE_TIME_BLOCKS.indexOf(block);
+  if (startIdx < 0 || endIdx < 0 || blockIdx < 0) return false;
+  return blockIdx >= startIdx && blockIdx <= endIdx;
+}
+
+export function getSpannedBlocks(appointment: Appointment): TimeBlock[] {
+  if (!appointment.time_block) return [];
+  if (!appointment.time_block_end) return [appointment.time_block];
+  const startIdx = MEASURE_TIME_BLOCKS.indexOf(appointment.time_block);
+  const endIdx = MEASURE_TIME_BLOCKS.indexOf(appointment.time_block_end);
+  if (startIdx < 0 || endIdx < 0) return [appointment.time_block];
+  return MEASURE_TIME_BLOCKS.slice(startIdx, endIdx + 1);
+}
+
 export function timeBlockLabel(block: TimeBlock): string {
   switch (block) {
     case "9-10":
@@ -215,7 +234,8 @@ export interface RForceCalendarItem {
 
 export function checkDiscrepancy(
   appointment: Appointment,
-  rforceOrders: RForceOrder[]
+  rforceOrders: RForceOrder[],
+  crews?: Crew[]
 ): boolean {
   if (!appointment.work_order_number) return false;
   const rf = rforceOrders.find(
@@ -225,6 +245,15 @@ export function checkDiscrepancy(
   if (rf.scheduled_start) {
     const rfDate = rf.scheduled_start.slice(0, 10);
     if (rfDate !== appointment.scheduled_date) return true;
+  }
+  if (crews) {
+    const rfResource = rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
+    if (rfResource) {
+      const crew = crews.find((c) => c.id === appointment.crew_id);
+      if (crew && crew.name.toLowerCase().split(" ")[0] !== rfResource.toLowerCase().split(" ")[0]) {
+        return true;
+      }
+    }
   }
   return false;
 }

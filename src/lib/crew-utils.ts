@@ -1,4 +1,5 @@
-import { Crew, CrewType, AppointmentType } from "./types";
+import { Crew, CrewType, AppointmentType, Appointment, TimeBlock } from "./types";
+import { timeBlockStartEnd, MEASURE_TIME_BLOCKS } from "./calendar-utils";
 
 export function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
   if (types.includes(crew.crew_type)) return true;
@@ -6,6 +7,13 @@ export function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
     return crew.additional_types.some((t) => types.includes(t));
   }
   return false;
+}
+
+export function isDualRole(crew: Crew): boolean {
+  if (!crew.additional_types || crew.additional_types.length === 0) return false;
+  const allTypes = [crew.crew_type, ...crew.additional_types];
+  const mainTypes = allTypes.filter((t) => t !== "second" && t !== "management" && t !== "misc");
+  return mainTypes.length > 1;
 }
 
 export function sortByFirstName(crews: Crew[]): Crew[] {
@@ -105,4 +113,39 @@ export function getEligibleCrews(crews: Crew[], appointmentType: AppointmentType
   return crews.filter(
     (c) => c.is_active && (eligible.length === 0 || crewHasType(c, ...eligible))
   );
+}
+
+export function getBlockedTimeBlocks(
+  crewId: string,
+  appointments: Appointment[],
+  dateStr: string
+): Set<TimeBlock> {
+  const blocked = new Set<TimeBlock>();
+  const dayAppts = appointments.filter(
+    (a) =>
+      a.status !== "cancelled" &&
+      (a.crew_id === crewId || a.secondary_crew_id === crewId) &&
+      a.scheduled_date === dateStr
+  );
+
+  for (const appt of dayAppts) {
+    if (appt.time_block) {
+      blocked.add(appt.time_block);
+    } else if (appt.time_block === "full_day" || (!appt.time_block && appt.appointment_type !== "tech_measure")) {
+      for (const b of MEASURE_TIME_BLOCKS) {
+        blocked.add(b);
+      }
+    }
+  }
+
+  return blocked;
+}
+
+export function getAvailableTimeBlocks(
+  crewId: string,
+  appointments: Appointment[],
+  dateStr: string
+): TimeBlock[] {
+  const blocked = getBlockedTimeBlocks(crewId, appointments, dateStr);
+  return MEASURE_TIME_BLOCKS.filter((b) => !blocked.has(b));
 }

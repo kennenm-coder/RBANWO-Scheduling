@@ -52,7 +52,13 @@ export function reconcile(
         status = "scheduled_app_only";
       } else {
         const rforceDate = rf.scheduled_start.split("T")[0];
-        status = rforceDate === appt.scheduled_date ? "scheduled_both" : "discrepancy";
+        if (rforceDate === appt.scheduled_date) {
+          status = "scheduled_both";
+        } else if (appt.manual_override) {
+          status = "manual_override";
+        } else {
+          status = "discrepancy";
+        }
       }
     } else if (SCHEDULED_WO_STATUSES.has(woStatus)) {
       status = "scheduled_rforce_only";

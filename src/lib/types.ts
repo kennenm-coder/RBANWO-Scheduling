@@ -66,6 +66,9 @@ export interface Appointment {
   end_time: string;
   duration_days: number;
   time_block: TimeBlock | null;
+  time_block_end: TimeBlock | null;
+  manual_override: boolean;
+  override_source: { crew_name?: string; scheduled_date?: string; time_block?: string } | null;
   status: AppointmentStatus;
   notes: string | null;
   reschedule_reason: string | null;
@@ -129,6 +132,7 @@ export type ReconciliationStatus =
   | "scheduled_app_only"
   | "scheduled_both"
   | "discrepancy"
+  | "manual_override"
   | "completed"
   | "cancelled"
   | "not_in_rforce";
@@ -162,7 +166,9 @@ export type AppointmentEventAction =
   | "helper_added"
   | "helper_removed"
   | "linked"
-  | "flagged";
+  | "flagged"
+  | "drag_moved"
+  | "drag_resized";
 
 export interface AppointmentEvent {
   id: string;

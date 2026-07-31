@@ -6,6 +6,7 @@ export interface UserPreferences {
   density: "compact" | "comfortable";
   department_filters: string[];
   color_overrides: Record<string, string>;
+  time_off_color: string;
 }
 
 const DEFAULTS: UserPreferences = {
@@ -14,6 +15,7 @@ const DEFAULTS: UserPreferences = {
   density: "comfortable",
   department_filters: [],
   color_overrides: {},
+  time_off_color: "",
 };
 
 const LOCAL_KEY = "rbanwo-user-prefs";
@@ -72,6 +74,7 @@ export async function loadPreferencesFromSupabase(userId: string): Promise<UserP
     density: data.density || DEFAULTS.density,
     department_filters: data.department_filters || DEFAULTS.department_filters,
     color_overrides: data.color_overrides || DEFAULTS.color_overrides,
+    time_off_color: data.time_off_color || DEFAULTS.time_off_color,
   };
   saveLocal(prefs);
   return prefs;

@@ -11,6 +11,7 @@ import {
   Calendar,
   MapPin,
   Users,
+  ArrowRightLeft,
 } from "lucide-react";
 
 interface Props {
@@ -18,12 +19,13 @@ interface Props {
   onNavigate?: (date: string) => void;
 }
 
-const ICON_MAP = {
+const ICON_MAP: Record<string, React.ReactNode> = {
   time_off_conflict: <Users size={14} className="text-danger" />,
   double_booking: <Calendar size={14} className="text-danger" />,
   discrepancy: <AlertTriangle size={14} className="text-warning" />,
   missing_address: <MapPin size={14} className="text-warning" />,
   manual: <Info size={14} className="text-primary" />,
+  manual_override: <ArrowRightLeft size={14} className="text-blue-500" />,
 };
 
 const SEVERITY_ICON = {
@@ -42,6 +44,7 @@ export default function IssueCenter({ onClose, onNavigate }: Props) {
 
   const errorCount = flags.filter((f) => f.severity === "error").length;
   const warningCount = flags.filter((f) => f.severity === "warning").length;
+  const overrideCount = flags.filter((f) => f.type === "manual_override").length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -58,7 +61,13 @@ export default function IssueCenter({ onClose, onNavigate }: Props) {
               {warningCount > 0 && (
                 <span className="text-warning font-medium">{warningCount} warnings</span>
               )}
-              {errorCount === 0 && warningCount === 0 && "No issues detected"}
+              {overrideCount > 0 && (
+                <>
+                  {(errorCount > 0 || warningCount > 0) && " · "}
+                  <span className="text-blue-500 font-medium">{overrideCount} overrides</span>
+                </>
+              )}
+              {errorCount === 0 && warningCount === 0 && overrideCount === 0 && "No issues detected"}
             </div>
           </div>
           <button
@@ -101,7 +110,7 @@ function FlagRow({
   return (
     <button
       onClick={() => flag.date && onNavigate?.(flag.date)}
-      className="w-full text-left p-3 rounded-lg border border-border hover:bg-surface transition-colors flex items-start gap-3"
+      className={`w-full text-left p-3 rounded-lg border border-border hover:bg-surface transition-colors flex items-start gap-3 ${flag.type === "manual_override" ? "border-l-2 border-l-blue-500" : ""}`}
     >
       <div className="mt-0.5">
         {ICON_MAP[flag.type] || SEVERITY_ICON[flag.severity]}

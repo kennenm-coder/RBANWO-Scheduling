@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useData } from "./DataProvider";
 import { reconcile } from "@/lib/reconcile";
-import { openSalesforce, mapsHref } from "@/lib/salesforce";
+import { openSalesforce } from "@/lib/salesforce";
 import ScheduleModal from "./ScheduleModal";
 import LinkModal from "./LinkModal";
 import {
@@ -12,6 +12,7 @@ import {
   ReconciliationResult,
   ReconciliationStatus,
 } from "@/lib/types";
+import { parseCity } from "@/lib/crew-utils";
 import {
   Calendar,
   ExternalLink,
@@ -23,52 +24,69 @@ import {
   XCircle,
   Search,
   X,
+  GripVertical,
+  Package,
+  ArrowRightLeft,
 } from "lucide-react";
 import { setDraggedOrder } from "@/lib/drag-context";
 
 const STATUS_CONFIG: Record<
   ReconciliationStatus,
-  { label: string; color: string; icon: typeof Clock; hidden?: boolean }
+  { label: string; color: string; bg: string; icon: typeof Clock; hidden?: boolean }
 > = {
   unscheduled: {
     label: "Unscheduled",
-    color: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200",
+    color: "text-yellow-700 dark:text-yellow-300",
+    bg: "bg-yellow-100 dark:bg-yellow-900/30",
     icon: Clock,
   },
   scheduled_rforce_only: {
     label: "rForce Only",
-    color: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-200",
+    color: "text-orange-700 dark:text-orange-300",
+    bg: "bg-orange-100 dark:bg-orange-900/30",
     icon: AlertTriangle,
   },
   scheduled_app_only: {
     label: "App Only",
-    color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200",
+    color: "text-blue-700 dark:text-blue-300",
+    bg: "bg-blue-100 dark:bg-blue-900/30",
     icon: Calendar,
   },
   scheduled_both: {
     label: "Synced",
-    color: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200",
+    color: "text-green-700 dark:text-green-300",
+    bg: "bg-green-100 dark:bg-green-900/30",
     icon: CheckCircle2,
   },
   discrepancy: {
     label: "Mismatch",
-    color: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200",
+    color: "text-red-700 dark:text-red-300",
+    bg: "bg-red-100 dark:bg-red-900/30",
     icon: AlertTriangle,
+  },
+  manual_override: {
+    label: "Override",
+    color: "text-blue-700 dark:text-blue-300",
+    bg: "bg-blue-100 dark:bg-blue-900/30",
+    icon: ArrowRightLeft,
   },
   not_in_rforce: {
     label: "Not in rForce",
-    color: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-200",
+    color: "text-purple-700 dark:text-purple-300",
+    bg: "bg-purple-100 dark:bg-purple-900/30",
     icon: XCircle,
   },
   completed: {
     label: "Completed",
-    color: "bg-gray-100 text-gray-500 dark:bg-gray-900/30 dark:text-gray-400",
+    color: "text-gray-500 dark:text-gray-400",
+    bg: "bg-gray-100 dark:bg-gray-900/30",
     icon: CheckCircle2,
     hidden: true,
   },
   cancelled: {
     label: "Cancelled",
-    color: "bg-gray-100 text-gray-400 dark:bg-gray-900/30 dark:text-gray-500",
+    color: "text-gray-400 dark:text-gray-500",
+    bg: "bg-gray-100 dark:bg-gray-900/30",
     icon: XCircle,
     hidden: true,
   },
@@ -121,9 +139,9 @@ export default function UnscheduledQueue() {
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
-        <div className="flex items-center gap-1 flex-1 bg-surface border border-border rounded-full px-2 py-1">
-          <Search size={12} className="text-muted shrink-0" />
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+        <div className="flex items-center gap-1.5 flex-1 bg-surface border border-border rounded-lg px-2.5 py-1.5">
+          <Search size={13} className="text-muted shrink-0" />
           <input
             type="text"
             value={searchQuery}
@@ -138,10 +156,10 @@ export default function UnscheduledQueue() {
           )}
         </div>
         {searchQuery && (
-          <span className="text-[10px] text-muted shrink-0">{filtered.length} results</span>
+          <span className="text-[10px] text-muted shrink-0">{filtered.length}</span>
         )}
       </div>
-      <div className="flex gap-1 px-4 py-3 overflow-x-auto border-b border-border">
+      <div className="flex gap-1 px-3 py-2 overflow-x-auto border-b border-border">
         <FilterChip
           label={`All (${activeResults.length})`}
           active={filter === "all"}
@@ -159,7 +177,7 @@ export default function UnscheduledQueue() {
         )}
       </div>
 
-      <div className="divide-y divide-border">
+      <div className="p-2 space-y-1.5">
         {filtered.length === 0 && (
           <div className="p-8 text-center text-muted text-sm">
             No items match this filter.
@@ -168,140 +186,154 @@ export default function UnscheduledQueue() {
         {filtered.map((item) => {
           const cfg = STATUS_CONFIG[item.status];
           const Icon = cfg.icon;
+          const isDraggable = item.status === "unscheduled" || item.status === "scheduled_rforce_only";
+          const city = parseCity(item.address || "");
+          const productParts: string[] = [];
+          if (item.windows) productParts.push(`${item.windows}W`);
+          if (item.patioDoors) productParts.push(`${item.patioDoors}PD`);
+          if (item.doors) productParts.push(`${item.doors}D`);
+
           return (
             <div
               key={item.workOrderNumber}
-              draggable={item.status === "unscheduled" || item.status === "scheduled_rforce_only"}
+              draggable={isDraggable}
               onDragStart={(e) => {
                 const rf = rforceOrders.find((r) => r.work_order_number === item.workOrderNumber);
                 if (rf) {
                   setDraggedOrder(rf);
                   e.dataTransfer.effectAllowed = "move";
                   e.dataTransfer.setData("text/plain", item.workOrderNumber);
+                  const target = e.currentTarget as HTMLElement;
+                  target.style.opacity = "0.5";
                 }
               }}
-              onDragEnd={() => setDraggedOrder(null)}
-              className={`px-4 py-3 hover:bg-surface ${
-                (item.status === "unscheduled" || item.status === "scheduled_rforce_only")
-                  ? "cursor-grab active:cursor-grabbing"
-                  : ""
+              onDragEnd={(e) => {
+                setDraggedOrder(null);
+                const target = e.currentTarget as HTMLElement;
+                target.style.opacity = "1";
+              }}
+              className={`rounded-lg border border-border bg-background shadow-sm hover:shadow-md transition-all overflow-hidden ${
+                isDraggable ? "cursor-grab active:cursor-grabbing" : ""
               }`}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm">
+              {/* Status stripe + drag handle */}
+              <div className="flex items-stretch">
+                {isDraggable && (
+                  <div className="w-6 shrink-0 flex items-center justify-center bg-surface/50 border-r border-border/50 text-muted/40">
+                    <GripVertical size={12} />
+                  </div>
+                )}
+
+                <div className="flex-1 min-w-0 p-2.5">
+                  {/* Row 1: Name + status badge */}
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="font-semibold text-sm truncate flex-1">
                       {item.customerName || "Unknown"}
                     </span>
                     <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${cfg.color}`}
+                      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 ${cfg.bg} ${cfg.color}`}
                     >
-                      <Icon size={10} />
+                      <Icon size={9} />
                       {cfg.label}
                     </span>
                   </div>
-                  <div className="flex items-center gap-1 text-xs text-muted mt-0.5">
-                    <MapPin size={10} className="shrink-0" />
-                    <span className="break-words">{item.address}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-muted mt-1 flex-wrap">
+
+                  {/* Row 2: City + WO type */}
+                  <div className="flex items-center gap-2 text-xs text-muted mb-1">
+                    {city && (
+                      <span className="flex items-center gap-0.5 truncate">
+                        <MapPin size={10} className="shrink-0" />
+                        {city}
+                      </span>
+                    )}
                     {item.workOrderType && (
-                      <span className="font-medium">{item.workOrderType}</span>
+                      <span className="font-medium text-foreground/70 shrink-0">{item.workOrderType}</span>
                     )}
-                    <span>WO: {item.workOrderNumber}</span>
-                    {item.woStatus && (
-                      <span className="italic">{item.woStatus}</span>
-                    )}
+                  </div>
+
+                  {/* Row 3: Meta chips */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] text-muted bg-surface px-1.5 py-0.5 rounded">
+                      WO: {item.workOrderNumber}
+                    </span>
                     {item.productCount != null && item.productCount > 0 && (
-                      <span>
-                        {item.productCount} products
-                        {(() => {
-                          const parts: string[] = [];
-                          if (item.windows) parts.push(`${item.windows}W`);
-                          if (item.patioDoors) parts.push(`${item.patioDoors}PD`);
-                          if (item.doors) parts.push(`${item.doors}D`);
-                          return parts.length > 0 ? ` (${parts.join("/")})` : "";
-                        })()}
+                      <span className="text-[10px] text-muted bg-surface px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                        <Package size={8} />
+                        {item.productCount}
+                        {productParts.length > 0 && ` (${productParts.join("/")})`}
+                      </span>
+                    )}
+                    {item.rforceCrew && (
+                      <span className="text-[10px] text-muted bg-surface px-1.5 py-0.5 rounded">
+                        {item.rforceCrew}
+                      </span>
+                    )}
+                    {item.rforceDate && (
+                      <span className="text-[10px] text-muted bg-surface px-1.5 py-0.5 rounded">
+                        {item.rforceDate}
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-muted mt-0.5">
-                    {item.appDate && (
-                      <span>App: {item.appDate}</span>
+
+                  {/* Row 4: Action buttons */}
+                  <div className="flex items-center gap-1.5 mt-2">
+                    {isDraggable && (
+                      <>
+                        <button
+                          onClick={() => {
+                            const rf = rforceOrders.find(
+                              (r) => r.work_order_number === item.workOrderNumber
+                            );
+                            if (rf) setScheduleOrder(rf);
+                          }}
+                          className="px-2.5 py-1 bg-primary text-white text-[11px] font-medium rounded-md hover:opacity-90 transition-opacity"
+                        >
+                          Schedule
+                        </button>
+                        <button
+                          onClick={() => {
+                            const rf = rforceOrders.find(
+                              (r) => r.work_order_number === item.workOrderNumber
+                            );
+                            if (rf) setLinkRForceOrder(rf);
+                          }}
+                          className="px-2 py-1 border border-border text-[11px] rounded-md hover:bg-surface flex items-center gap-0.5 transition-colors"
+                          title="Link to existing app appointment"
+                        >
+                          <Link2 size={10} />
+                          Link
+                        </button>
+                      </>
                     )}
-                    {item.rforceDate && (
-                      <span>rForce: {item.rforceDate}</span>
-                    )}
-                    {item.appCrew && (
-                      <span>Crew: {item.appCrew}</span>
-                    )}
-                    {item.rforceCrew && (
-                      <span>Assigned: {item.rforceCrew}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 ml-2 shrink-0">
-                  {(item.status === "unscheduled" || item.status === "scheduled_rforce_only") && (
-                    <>
+                    {item.status === "not_in_rforce" && (
                       <button
                         onClick={() => {
-                          const rf = rforceOrders.find(
-                            (r) =>
-                              r.work_order_number === item.workOrderNumber
+                          const appt = appointments.find(
+                            (a) =>
+                              a.work_order_number === item.workOrderNumber ||
+                              (!a.work_order_number &&
+                                a.customer_name === item.customerName &&
+                                a.status !== "cancelled")
                           );
-                          if (rf) setScheduleOrder(rf);
+                          if (appt) setLinkAppointment(appt);
                         }}
-                        className="px-3 py-1.5 bg-primary text-white text-xs rounded-lg hover:opacity-90"
+                        className="px-2 py-1 border border-border text-[11px] rounded-md hover:bg-surface flex items-center gap-0.5 transition-colors"
+                        title="Link to rForce record"
                       >
-                        Schedule
-                      </button>
-                      <button
-                        onClick={() => {
-                          const rf = rforceOrders.find(
-                            (r) =>
-                              r.work_order_number === item.workOrderNumber
-                          );
-                          if (rf) setLinkRForceOrder(rf);
-                        }}
-                        className="px-2 py-1.5 border border-border text-xs rounded-lg hover:bg-surface flex items-center gap-1"
-                        title="Link to existing app appointment"
-                      >
-                        <Link2 size={12} />
+                        <Link2 size={10} />
                         Link
                       </button>
-                    </>
-                  )}
-                  {item.status === "not_in_rforce" && (
+                    )}
                     <button
-                      onClick={() => {
-                        const appt = appointments.find(
-                          (a) =>
-                            a.work_order_number === item.workOrderNumber ||
-                            (!a.work_order_number &&
-                              a.customer_name === item.customerName &&
-                              a.status !== "cancelled")
-                        );
-                        if (appt) setLinkAppointment(appt);
-                      }}
-                      className="px-2 py-1.5 border border-border text-xs rounded-lg hover:bg-surface flex items-center gap-1"
-                      title="Link to rForce record"
+                      onClick={() =>
+                        openSalesforce(item.workOrderNumber, item.orderNumber)
+                      }
+                      className="ml-auto p-1 rounded-md hover:bg-surface text-muted transition-colors"
+                      title="Open in rForce"
                     >
-                      <Link2 size={12} />
-                      Link
+                      <ExternalLink size={12} />
                     </button>
-                  )}
-                  <button
-                    onClick={() =>
-                      openSalesforce(
-                        item.workOrderNumber,
-                        item.orderNumber
-                      )
-                    }
-                    className="p-1.5 rounded-lg hover:bg-surface text-muted"
-                    title="Open in rForce"
-                  >
-                    <ExternalLink size={14} />
-                  </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -348,7 +380,7 @@ function FilterChip({
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+      className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors ${
         active
           ? "bg-primary text-white"
           : "bg-surface text-muted hover:bg-border"
