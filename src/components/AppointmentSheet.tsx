@@ -1,8 +1,9 @@
 "use client";
 
-import { Appointment, Crew } from "@/lib/types";
+import { Appointment, Crew, RForceOrder } from "@/lib/types";
 import { typeLabel, timeBlockLabel } from "@/lib/calendar-utils";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
+import { updateSchedulerNotes } from "@/lib/store";
 import { useData } from "./DataProvider";
 import {
   X,
@@ -17,8 +18,11 @@ import {
   RotateCcw,
   ArrowRightLeft,
   Flag,
+  AlertTriangle,
+  MessageSquare,
+  Save,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import EventHistory from "./EventHistory";
 
 interface Props {
@@ -36,11 +40,32 @@ export default function AppointmentSheet({
   onReschedule,
   onFlag,
 }: Props) {
-  const { crews, cancelAppointment, updateAppointment } = useData();
+  const { crews, rforceOrders, cancelAppointment, updateAppointment, refreshData } = useData();
   const [cancelling, setCancelling] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [restoring, setRestoring] = useState(false);
+
+  const linkedOrder = useMemo(() => {
+    if (!appointment.work_order_number) return null;
+    return rforceOrders.find((r) => r.work_order_number === appointment.work_order_number) || null;
+  }, [appointment.work_order_number, rforceOrders]);
+
+  const [notes, setNotes] = useState(linkedOrder?.scheduler_notes || "");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+
+  const handleSaveNotes = async () => {
+    if (!linkedOrder) return;
+    setSavingNotes(true);
+    const ok = await updateSchedulerNotes(linkedOrder.id, notes);
+    setSavingNotes(false);
+    if (ok) {
+      setNotesSaved(true);
+      setTimeout(() => setNotesSaved(false), 2000);
+      refreshData();
+    }
+  };
 
   const crew = crews.find((c) => c.id === appointment.crew_id);
   const secondaryCrew = appointment.secondary_crew_id
@@ -96,6 +121,16 @@ export default function AppointmentSheet({
         </div>
 
         <div className="p-4 space-y-4">
+          {linkedOrder?.order_alerts && (
+            <div className="flex items-start gap-2 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 rounded-lg px-3 py-2 text-sm">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <div>
+                <div className="font-medium text-xs mb-0.5">rForce Alert</div>
+                {linkedOrder.order_alerts}
+              </div>
+            </div>
+          )}
+
           <div>
             <div className="text-xl font-bold">
               {appointment.customer_name}
@@ -191,6 +226,30 @@ export default function AppointmentSheet({
                 <div>Last updated {new Date(appointment.updated_at).toLocaleDateString()}</div>
               )}
               <div className="text-muted/60">v{appointment.version}</div>
+            </div>
+          )}
+
+          {linkedOrder && (
+            <div className="pt-4 border-t border-border space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <MessageSquare size={14} className="text-muted" />
+                Scheduler Notes
+              </div>
+              <textarea
+                value={notes}
+                onChange={(e) => { setNotes(e.target.value); setNotesSaved(false); }}
+                placeholder="Add notes for the scheduling team..."
+                className="w-full px-3 py-2 border border-border rounded-lg bg-background text-sm resize-none"
+                rows={3}
+              />
+              <button
+                onClick={handleSaveNotes}
+                disabled={savingNotes || (notes === (linkedOrder.scheduler_notes || ""))}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                <Save size={12} />
+                {savingNotes ? "Saving..." : notesSaved ? "Saved!" : "Save Notes"}
+              </button>
             </div>
           )}
 

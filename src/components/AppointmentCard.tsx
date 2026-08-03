@@ -11,6 +11,8 @@ interface Props {
   allCrews?: Crew[];
   compact?: boolean;
   hasDiscrepancy?: boolean;
+  orderAlerts?: string | null;
+  accountName?: string | null;
   onClick?: () => void;
 }
 
@@ -20,6 +22,8 @@ export default function AppointmentCard({
   allCrews,
   compact,
   hasDiscrepancy,
+  orderAlerts,
+  accountName,
   onClick,
 }: Props) {
   const bgColor = crew?.color || "#1a73e8";
@@ -41,6 +45,12 @@ export default function AppointmentCard({
       className="rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-white text-xs leading-tight overflow-hidden"
       style={{ backgroundColor: bgColor }}
     >
+      {orderAlerts && (
+        <div className="flex items-start gap-1 bg-yellow-400/30 text-yellow-100 rounded px-1.5 py-0.5 mb-1 text-[10px] leading-snug">
+          <AlertTriangle size={10} className="shrink-0 mt-0.5" />
+          <span className="line-clamp-2">{orderAlerts}</span>
+        </div>
+      )}
       <div className="font-semibold truncate flex items-center gap-1">
         {appointment.customer_name}
         {hasDiscrepancy && (
@@ -50,6 +60,9 @@ export default function AppointmentCard({
           <Unlink size={10} className="shrink-0 opacity-70" />
         )}
       </div>
+      {accountName && (
+        <div className="truncate opacity-80 text-[10px] leading-snug">{accountName}</div>
+      )}
       {compact ? (
         <div className="truncate opacity-85 mt-0.5">
           {city}

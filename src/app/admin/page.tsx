@@ -1,7 +1,6 @@
 "use client";
 
 import { useData } from "@/components/DataProvider";
-import CsvUploader from "@/components/CsvUploader";
 import { Loader2 } from "lucide-react";
 
 export default function AdminPage() {
@@ -20,8 +19,8 @@ export default function AdminPage() {
       <header className="bg-background border-b border-border px-4 py-3 sticky top-0 z-30">
         <h1 className="text-lg font-semibold">Admin</h1>
       </header>
-      <div className="flex-1 overflow-auto">
-        <CsvUploader />
+      <div className="flex-1 overflow-auto p-4">
+        <p className="text-sm text-muted">Data is synced automatically from the calendar app.</p>
       </div>
     </div>
   );

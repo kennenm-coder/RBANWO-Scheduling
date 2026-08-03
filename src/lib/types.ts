@@ -108,6 +108,9 @@ export interface RForceOrder {
   contact_name: string | null;
   email: string | null;
   phones: PhoneEntry[] | null;
+  order_alerts: string | null;
+  scheduler_notes: string | null;
+  account_name: string | null;
   csv_import_id: string | null;
   updated_at: string;
 }

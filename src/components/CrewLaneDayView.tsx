@@ -417,6 +417,12 @@ function CrewSection({
 }) {
   const [showMap, setShowMap] = useState(false);
 
+  const rforceByWo = useMemo(() => {
+    const map = new Map<string, RForceOrder>();
+    for (const rf of rforceOrders) map.set(rf.work_order_number, rf);
+    return map;
+  }, [rforceOrders]);
+
   return (
     <div className="mb-6">
       <div className="flex items-center justify-between px-4 py-2 bg-surface sticky top-0 z-10">
@@ -554,6 +560,8 @@ function CrewSection({
                             crew={crew}
                             compact={false}
                             hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
+                            orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+                            accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
                             onClick={() => onCardClick(a)}
                           />
                         </div>
