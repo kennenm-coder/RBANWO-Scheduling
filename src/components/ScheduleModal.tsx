@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Appointment,
   AppointmentType,
@@ -16,8 +16,9 @@ import {
 import { buildSalesforceUrl } from "@/lib/salesforce";
 import { validateAppointment } from "@/lib/scheduling-rules";
 import { getEligibleCrews } from "@/lib/crew-utils";
+import { fetchAccountSuggestions, AccountSuggestion } from "@/lib/store";
 import { useData } from "./DataProvider";
-import { X, AlertTriangle, AlertCircle } from "lucide-react";
+import { X, AlertTriangle, AlertCircle, MapPin } from "lucide-react";
 import { format } from "date-fns";
 
 interface Props {
@@ -98,6 +99,44 @@ export default function ScheduleModal({
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const [accountSuggestions, setAccountSuggestions] = useState<AccountSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestionsLoaded, setSuggestionsLoaded] = useState(false);
+  const addressRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!prefill && !editingAppointment && !suggestionsLoaded) {
+      fetchAccountSuggestions().then((s) => {
+        setAccountSuggestions(s);
+        setSuggestionsLoaded(true);
+      });
+    }
+  }, [prefill, editingAppointment, suggestionsLoaded]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (addressRef.current && !addressRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filteredSuggestions = address.length >= 2
+    ? accountSuggestions
+        .filter((s) => s.address.toLowerCase().includes(address.toLowerCase()))
+        .slice(0, 8)
+    : [];
+
+  const handleSelectSuggestion = (s: AccountSuggestion) => {
+    setAddress(s.address);
+    if (!customerName && s.customer_name) {
+      setCustomerName(s.customer_name);
+    }
+    setShowSuggestions(false);
+  };
 
   const timeBlocks = getTimeBlocksForType(type);
   const eligibleCrews = getEligibleCrews(crews, type);
@@ -386,17 +425,42 @@ export default function ScheduleModal({
             />
           </div>
 
-          <div>
+          <div ref={addressRef} className="relative">
             <label className="block text-xs text-muted mb-1">
               Address
             </label>
             <input
               type="text"
               value={address}
-              onChange={(e) => setAddress(e.target.value)}
+              onChange={(e) => {
+                setAddress(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => { if (address.length >= 2) setShowSuggestions(true); }}
               required
+              autoComplete="off"
               className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
             />
+            {showSuggestions && filteredSuggestions.length > 0 && (
+              <div className="absolute z-50 left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                {filteredSuggestions.map((s, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => handleSelectSuggestion(s)}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-surface flex items-start gap-2 border-b border-border/50 last:border-b-0"
+                  >
+                    <MapPin size={12} className="shrink-0 mt-0.5 text-muted" />
+                    <div className="min-w-0">
+                      <div className="truncate">{s.address}</div>
+                      {s.customer_name && (
+                        <div className="text-[10px] text-muted truncate">{s.customer_name}</div>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-3">

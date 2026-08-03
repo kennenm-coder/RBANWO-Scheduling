@@ -29,7 +29,7 @@ import { parseCity, crewHasType } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences } from "@/lib/preferences";
 import { format, isToday, parseISO, addDays } from "date-fns";
-import { Plus, Palmtree, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink } from "lucide-react";
 import { getDraggedOrder, setDraggedOrder, getDraggedAppointment, setDraggedAppointment, getResizingAppointment, setResizingAppointment } from "@/lib/drag-context";
 import { getEligibleCrews } from "@/lib/crew-utils";
 import { timeBlockStartEnd, appointmentSpansBlock } from "@/lib/calendar-utils";
@@ -43,6 +43,7 @@ interface Props {
   onDayClick: (date: Date) => void;
   filterType?: AppointmentType | "all";
   searchQuery?: string;
+  showRForce?: boolean;
 }
 
 const SHORT_BLOCK_LABELS: Record<string, string> = {
@@ -58,6 +59,7 @@ export default function CrewLaneWeekView({
   onDayClick,
   filterType = "all",
   searchQuery = "",
+  showRForce = false,
 }: Props) {
   const { crews, appointments, rforceOrders, timeOffRequests, availabilityRules, availabilityExceptions, updateAppointment } = useData();
   const { showToast } = useToast();
@@ -416,6 +418,7 @@ export default function CrewLaneWeekView({
                                   sectionType={section.filterType}
                                   timeOffColor={timeOffColor}
                                   availability={dayAvail}
+                                  showRForce={showRForce}
                                   onCardClick={setSelectedAppt}
                                   onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
                                   onSchedule={(block) =>
@@ -447,6 +450,7 @@ export default function CrewLaneWeekView({
                                 crewObj={crewObj}
                                 timeOffColor={timeOffColor}
                                 availability={dayAvail}
+                                showRForce={showRForce}
                                 onCardClick={setSelectedAppt}
                                 onRForceClick={(order) => setSelectedRForce({ order, crew: crewObj })}
                                 onSchedule={() =>
@@ -540,6 +544,7 @@ function MeasureTimeLaneCell({
   sectionType,
   timeOffColor,
   availability,
+  showRForce,
   onCardClick,
   onRForceClick,
   onSchedule,
@@ -561,6 +566,7 @@ function MeasureTimeLaneCell({
   sectionType: string;
   timeOffColor?: string;
   availability?: CrewDayAvailability;
+  showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onRForceClick: (order: RForceOrder) => void;
   onSchedule: (block: TimeBlock) => void;
@@ -740,6 +746,7 @@ function MeasureTimeLaneCell({
                               multiDayLabel={multiDay}
                               orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                               accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
+                              showRForce={showRForce}
                             />
                           </WeekCard>
                         );
@@ -789,6 +796,7 @@ function StandardCell({
   crewObj,
   timeOffColor,
   availability,
+  showRForce,
   onCardClick,
   onSchedule,
   onRForceClick,
@@ -807,6 +815,7 @@ function StandardCell({
   crewObj: Crew | undefined;
   timeOffColor?: string;
   availability?: CrewDayAvailability;
+  showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onSchedule: () => void;
   onRForceClick: (order: RForceOrder) => void;
@@ -1062,6 +1071,7 @@ function CompactAppointmentContent({
   multiDayLabel,
   orderAlerts,
   accountName,
+  showRForce,
 }: {
   appointment: Appointment;
   crew?: Crew;
@@ -1069,14 +1079,16 @@ function CompactAppointmentContent({
   multiDayLabel: string | null;
   orderAlerts?: string | null;
   accountName?: string | null;
+  showRForce?: boolean;
 }) {
   const bgColor = crew?.color || "#1a73e8";
   const city = parseCity(appointment.address);
+  const isLinked = !!appointment.work_order_number;
 
   return (
     <div className="rounded-sm px-1 py-0.5 text-white" style={{ backgroundColor: bgColor }}>
       {orderAlerts && (
-        <div className="truncate text-yellow-200 text-[8px] leading-tight">⚠ {orderAlerts}</div>
+        <div className="truncate text-yellow-200 text-[8px] leading-tight">{orderAlerts}</div>
       )}
       <div className="font-semibold truncate flex items-center gap-0.5">
         {appointment.customer_name}
@@ -1085,6 +1097,17 @@ function CompactAppointmentContent({
         ) : hasDiscrepancy ? (
           <span className="text-yellow-200 text-[7px]">!</span>
         ) : null}
+        {showRForce && (
+          isLinked ? (
+            hasDiscrepancy ? (
+              <span className="text-amber-300 text-[7px]" title="rForce mismatch">&#9888;</span>
+            ) : (
+              <span className="text-green-300 text-[7px]" title="In sync with rForce">&#10003;</span>
+            )
+          ) : (
+            <span title="Not linked to rForce"><Unlink size={7} className="shrink-0 opacity-60" /></span>
+          )
+        )}
       </div>
       {accountName && <div className="truncate opacity-70 text-[7px]">{accountName}</div>}
       {city && <div className="truncate opacity-80 text-[8px]">{city}</div>}

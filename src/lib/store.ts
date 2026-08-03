@@ -7,6 +7,8 @@ import {
   AppointmentEvent,
   AvailabilityRule,
   AvailabilityException,
+  AppointmentLink,
+  ResourceMapping,
 } from "./types";
 
 // ── Crews ──
@@ -143,6 +145,8 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
     const { data } = await sb
       .from("work_orders")
       .select("*")
+      .neq("work_order_number", "")
+      .not("work_order_number", "is", null)
       .range(offset, offset + BATCH - 1);
     if (!data || data.length === 0) break;
     all.push(
@@ -187,6 +191,7 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
   return all;
 }
 
+/** @deprecated Use linkAppointment() which writes to sched_appointment_links */
 export async function linkAppointmentToRForce(
   appointmentId: string,
   version: number,
@@ -199,6 +204,144 @@ export async function linkAppointmentToRForce(
       ? `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${rforceOrder.work_order_number}`
       : null,
   });
+}
+
+// ── Appointment Links ──
+
+export async function fetchActiveLinks(): Promise<AppointmentLink[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("sched_appointment_links")
+    .select("*")
+    .is("unlinked_at", null);
+  return (data as AppointmentLink[]) ?? [];
+}
+
+export async function linkAppointment(
+  appointmentId: string,
+  appointmentVersion: number,
+  rforceOrder: RForceOrder,
+  matchMethod: AppointmentLink["match_method"] = "manual"
+): Promise<AppointmentLink> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("No database connection");
+
+  const { data: link, error: linkError } = await sb
+    .from("sched_appointment_links")
+    .insert({
+      appointment_id: appointmentId,
+      source_system: "rforce",
+      external_key: rforceOrder.id,
+      work_order_number: rforceOrder.work_order_number,
+      order_number: rforceOrder.order_number,
+      match_method: matchMethod,
+    })
+    .select()
+    .single();
+
+  if (linkError) {
+    if (linkError.code === "23505") {
+      throw new Error("ALREADY_LINKED");
+    }
+    throw linkError;
+  }
+
+  await updateAppointment(appointmentId, appointmentVersion, {
+    work_order_number: rforceOrder.work_order_number,
+    order_number: rforceOrder.order_number,
+    salesforce_url: rforceOrder.work_order_number
+      ? `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${rforceOrder.work_order_number}`
+      : null,
+  });
+
+  return link as AppointmentLink;
+}
+
+export async function unlinkAppointment(
+  linkId: string,
+  reason: string
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("sched_appointment_links")
+    .update({
+      unlinked_at: new Date().toISOString(),
+      unlink_reason: reason,
+    })
+    .eq("id", linkId)
+    .is("unlinked_at", null);
+  if (error) throw error;
+}
+
+// ── Resource Mappings ──
+
+export async function fetchResourceMappings(): Promise<ResourceMapping[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("sched_resource_mappings")
+    .select("*")
+    .eq("is_active", true);
+  return (data as ResourceMapping[]) ?? [];
+}
+
+export async function upsertResourceMapping(
+  rawName: string,
+  crewId: string
+): Promise<ResourceMapping | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_resource_mappings")
+    .upsert(
+      { raw_name: rawName, crew_id: crewId, is_active: true, updated_at: new Date().toISOString() },
+      { onConflict: "raw_name" }
+    )
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as ResourceMapping | null;
+}
+
+// ── Account/Address Lookup (for autofill) ──
+
+export interface AccountSuggestion {
+  address: string;
+  account_name: string;
+  customer_name: string | null;
+}
+
+export async function fetchAccountSuggestions(): Promise<AccountSuggestion[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const all: AccountSuggestion[] = [];
+  let offset = 0;
+  const BATCH = 1000;
+  const seen = new Set<string>();
+  while (true) {
+    const { data } = await sb
+      .from("work_orders")
+      .select("address, account_name, customer_name")
+      .not("address", "is", null)
+      .neq("address", "")
+      .range(offset, offset + BATCH - 1);
+    if (!data || data.length === 0) break;
+    for (const row of data) {
+      const addr = (row.address || "").trim();
+      if (!addr || seen.has(addr)) continue;
+      seen.add(addr);
+      all.push({
+        address: addr,
+        account_name: row.account_name || "",
+        customer_name: row.customer_name || null,
+      });
+    }
+    if (data.length < BATCH) break;
+    offset += BATCH;
+  }
+  return all;
 }
 
 // ── Scheduler Notes (editable per work order) ──

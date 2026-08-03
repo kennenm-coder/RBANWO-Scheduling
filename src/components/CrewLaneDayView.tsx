@@ -34,11 +34,13 @@ const SectionMap = dynamic(() => import("./SectionMap"), { ssr: false });
 interface Props {
   date: Date;
   filterType?: AppointmentType | "all";
+  showRForce?: boolean;
 }
 
 export default function CrewLaneDayView({
   date,
   filterType = "all",
+  showRForce = false,
 }: Props) {
   const { crews, appointments, rforceOrders, timeOffRequests, availabilityRules, availabilityExceptions } = useData();
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
@@ -131,6 +133,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -151,6 +154,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -172,6 +176,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -191,6 +196,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -210,6 +216,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -231,6 +238,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -250,6 +258,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -271,6 +280,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -290,6 +300,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -309,6 +320,7 @@ export default function CrewLaneDayView({
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
             }
+            showRForce={showRForce}
             onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
           />
         )}
@@ -398,6 +410,7 @@ function CrewSection({
   isCrewOff,
   availabilityRules,
   availabilityExceptions,
+  showRForce,
   onCardClick,
   onCellClick,
   onRForceClick,
@@ -411,6 +424,7 @@ function CrewSection({
   isCrewOff: (crew: Crew) => boolean;
   availabilityRules: AvailabilityRule[];
   availabilityExceptions: AvailabilityException[];
+  showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
   onRForceClick: (order: RForceOrder, crew: Crew) => void;
@@ -562,6 +576,8 @@ function CrewSection({
                             hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
                             orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                             accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
+                            isLinked={!!a.work_order_number}
+                            showRForce={showRForce}
                             onClick={() => onCardClick(a)}
                           />
                         </div>

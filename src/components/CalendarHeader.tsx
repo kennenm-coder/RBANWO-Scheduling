@@ -13,6 +13,8 @@ import {
   Moon,
   Monitor,
   AlertTriangle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useData } from "./DataProvider";
 import ProfileMenu from "./ProfileMenu";
@@ -31,6 +33,8 @@ interface Props {
   onSearchChange?: (q: string) => void;
   flagCount?: number;
   onFlagsClick?: () => void;
+  showRForce?: boolean;
+  onToggleRForce?: () => void;
 }
 
 export default function CalendarHeader({
@@ -45,6 +49,8 @@ export default function CalendarHeader({
   onSearchChange,
   flagCount = 0,
   onFlagsClick,
+  showRForce = false,
+  onToggleRForce,
 }: Props) {
   const { connected } = useData();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -233,6 +239,21 @@ export default function CalendarHeader({
                 {flagCount > 99 ? "99+" : flagCount}
               </span>
             )}
+          </button>
+        )}
+        {onToggleRForce && (
+          <button
+            onClick={onToggleRForce}
+            className={`flex items-center gap-0.5 px-2 py-1 text-[11px] font-semibold rounded-full border transition-colors ${
+              showRForce
+                ? "bg-primary text-white border-primary"
+                : "border-border hover:bg-surface text-muted"
+            }`}
+            aria-label={showRForce ? "Hide rForce overlay" : "Show rForce overlay"}
+            title={showRForce ? "Hide rForce overlay" : "Show rForce overlay"}
+          >
+            {showRForce ? <Eye size={12} /> : <EyeOff size={12} />}
+            <span>rF</span>
           </button>
         )}
         <div

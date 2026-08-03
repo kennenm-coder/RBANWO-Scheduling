@@ -12,6 +12,7 @@ import {
   MapPin,
   Users,
   ArrowRightLeft,
+  Unlink,
 } from "lucide-react";
 
 interface Props {
@@ -26,6 +27,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   missing_address: <MapPin size={14} className="text-warning" />,
   manual: <Info size={14} className="text-primary" />,
   manual_override: <ArrowRightLeft size={14} className="text-blue-500" />,
+  unlinked: <Unlink size={14} className="text-muted" />,
 };
 
 const SEVERITY_ICON = {
@@ -35,16 +37,17 @@ const SEVERITY_ICON = {
 };
 
 export default function IssueCenter({ onClose, onNavigate }: Props) {
-  const { appointments, crews, rforceOrders, timeOffRequests } = useData();
+  const { appointments, crews, rforceOrders, timeOffRequests, activeLinks } = useData();
 
   const flags = useMemo(
-    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests),
-    [appointments, crews, rforceOrders, timeOffRequests]
+    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks),
+    [appointments, crews, rforceOrders, timeOffRequests, activeLinks]
   );
 
   const errorCount = flags.filter((f) => f.severity === "error").length;
   const warningCount = flags.filter((f) => f.severity === "warning").length;
   const overrideCount = flags.filter((f) => f.type === "manual_override").length;
+  const unlinkedCount = flags.filter((f) => f.type === "unlinked").length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -67,7 +70,13 @@ export default function IssueCenter({ onClose, onNavigate }: Props) {
                   <span className="text-blue-500 font-medium">{overrideCount} overrides</span>
                 </>
               )}
-              {errorCount === 0 && warningCount === 0 && overrideCount === 0 && "No issues detected"}
+              {unlinkedCount > 0 && (
+                <>
+                  {(errorCount > 0 || warningCount > 0 || overrideCount > 0) && " · "}
+                  <span className="text-muted font-medium">{unlinkedCount} unlinked</span>
+                </>
+              )}
+              {errorCount === 0 && warningCount === 0 && overrideCount === 0 && unlinkedCount === 0 && "No issues detected"}
             </div>
           </div>
           <button
