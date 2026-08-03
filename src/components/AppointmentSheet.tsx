@@ -238,7 +238,7 @@ export default function AppointmentSheet({
 
           {linkedOrder && (() => {
             const rfDate = linkedOrder.scheduled_start?.slice(0, 10);
-            const rfResource = linkedOrder.tech_measure_name || linkedOrder.installer || linkedOrder.service_rep || linkedOrder.primary_resource;
+            const rfResource = linkedOrder.primary_resource || linkedOrder.tech_measure_name || linkedOrder.installer || linkedOrder.service_rep;
             const dateDiff = rfDate && rfDate !== appointment.scheduled_date;
             const crewObj = crews.find((c) => c.id === appointment.crew_id);
             const crewDiff = rfResource && crewObj && crewObj.name.toLowerCase().split(" ")[0] !== rfResource.toLowerCase().split(" ")[0];

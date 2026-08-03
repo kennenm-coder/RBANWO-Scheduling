@@ -99,7 +99,7 @@ export function reconcile(
 
         // --- Crew comparison ---
         const rfResource =
-          rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
+          rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
         const appCrewName = crewMap.get(appt.crew_id);
         const crewMismatch = !firstNamesMatch(rfResource ?? undefined, appCrewName);
 
@@ -150,7 +150,7 @@ export function reconcile(
     }
 
     const assignedTo =
-      rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
+      rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
 
     results.push({
       orderNumber: rf.order_number,
