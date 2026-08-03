@@ -30,7 +30,7 @@ import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-
 import { getPreferences } from "@/lib/preferences";
 import { format, isToday, parseISO, addDays } from "date-fns";
 import { Plus, Palmtree, ChevronDown, ChevronRight } from "lucide-react";
-import { getDraggedOrder, getDraggedAppointment, setDraggedAppointment, getResizingAppointment, setResizingAppointment } from "@/lib/drag-context";
+import { getDraggedOrder, setDraggedOrder, getDraggedAppointment, setDraggedAppointment, getResizingAppointment, setResizingAppointment } from "@/lib/drag-context";
 import { getEligibleCrews } from "@/lib/crew-utils";
 import { timeBlockStartEnd, appointmentSpansBlock } from "@/lib/calendar-utils";
 import { updateAppointment as updateApptInDb, createAppointmentEvent } from "@/lib/store";
@@ -570,6 +570,7 @@ function MeasureTimeLaneCell({
   onQueueDrop?: (order: RForceOrder) => void;
 }) {
   const [blockDragOver, setBlockDragOver] = useState<TimeBlock | null>(null);
+  const [cellDragOver, setCellDragOver] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
 
   const allApptsSorted = [...cellAppts].sort((a, b) => {
@@ -591,6 +592,31 @@ function MeasureTimeLaneCell({
     ? { borderColor: `${timeOffColor}60` }
     : undefined;
 
+  function handleCellDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setCellDragOver(true);
+  }
+  function handleCellDragLeave() {
+    setCellDragOver(false);
+  }
+  function handleCellDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setCellDragOver(false);
+    setBlockDragOver(null);
+    const draggedAppt = getDraggedAppointment();
+    if (draggedAppt) {
+      onAppointmentDrop?.(draggedAppt.appointment.id, draggedAppt.sourceCrewId, draggedAppt.sourceDate, draggedAppt.sourceTimeBlock, MEASURE_TIME_BLOCKS[0]);
+      setDraggedAppointment(null);
+      return;
+    }
+    const order = getDraggedOrder();
+    if (order) {
+      onQueueDrop?.(order);
+      setDraggedOrder(null);
+    }
+  }
+
   return (
     <td
       className={`p-0 border-b border-border border-l border-l-border/30 align-top ${
@@ -599,8 +625,11 @@ function MeasureTimeLaneCell({
           : off
             ? (timeOffColor ? "" : "bg-time-off-light/60")
             : ""
-      }`}
+      } ${cellDragOver ? "ring-2 ring-primary ring-inset" : ""}`}
       style={off && !hasConflict && timeOffColor ? offStyle : hasConflict && timeOffColor ? { backgroundColor: `${timeOffColor}20` } : undefined}
+      onDragOver={handleCellDragOver}
+      onDragLeave={handleCellDragLeave}
+      onDrop={handleCellDrop}
     >
       {hasConflict && (
         <div className="text-[8px] font-semibold px-0.5 flex items-center gap-0.5" style={timeOffColor ? { color: timeOffColor } : undefined}>
@@ -637,6 +666,7 @@ function MeasureTimeLaneCell({
             }
             function handleBlockDrop(e: React.DragEvent) {
               e.preventDefault();
+              e.stopPropagation();
               setBlockDragOver(null);
               const resizing = getResizingAppointment();
               if (resizing) {
@@ -653,6 +683,7 @@ function MeasureTimeLaneCell({
               const order = getDraggedOrder();
               if (order) {
                 onQueueDrop?.(order);
+                setDraggedOrder(null);
               }
             }
 
@@ -800,7 +831,10 @@ function StandardCell({
       return;
     }
     const order = getDraggedOrder();
-    if (order && onDrop) onDrop(order);
+    if (order && onDrop) {
+      onDrop(order);
+      setDraggedOrder(null);
+    }
   }
 
   const sortedAppts = [...cellAppts].sort((a, b) =>

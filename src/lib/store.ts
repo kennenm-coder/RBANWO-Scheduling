@@ -3,7 +3,6 @@ import {
   Appointment,
   Crew,
   RForceOrder,
-  CsvImport,
   TimeOffRequest,
   AppointmentEvent,
   AvailabilityRule,
@@ -142,54 +141,47 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
   const BATCH = 1000;
   while (true) {
     const { data } = await sb
-      .from("sched_rforce_orders")
+      .from("work_orders")
       .select("*")
       .range(offset, offset + BATCH - 1);
     if (!data || data.length === 0) break;
-    all.push(...(data as RForceOrder[]));
+    all.push(
+      ...(data as any[]).map((row) => ({
+        id: row.id,
+        order_number: row.order_number,
+        work_order_number: row.work_order_number,
+        order_status: row.status,
+        wo_status: row.appointment_status,
+        work_order_type: row.work_order_type,
+        customer_name: row.customer_name,
+        address: row.address,
+        booking_date: row.booking_date,
+        scheduled_start: row.scheduled_start,
+        scheduled_end: row.scheduled_end,
+        description: row.description || row.service_description || null,
+        combined_retail_total: row.combined_retail_total ?? null,
+        product_count: row.product_count ?? null,
+        total_units: row.total_units ?? null,
+        windows: row.windows ?? null,
+        patio_doors: row.patio_doors ?? null,
+        doors: row.doors ?? null,
+        order_owner: row.order_owner,
+        sales_rep: row.sales_rep,
+        primary_resource: row.primary_resource,
+        tech_measure_name: row.tech_measure,
+        installer: row.installer,
+        service_rep: row.service_rep,
+        contact_name: row.contact_name,
+        email: row.email,
+        phones: row.phones,
+        csv_import_id: null,
+        updated_at: row.updated_at,
+      } as RForceOrder))
+    );
     if (data.length < BATCH) break;
     offset += BATCH;
   }
   return all;
-}
-
-export async function upsertRForceOrders(
-  orders: Omit<RForceOrder, "updated_at">[],
-  csvImportId: string
-): Promise<number> {
-  const sb = getSupabase();
-  if (!sb) return 0;
-
-  const enriched = orders.map((o) => ({
-    ...o,
-    csv_import_id: csvImportId,
-    updated_at: new Date().toISOString(),
-  }));
-
-  let upserted = 0;
-  const BATCH = 500;
-  for (let i = 0; i < enriched.length; i += BATCH) {
-    const batch = enriched.slice(i, i + BATCH);
-    const { data } = await sb
-      .from("sched_rforce_orders")
-      .upsert(batch, { onConflict: "id" })
-      .select("id");
-    upserted += data?.length ?? 0;
-  }
-  return upserted;
-}
-
-export async function createCsvImport(
-  record: Omit<CsvImport, "id" | "imported_at">
-): Promise<CsvImport | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
-  const { data } = await sb
-    .from("sched_csv_imports")
-    .insert(record)
-    .select()
-    .single();
-  return data as CsvImport | null;
 }
 
 export async function linkAppointmentToRForce(
