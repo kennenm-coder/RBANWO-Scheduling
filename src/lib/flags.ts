@@ -139,7 +139,7 @@ export function detectFlags(
     );
     if (!linked) continue;
 
-    const rfResource = rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
+    const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
     const linkedCrew = crews.find((c) => c.id === linked.crew_id);
     const linkedCrewName = linkedCrew?.name;
 

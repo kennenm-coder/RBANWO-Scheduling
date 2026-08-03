@@ -70,7 +70,7 @@ begin
       wo.scheduled_start,
       wo.status       as wo_order_status,
       wo.appointment_status as wo_appt_status,
-      coalesce(wo.tech_measure, wo.installer, wo.service_rep, wo.primary_resource) as wo_resource
+      coalesce(wo.primary_resource, wo.tech_measure, wo.installer, wo.service_rep) as wo_resource
     from sched_appointment_links l
     join sched_appointments a on a.id = l.appointment_id
     left join sched_crews c on c.id = a.crew_id

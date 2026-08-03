@@ -205,7 +205,7 @@ export default function CrewLaneWeekView({
       const rf = rforceOrders.find((r) => r.work_order_number === appt.work_order_number);
       if (rf && rf.scheduled_start) {
         const rfDate = rf.scheduled_start.slice(0, 10);
-        const rfResource = rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
+        const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
         if (targetDate !== rfDate || (rfResource && targetCrew.name.toLowerCase() !== rfResource.toLowerCase())) {
           manualOverride = true;
           overrideSource = {
