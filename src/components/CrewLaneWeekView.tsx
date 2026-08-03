@@ -573,6 +573,12 @@ function MeasureTimeLaneCell({
   const [cellDragOver, setCellDragOver] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
 
+  const rforceByWo = useMemo(() => {
+    const map = new Map<string, RForceOrder>();
+    for (const rf of rforceOrders) map.set(rf.work_order_number, rf);
+    return map;
+  }, [rforceOrders]);
+
   const allApptsSorted = [...cellAppts].sort((a, b) => {
     const blockOrder = MEASURE_TIME_BLOCKS as string[];
     const aIdx = a.time_block ? blockOrder.indexOf(a.time_block) : 99;
@@ -732,6 +738,8 @@ function MeasureTimeLaneCell({
                               crew={crewObj}
                               hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
                               multiDayLabel={multiDay}
+                              orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+                              accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
                             />
                           </WeekCard>
                         );
@@ -810,6 +818,12 @@ function StandardCell({
   const dateStr = format(day, "yyyy-MM-dd");
   const hasContent = cellAppts.length > 0 || cellRForce.length > 0;
   const crewUnavailable = availability ? !availability.available : false;
+
+  const rforceByWo = useMemo(() => {
+    const map = new Map<string, RForceOrder>();
+    for (const rf of rforceOrders) map.set(rf.work_order_number, rf);
+    return map;
+  }, [rforceOrders]);
 
   function handleDragOver(e: React.DragEvent) {
     e.preventDefault();
@@ -928,6 +942,8 @@ function StandardCell({
                   crew={crewObj}
                   hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
                   multiDayLabel={multiDay}
+                  orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+                  accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
                 />
               </WeekCard>
             );
@@ -1044,17 +1060,24 @@ function CompactAppointmentContent({
   crew,
   hasDiscrepancy,
   multiDayLabel,
+  orderAlerts,
+  accountName,
 }: {
   appointment: Appointment;
   crew?: Crew;
   hasDiscrepancy: boolean;
   multiDayLabel: string | null;
+  orderAlerts?: string | null;
+  accountName?: string | null;
 }) {
   const bgColor = crew?.color || "#1a73e8";
   const city = parseCity(appointment.address);
 
   return (
     <div className="rounded-sm px-1 py-0.5 text-white" style={{ backgroundColor: bgColor }}>
+      {orderAlerts && (
+        <div className="truncate text-yellow-200 text-[8px] leading-tight">⚠ {orderAlerts}</div>
+      )}
       <div className="font-semibold truncate flex items-center gap-0.5">
         {appointment.customer_name}
         {appointment.manual_override ? (
@@ -1063,6 +1086,7 @@ function CompactAppointmentContent({
           <span className="text-yellow-200 text-[7px]">!</span>
         ) : null}
       </div>
+      {accountName && <div className="truncate opacity-70 text-[7px]">{accountName}</div>}
       {city && <div className="truncate opacity-80 text-[8px]">{city}</div>}
       {multiDayLabel && (
         <div className="opacity-70 text-[8px]">{multiDayLabel}</div>
@@ -1083,10 +1107,14 @@ function CompactRForceContent({
 
   return (
     <div className="rounded-sm px-1 py-0.5 text-white" style={{ backgroundColor: bgColor }}>
+      {order.order_alerts && (
+        <div className="truncate text-yellow-200 text-[8px] leading-tight">⚠ {order.order_alerts}</div>
+      )}
       <div className="font-semibold truncate flex items-center gap-0.5">
         {order.customer_name || "Unknown"}
         <span className="text-[6px] opacity-50 font-normal ml-auto bg-white/20 px-0.5 rounded">rF</span>
       </div>
+      {order.account_name && <div className="truncate opacity-70 text-[7px]">{order.account_name}</div>}
       {city && <div className="truncate opacity-80 text-[8px]">{city}</div>}
     </div>
   );

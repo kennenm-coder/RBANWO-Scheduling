@@ -174,6 +174,9 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
         contact_name: row.contact_name,
         email: row.email,
         phones: row.phones,
+        order_alerts: row.order_alerts || null,
+        scheduler_notes: row.scheduler_notes || null,
+        account_name: row.account_name || null,
         csv_import_id: null,
         updated_at: row.updated_at,
       } as RForceOrder))
@@ -196,6 +199,21 @@ export async function linkAppointmentToRForce(
       ? `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${rforceOrder.work_order_number}`
       : null,
   });
+}
+
+// ── Scheduler Notes (editable per work order) ──
+
+export async function updateSchedulerNotes(
+  workOrderId: string,
+  notes: string
+): Promise<boolean> {
+  const sb = getSupabase();
+  if (!sb) return false;
+  const { error } = await sb
+    .from("work_orders")
+    .update({ scheduler_notes: notes })
+    .eq("id", workOrderId);
+  return !error;
 }
 
 // ── Time Off (read from Duck Force table) ──

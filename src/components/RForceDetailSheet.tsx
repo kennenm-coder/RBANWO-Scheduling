@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { RForceOrder, Crew } from "@/lib/types";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
+import { updateSchedulerNotes } from "@/lib/store";
 import { parseCity } from "@/lib/crew-utils";
+import { useData } from "./DataProvider";
 import ScheduleModal from "./ScheduleModal";
 import {
   X,
@@ -15,6 +17,9 @@ import {
   Phone,
   Package,
   Link2,
+  AlertTriangle,
+  MessageSquare,
+  Save,
 } from "lucide-react";
 
 interface Props {
@@ -24,9 +29,24 @@ interface Props {
 }
 
 export default function RForceDetailSheet({ order, crew, onClose }: Props) {
+  const { refreshData } = useData();
   const [scheduling, setScheduling] = useState(false);
+  const [notes, setNotes] = useState(order.scheduler_notes || "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const city = parseCity(order.address || "");
+
+  const handleSaveNotes = async () => {
+    setSaving(true);
+    const ok = await updateSchedulerNotes(order.id, notes);
+    setSaving(false);
+    if (ok) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      refreshData();
+    }
+  };
 
   return (
     <>
@@ -49,6 +69,16 @@ export default function RForceDetailSheet({ order, crew, onClose }: Props) {
           </div>
 
           <div className="p-4 space-y-4">
+            {order.order_alerts && (
+              <div className="flex items-start gap-2 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 rounded-lg px-3 py-2 text-sm">
+                <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-medium text-xs mb-0.5">rForce Alert</div>
+                  {order.order_alerts}
+                </div>
+              </div>
+            )}
+
             <div>
               <div className="text-xl font-bold">
                 {order.customer_name || "Unknown Customer"}
@@ -129,6 +159,28 @@ export default function RForceDetailSheet({ order, crew, onClose }: Props) {
                 {order.description}
               </InfoRow>
             )}
+
+            <div className="pt-4 border-t border-border space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <MessageSquare size={14} className="text-muted" />
+                Scheduler Notes
+              </div>
+              <textarea
+                value={notes}
+                onChange={(e) => { setNotes(e.target.value); setSaved(false); }}
+                placeholder="Add notes for the scheduling team..."
+                className="w-full px-3 py-2 border border-border rounded-lg bg-background text-sm resize-none"
+                rows={3}
+              />
+              <button
+                onClick={handleSaveNotes}
+                disabled={saving || (notes === (order.scheduler_notes || ""))}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                <Save size={12} />
+                {saving ? "Saving..." : saved ? "Saved!" : "Save Notes"}
+              </button>
+            </div>
 
             <div className="flex gap-2 pt-4 border-t border-border">
               <button

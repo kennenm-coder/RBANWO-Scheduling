@@ -35,6 +35,8 @@ const COL = {
   WINDOWS: 27,
   PATIO_DOORS: 28,
   DOORS: 29,
+  ORDER_ALERTS: 30,
+  ACCOUNT_NAME: 31,
 } as const;
 
 function val(row: string[], col: number): string {
@@ -161,6 +163,9 @@ export function parseCsv(csvText: string): Omit<RForceOrder, "updated_at">[] {
         val(row, COL.MOBILE_PHONE),
         val(row, COL.BUSINESS_PHONE)
       ),
+      order_alerts: val(row, COL.ORDER_ALERTS) || null,
+      scheduler_notes: null,
+      account_name: val(row, COL.ACCOUNT_NAME) || null,
       csv_import_id: null,
     });
   }
