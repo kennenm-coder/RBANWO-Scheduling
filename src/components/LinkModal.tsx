@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import { RForceOrder, Appointment } from "@/lib/types";
-import { linkAppointmentToRForce } from "@/lib/store";
+import { linkAppointment } from "@/lib/store";
 import { X, Search, Link2, MapPin } from "lucide-react";
 
 interface LinkToRForceProps {
@@ -21,30 +21,34 @@ interface LinkToAppProps {
 type Props = LinkToRForceProps | LinkToAppProps;
 
 export default function LinkModal(props: Props) {
-  const { rforceOrders, appointments, refreshData } = useData();
+  const { rforceOrders, appointments, activeLinks, refreshData } = useData();
   const [search, setSearch] = useState("");
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState("");
 
+  const linkedExternalKeys = useMemo(
+    () => new Set(activeLinks.map((l) => l.external_key)),
+    [activeLinks]
+  );
+  const linkedAppointmentIds = useMemo(
+    () => new Set(activeLinks.map((l) => l.appointment_id)),
+    [activeLinks]
+  );
+
   const unlinkedRForceOrders = useMemo(() => {
-    const linkedWOs = new Set(
-      appointments
-        .filter((a) => a.work_order_number && a.status !== "cancelled")
-        .map((a) => a.work_order_number)
-    );
     return rforceOrders.filter(
       (r) =>
-        !linkedWOs.has(r.work_order_number) &&
+        !linkedExternalKeys.has(r.id) &&
         r.wo_status !== "Appt Complete / Closed" &&
         r.wo_status !== "Canceled"
     );
-  }, [rforceOrders, appointments]);
+  }, [rforceOrders, linkedExternalKeys]);
 
   const unlinkedAppointments = useMemo(() => {
     return appointments.filter(
-      (a) => !a.work_order_number && a.status !== "cancelled"
+      (a) => !linkedAppointmentIds.has(a.id) && a.status !== "cancelled"
     );
-  }, [appointments]);
+  }, [appointments, linkedAppointmentIds]);
 
   const filteredItems = useMemo(() => {
     const q = search.toLowerCase();
@@ -73,17 +77,19 @@ export default function LinkModal(props: Props) {
     try {
       if (props.mode === "link_to_rforce") {
         const rf = item as RForceOrder;
-        await linkAppointmentToRForce(
+        await linkAppointment(
           props.appointment.id,
           props.appointment.version,
-          rf
+          rf,
+          rf.work_order_number === props.appointment.work_order_number ? "wo_exact" : "manual"
         );
       } else {
         const appt = item as Appointment;
-        await linkAppointmentToRForce(
+        await linkAppointment(
           appt.id,
           appt.version,
-          props.rforceOrder
+          props.rforceOrder,
+          props.rforceOrder.work_order_number === appt.work_order_number ? "wo_exact" : "manual"
         );
       }
       await refreshData();
@@ -91,6 +97,8 @@ export default function LinkModal(props: Props) {
     } catch (err: any) {
       if (err.message === "VERSION_CONFLICT") {
         setError("This record was modified by someone else. Close and try again.");
+      } else if (err.message === "ALREADY_LINKED") {
+        setError("This record is already linked to another appointment.");
       } else {
         setError("Failed to link. Please try again.");
       }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Appointment, Crew, RForceOrder } from "@/lib/types";
+import { Appointment, Crew, RForceOrder, AppointmentLink } from "@/lib/types";
 import { typeLabel, timeBlockLabel } from "@/lib/calendar-utils";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
@@ -40,16 +40,23 @@ export default function AppointmentSheet({
   onReschedule,
   onFlag,
 }: Props) {
-  const { crews, rforceOrders, cancelAppointment, updateAppointment, refreshData } = useData();
+  const { crews, rforceOrders, activeLinks, cancelAppointment, updateAppointment, refreshData } = useData();
   const [cancelling, setCancelling] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [restoring, setRestoring] = useState(false);
 
+  const activeLink = useMemo(() => {
+    return activeLinks.find((l) => l.appointment_id === appointment.id) || null;
+  }, [activeLinks, appointment.id]);
+
   const linkedOrder = useMemo(() => {
+    if (activeLink) {
+      return rforceOrders.find((r) => r.id === activeLink.external_key) || null;
+    }
     if (!appointment.work_order_number) return null;
     return rforceOrders.find((r) => r.work_order_number === appointment.work_order_number) || null;
-  }, [appointment.work_order_number, rforceOrders]);
+  }, [activeLink, appointment.work_order_number, rforceOrders]);
 
   const [notes, setNotes] = useState(linkedOrder?.scheduler_notes || "");
   const [savingNotes, setSavingNotes] = useState(false);
@@ -147,10 +154,10 @@ export default function AppointmentSheet({
                   Cancelled
                 </span>
               )}
-              {appointment.work_order_number && (
+              {(activeLink || appointment.work_order_number) && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-200">
                   <Link2 size={10} />
-                  Linked
+                  Linked{activeLink?.match_method === "wo_exact" ? " (WO)" : activeLink?.match_method === "auto" ? " (Auto)" : ""}
                 </span>
               )}
             </div>
@@ -228,6 +235,39 @@ export default function AppointmentSheet({
               <div className="text-muted/60">v{appointment.version}</div>
             </div>
           )}
+
+          {linkedOrder && (() => {
+            const rfDate = linkedOrder.scheduled_start?.slice(0, 10);
+            const rfResource = linkedOrder.tech_measure_name || linkedOrder.installer || linkedOrder.service_rep || linkedOrder.primary_resource;
+            const dateDiff = rfDate && rfDate !== appointment.scheduled_date;
+            const crewObj = crews.find((c) => c.id === appointment.crew_id);
+            const crewDiff = rfResource && crewObj && crewObj.name.toLowerCase().split(" ")[0] !== rfResource.toLowerCase().split(" ")[0];
+            const hasDiff = dateDiff || crewDiff;
+            if (!hasDiff) return null;
+            return (
+              <div className="pt-4 border-t border-border space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <AlertTriangle size={14} className="text-warning" />
+                  rForce Differences
+                </div>
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-sm space-y-1.5">
+                  {dateDiff && (
+                    <div className="flex justify-between">
+                      <span className="text-muted">Date:</span>
+                      <span>App: <strong>{appointment.scheduled_date}</strong> | rForce: <strong>{rfDate}</strong></span>
+                    </div>
+                  )}
+                  {crewDiff && (
+                    <div className="flex justify-between">
+                      <span className="text-muted">Crew:</span>
+                      <span>App: <strong>{crewObj?.name}</strong> | rForce: <strong>{rfResource}</strong></span>
+                    </div>
+                  )}
+                  <div className="text-xs text-muted mt-2">The app schedule is authoritative. Update rForce to match.</div>
+                </div>
+              </div>
+            );
+          })()}
 
           {linkedOrder && (
             <div className="pt-4 border-t border-border space-y-2">

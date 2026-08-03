@@ -1,4 +1,4 @@
-import { Appointment, TimeBlock, AppointmentType, Crew, RForceOrder } from "./types";
+import { Appointment, TimeBlock, AppointmentType, Crew, RForceOrder, ResourceMapping } from "./types";
 import {
   startOfWeek,
   addDays,
@@ -218,10 +218,29 @@ function timeToBlock(hour: number): TimeBlock {
   return "4-6";
 }
 
-function matchCrewByName(resourceName: string, crews: Crew[]): Crew | undefined {
+export function matchCrewByMapping(
+  resourceName: string,
+  crews: Crew[],
+  mappings: ResourceMapping[]
+): Crew | undefined {
+  const lower = resourceName.toLowerCase().trim();
+  const mapping = mappings.find((m) => m.raw_name.toLowerCase() === lower);
+  if (mapping) return crews.find((c) => c.id === mapping.crew_id);
+  return undefined;
+}
+
+function matchCrewByName(resourceName: string, crews: Crew[], mappings?: ResourceMapping[]): Crew | undefined {
+  if (mappings && mappings.length > 0) {
+    const mapped = matchCrewByMapping(resourceName, crews, mappings);
+    if (mapped) return mapped;
+  }
   const lower = resourceName.toLowerCase().trim();
   const exact = crews.find((c) => c.name.toLowerCase() === lower);
   if (exact) return exact;
+  const aliasMatch = crews.find((c) =>
+    c.aliases?.some((a) => a.toLowerCase() === lower)
+  );
+  if (aliasMatch) return aliasMatch;
   const firstName = lower.split(" ")[0];
   return crews.find((c) => c.name.toLowerCase().split(" ")[0] === firstName);
 }
@@ -235,7 +254,8 @@ export interface RForceCalendarItem {
 export function checkDiscrepancy(
   appointment: Appointment,
   rforceOrders: RForceOrder[],
-  crews?: Crew[]
+  crews?: Crew[],
+  mappings?: ResourceMapping[]
 ): boolean {
   if (!appointment.work_order_number) return false;
   const rf = rforceOrders.find(
@@ -250,8 +270,13 @@ export function checkDiscrepancy(
     const rfResource = rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
     if (rfResource) {
       const crew = crews.find((c) => c.id === appointment.crew_id);
-      if (crew && crew.name.toLowerCase().split(" ")[0] !== rfResource.toLowerCase().split(" ")[0]) {
-        return true;
+      if (!crew) return false;
+      const matched = matchCrewByName(rfResource, crews, mappings);
+      if (matched && matched.id !== crew.id) return true;
+      if (!matched) {
+        if (crew.name.toLowerCase().split(" ")[0] !== rfResource.toLowerCase().split(" ")[0]) {
+          return true;
+        }
       }
     }
   }
@@ -262,7 +287,8 @@ export function getRForceItemsForDay(
   rforceOrders: RForceOrder[],
   appointments: Appointment[],
   crews: Crew[],
-  date: Date
+  date: Date,
+  mappings?: ResourceMapping[]
 ): RForceCalendarItem[] {
   const dateStr = format(date, "yyyy-MM-dd");
   const linkedWOs = new Set(
@@ -286,7 +312,7 @@ export function getRForceItemsForDay(
       rf.tech_measure_name || rf.installer || rf.service_rep || rf.primary_resource;
     if (!resourceName) continue;
 
-    const crew = matchCrewByName(resourceName, crews);
+    const crew = matchCrewByName(resourceName, crews, mappings);
     if (!crew) continue;
 
     const hour = parseInt(rf.scheduled_start.slice(11, 13), 10);

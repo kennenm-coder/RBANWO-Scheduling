@@ -3,7 +3,7 @@
 import { Appointment, Crew } from "@/lib/types";
 import { typeLabel } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
-import { MapPin, Unlink, AlertTriangle } from "lucide-react";
+import { MapPin, Unlink, AlertTriangle, CheckCircle } from "lucide-react";
 
 interface Props {
   appointment: Appointment;
@@ -13,6 +13,8 @@ interface Props {
   hasDiscrepancy?: boolean;
   orderAlerts?: string | null;
   accountName?: string | null;
+  isLinked?: boolean;
+  showRForce?: boolean;
   onClick?: () => void;
 }
 
@@ -24,6 +26,8 @@ export default function AppointmentCard({
   hasDiscrepancy,
   orderAlerts,
   accountName,
+  isLinked,
+  showRForce,
   onClick,
 }: Props) {
   const bgColor = crew?.color || "#1a73e8";
@@ -58,6 +62,9 @@ export default function AppointmentCard({
         )}
         {!appointment.work_order_number && (
           <Unlink size={10} className="shrink-0 opacity-70" />
+        )}
+        {showRForce && isLinked && !hasDiscrepancy && (
+          <span title="In sync with rForce"><CheckCircle size={10} className="shrink-0 text-green-300" /></span>
         )}
       </div>
       {accountName && (

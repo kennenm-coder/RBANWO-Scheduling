@@ -16,6 +16,8 @@ import {
   TimeOffRequest,
   AvailabilityRule,
   AvailabilityException,
+  AppointmentLink,
+  ResourceMapping,
 } from "@/lib/types";
 import {
   fetchCrews,
@@ -23,6 +25,8 @@ import {
   fetchRForceOrders,
   fetchTimeOffRequests,
   fetchAvailabilityRules,
+  fetchActiveLinks,
+  fetchResourceMappings,
   createAppointment as createApptInDb,
   updateAppointment as updateApptInDb,
   cancelAppointment as cancelApptInDb,
@@ -39,6 +43,8 @@ interface DataContextValue {
   timeOffRequests: TimeOffRequest[];
   availabilityRules: AvailabilityRule[];
   availabilityExceptions: AvailabilityException[];
+  activeLinks: AppointmentLink[];
+  resourceMappings: ResourceMapping[];
   loading: boolean;
   connected: boolean;
   createAppointment: (
@@ -75,6 +81,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const [availabilityRules, setAvailabilityRules] = useState<AvailabilityRule[]>([]);
   const [availabilityExceptions, setAvailabilityExceptions] = useState<AvailabilityException[]>([]);
+  const [activeLinks, setActiveLinks] = useState<AppointmentLink[]>([]);
+  const [resourceMappings, setResourceMappings] = useState<ResourceMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
@@ -84,12 +92,14 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const start = format(subDays(today, 30), "yyyy-MM-dd");
     const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-    const [c, a, r, t, av] = await Promise.all([
+    const [c, a, r, t, av, links, rm] = await Promise.all([
       fetchCrews(),
       fetchAppointments(start, end),
       fetchRForceOrders(),
       fetchTimeOffRequests(),
       fetchAvailabilityRules(),
+      fetchActiveLinks(),
+      fetchResourceMappings(),
     ]);
 
     setCrews(c);
@@ -98,6 +108,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     setTimeOffRequests(t);
     setAvailabilityRules(av.rules);
     setAvailabilityExceptions(av.exceptions);
+    setActiveLinks(links);
+    setResourceMappings(rm);
     loadedRangeRef.current = { start, end };
     setLoading(false);
   }, []);
@@ -215,6 +227,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         timeOffRequests,
         availabilityRules,
         availabilityExceptions,
+        activeLinks,
+        resourceMappings,
         loading,
         connected,
         createAppointment: handleCreate,

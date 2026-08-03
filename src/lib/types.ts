@@ -140,6 +140,13 @@ export type ReconciliationStatus =
   | "cancelled"
   | "not_in_rforce";
 
+export interface ReconciliationDifferences {
+  date?: { app: string; rforce: string };
+  time?: { app: string; rforce: string };
+  crew?: { app: string; rforce: string };
+  type?: { app: string; rforce: string };
+}
+
 export interface ReconciliationResult {
   orderNumber: string;
   workOrderNumber: string;
@@ -158,6 +165,7 @@ export interface ReconciliationResult {
   windows?: number;
   patioDoors?: number;
   doors?: number;
+  differences?: ReconciliationDifferences;
 }
 
 export type AppointmentEventAction =
@@ -225,4 +233,32 @@ export interface AvailabilityException {
   override_end_time: string | null;
   reason: string | null;
   created_at: string;
+}
+
+export type LinkMatchMethod = "wo_exact" | "manual" | "auto";
+
+export interface AppointmentLink {
+  id: string;
+  appointment_id: string;
+  source_system: string;
+  external_key: string;
+  work_order_number: string | null;
+  order_number: string | null;
+  match_method: LinkMatchMethod;
+  linked_by: string | null;
+  linked_at: string;
+  unlinked_by: string | null;
+  unlinked_at: string | null;
+  unlink_reason: string | null;
+  created_at: string;
+}
+
+export interface ResourceMapping {
+  id: string;
+  raw_name: string;
+  crew_id: string;
+  is_active: boolean;
+  approved_by: string | null;
+  created_at: string;
+  updated_at: string;
 }

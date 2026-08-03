@@ -18,6 +18,7 @@ import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff, ExternalLink } fro
 const DUCK_FORCE_PTO_URL = "https://betterthengooglecal-5taw.vercel.app/time-off?from=scheduler";
 
 const VIEW_STORAGE_KEY = "rbanwo-sched-view";
+const RFORCE_STORAGE_KEY = "rbanwo-sched-show-rforce";
 
 function getSavedView(): ViewMode {
   if (typeof window === "undefined") return "week";
@@ -25,7 +26,7 @@ function getSavedView(): ViewMode {
 }
 
 export default function CalendarPage() {
-  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests } = useData();
+  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [filterType, setFilterType] = useState<AppointmentType | "all">("all");
@@ -33,10 +34,11 @@ export default function CalendarPage() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [issuesOpen, setIssuesOpen] = useState(false);
+  const [showRForce, setShowRForce] = useState(false);
 
   const flagCount = useMemo(
-    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests).length,
-    [appointments, crews, rforceOrders, timeOffRequests]
+    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks).length,
+    [appointments, crews, rforceOrders, timeOffRequests, activeLinks]
   );
 
   const initializedRef = useRef(false);
@@ -55,6 +57,8 @@ export default function CalendarPage() {
     } else {
       setViewMode(getSavedView());
     }
+    const savedRForce = localStorage.getItem(RFORCE_STORAGE_KEY);
+    if (savedRForce === "true") setShowRForce(true);
     initializedRef.current = true;
   }, []);
 
@@ -71,6 +75,14 @@ export default function CalendarPage() {
   const handleViewChange = useCallback((mode: ViewMode) => {
     setViewMode(mode);
     localStorage.setItem(VIEW_STORAGE_KEY, mode);
+  }, []);
+
+  const handleToggleRForce = useCallback(() => {
+    setShowRForce((prev) => {
+      const next = !prev;
+      localStorage.setItem(RFORCE_STORAGE_KEY, String(next));
+      return next;
+    });
   }, []);
 
   const navigate = useCallback(
@@ -192,6 +204,8 @@ export default function CalendarPage() {
           onSearchChange={setSearchQuery}
           flagCount={flagCount}
           onFlagsClick={() => setIssuesOpen(true)}
+          showRForce={showRForce}
+          onToggleRForce={handleToggleRForce}
         />
 
         <WeekSummary
@@ -215,12 +229,13 @@ export default function CalendarPage() {
           }`}
         >
           {viewMode === "day" ? (
-            <CrewLaneDayView date={currentDate} filterType={filterType} />
+            <CrewLaneDayView date={currentDate} filterType={filterType} showRForce={showRForce} />
           ) : (
             <CrewLaneWeekView
               currentDate={currentDate}
               filterType={filterType}
               searchQuery={searchQuery}
+              showRForce={showRForce}
               onDayClick={(date) => {
                 setCurrentDate(date);
                 handleViewChange("day");
