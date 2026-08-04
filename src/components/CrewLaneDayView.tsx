@@ -4,6 +4,8 @@ import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
+import ApprovalCard from "./ApprovalCard";
+import DiscrepancyBadge from "./DiscrepancyBadge";
 import AppointmentSheet from "./AppointmentSheet";
 import ScheduleModal from "./ScheduleModal";
 import {
@@ -14,12 +16,12 @@ import {
   AppointmentType,
   AvailabilityRule,
   AvailabilityException,
+  RForceDisplayItem,
 } from "@/lib/types";
 import {
   getAppointmentsForCrewAndDay,
-  getRForceItemsForDay,
+  getRForceDisplayItems,
   checkDiscrepancy,
-  RForceCalendarItem,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { crewHasType, sortByFirstName } from "@/lib/crew-utils";
@@ -42,7 +44,11 @@ export default function CrewLaneDayView({
   filterType = "all",
   showRForce = false,
 }: Props) {
-  const { crews, appointments, rforceOrders, timeOffRequests, availabilityRules, availabilityExceptions } = useData();
+  const {
+    crews, appointments, rforceOrders, timeOffRequests,
+    availabilityRules, availabilityExceptions, activeLinks,
+    resourceMappings, dismissals, approveRForce, dismissRForce,
+  } = useData();
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
@@ -50,7 +56,11 @@ export default function CrewLaneDayView({
   } | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
-  const [selectedRForce, setSelectedRForce] = useState<{ order: RForceOrder; crew?: Crew } | null>(null);
+  const [selectedRForce, setSelectedRForce] = useState<{
+    order: RForceOrder;
+    crew?: Crew;
+    displayItem?: RForceDisplayItem;
+  } | null>(null);
 
   const dateStr = format(date, "yyyy-MM-dd");
   const offToday = useMemo(
@@ -62,9 +72,9 @@ export default function CrewLaneDayView({
     return new Set(offToday.map((r) => r.employee_name.toLowerCase()));
   }, [offToday]);
 
-  const rforceItems = useMemo(
-    () => getRForceItemsForDay(rforceOrders, appointments, crews, date),
-    [rforceOrders, appointments, crews, date]
+  const rforceDisplayItems = useMemo(
+    () => getRForceDisplayItems(rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings),
+    [rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings]
   );
 
   function nameMatchesTimeOff(name: string): boolean {
@@ -125,7 +135,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -134,7 +144,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
 
@@ -146,7 +158,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -155,7 +167,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
 
@@ -168,7 +182,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -177,7 +191,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
       {(filterType === "all" || filterType === "install") &&
@@ -188,7 +204,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -197,7 +213,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
       {(filterType === "all" || filterType === "install") &&
@@ -208,7 +226,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -217,7 +235,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
 
@@ -230,7 +250,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -239,7 +259,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
       {(filterType === "all" || filterType === "service") &&
@@ -250,7 +272,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -259,7 +281,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
 
@@ -272,7 +296,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -281,7 +305,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
       {(filterType === "all" || filterType === "jip") &&
@@ -292,7 +318,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -301,7 +327,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
       {(filterType === "all" || filterType === "jip") &&
@@ -312,7 +340,7 @@ export default function CrewLaneDayView({
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
-            rforceItems={rforceItems}
+            rforceDisplayItems={rforceDisplayItems}
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
@@ -321,7 +349,9 @@ export default function CrewLaneDayView({
               setScheduleTarget({ crewId, block })
             }
             showRForce={showRForce}
-            onRForceClick={(order, crew) => setSelectedRForce({ order, crew })}
+            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
+            onApproveRForce={approveRForce}
+            onDismissRForce={dismissRForce}
           />
         )}
 
@@ -371,6 +401,31 @@ export default function CrewLaneDayView({
           order={selectedRForce.order}
           crew={selectedRForce.crew}
           onClose={() => setSelectedRForce(null)}
+          onApprove={
+            selectedRForce.displayItem?.displayMode === "approval"
+              ? async () => {
+                  const item = selectedRForce.displayItem!;
+                  await approveRForce(
+                    item.rforceOrder,
+                    item.crewId,
+                    item.timeBlock,
+                    item.rforceOrder.scheduled_start?.slice(0, 10) || dateStr
+                  );
+                }
+              : undefined
+          }
+          onDismiss={
+            selectedRForce.displayItem?.displayMode === "approval"
+              ? async () => {
+                  const item = selectedRForce.displayItem!;
+                  await dismissRForce(
+                    item.rforceOrder.work_order_number,
+                    item.rforceOrder.scheduled_start?.slice(0, 10) || dateStr,
+                    item.rforceOrder.scheduled_start?.slice(11, 16)
+                  );
+                }
+              : undefined
+          }
         />
       )}
     </div>
@@ -406,7 +461,7 @@ function CrewSection({
   date,
   appointments,
   rforceOrders,
-  rforceItems,
+  rforceDisplayItems,
   isCrewOff,
   availabilityRules,
   availabilityExceptions,
@@ -414,20 +469,24 @@ function CrewSection({
   onCardClick,
   onCellClick,
   onRForceClick,
+  onApproveRForce,
+  onDismissRForce,
 }: {
   title: string;
   crews: Crew[];
   date: Date;
   appointments: Appointment[];
   rforceOrders: RForceOrder[];
-  rforceItems: RForceCalendarItem[];
+  rforceDisplayItems: RForceDisplayItem[];
   isCrewOff: (crew: Crew) => boolean;
   availabilityRules: AvailabilityRule[];
   availabilityExceptions: AvailabilityException[];
   showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
-  onRForceClick: (order: RForceOrder, crew: Crew) => void;
+  onRForceClick: (order: RForceOrder, crew: Crew, displayItem?: RForceDisplayItem) => void;
+  onApproveRForce: (rforceOrder: RForceOrder, crewId: string, timeBlock: TimeBlock, scheduledDate: string) => Promise<Appointment | null>;
+  onDismissRForce: (workOrderNumber: string, rforceDate: string, rforceStartTime?: string) => Promise<void>;
 }) {
   const [showMap, setShowMap] = useState(false);
 
@@ -485,7 +544,12 @@ function CrewSection({
               const off = isCrewOff(crew);
               const crewAppts = getAppointmentsForCrewAndDay(appointments, crew.id, date)
                 .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
-              const crewRForce = rforceItems.filter((r) => r.crewId === crew.id);
+              const crewItems = rforceDisplayItems.filter((r) => r.crewId === crew.id);
+              const crewApprovals = crewItems.filter((r) => r.displayMode === "approval");
+              const crewDiscrepancies = crewItems.filter((r) => r.displayMode === "discrepancy");
+              const crewRForceVisible = crewItems.filter((r) =>
+                r.displayMode === "regular" || r.displayMode === "synced"
+              );
               const avail = getCrewAvailability(crew.id, date, availabilityRules, availabilityExceptions);
               const crewUnavailable = !avail.available;
 
@@ -495,6 +559,8 @@ function CrewSection({
               const crewWorkEnd = weH + (weM || 0) / 60;
               const crewOffLeft = ((Math.max(crewWorkStart, TIMELINE_START) - TIMELINE_START) / TIMELINE_HOURS) * 100;
               const crewOffRight = ((TIMELINE_END - Math.min(crewWorkEnd, TIMELINE_END)) / TIMELINE_HOURS) * 100;
+
+              const hasAnyContent = crewAppts.length > 0 || crewApprovals.length > 0;
 
               return (
                 <div key={crew.id} className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : crewUnavailable ? "bg-muted/5" : ""}`}>
@@ -522,7 +588,7 @@ function CrewSection({
                     className="flex-1 relative min-h-[90px] cursor-pointer"
                     onClick={() => onCellClick(crew.id, "full_day")}
                   >
-                    {/* Off-hours shading — per-crew custom hours */}
+                    {/* Off-hours shading */}
                     <div
                       className="absolute top-0 bottom-0 left-0 bg-muted/5 dark:bg-muted/10 z-0"
                       style={{ width: `${crewOffLeft}%` }}
@@ -544,47 +610,94 @@ function CrewSection({
                       );
                     })}
                     {/* Time-off overlay */}
-                    {off && crewAppts.length === 0 && crewRForce.length === 0 && (
+                    {off && !hasAnyContent && (
                       <div className="absolute inset-0 bg-amber-200/40 dark:bg-amber-800/20 flex items-center justify-center z-[1]">
                         <Palmtree size={14} className="text-amber-500/50 dark:text-amber-400/40" />
                       </div>
                     )}
-                    {/* Availability-based unavailable overlay */}
-                    {!off && crewUnavailable && crewAppts.length === 0 && crewRForce.length === 0 && (
+                    {/* Unavailable overlay */}
+                    {!off && crewUnavailable && !hasAnyContent && (
                       <div className="absolute inset-0 bg-muted/8 flex items-center justify-center z-[1]">
                         <Ban size={14} className="text-muted/25" />
                       </div>
                     )}
-                    {/* Appointment cards positioned on timeline */}
+                    {/* App appointment cards */}
                     {crewAppts.map((a) => {
                       const start = a.start_time || "08:00";
                       const end = a.end_time || (a.time_block === "full_day" ? "16:00" : undefined);
                       const leftPct = timeToPercent(start);
                       let widthPct = end ? durationPercent(start, end) : 100 / TIMELINE_HOURS;
                       if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                      const discItem = crewDiscrepancies.find(
+                        (d) => d.linkedAppointment?.id === a.id
+                      );
                       return (
                         <div
                           key={a.id}
-                          className="absolute top-1 bottom-1 z-[2] overflow-hidden"
+                          className="absolute top-1 bottom-1 z-[2]"
                           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                           onClick={(e) => { e.stopPropagation(); onCardClick(a); }}
                         >
-                          <AppointmentCard
-                            appointment={a}
+                          <div className="relative h-full overflow-hidden">
+                            <AppointmentCard
+                              appointment={a}
+                              crew={crew}
+                              compact={false}
+                              hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
+                              orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+                              accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
+                              isLinked={!!a.work_order_number}
+                              showRForce={showRForce}
+                              onClick={() => onCardClick(a)}
+                            />
+                            {discItem && (
+                              <DiscrepancyBadge
+                                differences={discItem.differences}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRForceClick(discItem.rforceOrder, crew, discItem);
+                                }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {/* Approval cards — always visible */}
+                    {crewApprovals.map((item) => {
+                      const startTime = item.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
+                      const endTime = item.rforceOrder.scheduled_end?.slice(11, 16) || undefined;
+                      const leftPct = timeToPercent(startTime);
+                      let widthPct = endTime ? durationPercent(startTime, endTime) : 100 / TIMELINE_HOURS;
+                      if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                      const rfDate = item.rforceOrder.scheduled_start?.slice(0, 10) || "";
+                      return (
+                        <div
+                          key={`appr-${item.rforceOrder.work_order_number}`}
+                          className="absolute top-1 bottom-1 z-[3] overflow-hidden"
+                          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <ApprovalCard
+                            rforceOrder={item.rforceOrder}
                             crew={crew}
-                            compact={false}
-                            hasDiscrepancy={checkDiscrepancy(a, rforceOrders)}
-                            orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
-                            accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
-                            isLinked={!!a.work_order_number}
-                            showRForce={showRForce}
-                            onClick={() => onCardClick(a)}
+                            onApprove={async () => {
+                              await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate);
+                            }}
+                            onDismiss={async () => {
+                              await onDismissRForce(
+                                item.rforceOrder.work_order_number,
+                                rfDate,
+                                item.rforceOrder.scheduled_start?.slice(11, 16)
+                              );
+                            }}
+                            onClick={() => onRForceClick(item.rforceOrder, crew, item)}
                           />
                         </div>
                       );
                     })}
-                    {/* rForce cards on timeline */}
-                    {crewRForce.map((rf) => {
+                    {/* rForce regular/synced tiles — only when showRForce is on */}
+                    {showRForce && crewRForceVisible.map((rf) => {
                       const startTime = rf.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
                       const endTime = rf.rforceOrder.scheduled_end?.slice(11, 16) || undefined;
                       const leftPct = timeToPercent(startTime);
@@ -592,21 +705,19 @@ function CrewSection({
                       if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
                       return (
                         <div
-                          key={rf.rforceOrder.work_order_number}
+                          key={`rf-${rf.rforceOrder.work_order_number}`}
                           className="absolute top-1 bottom-1 z-[2] overflow-hidden"
                           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                           onClick={(e) => {
                             e.stopPropagation();
-                            onRForceClick(rf.rforceOrder, crew);
+                            onRForceClick(rf.rforceOrder, crew, rf);
                           }}
                         >
                           <RForceCard
                             order={rf.rforceOrder}
                             crew={crew}
                             compact={false}
-                            onClick={() =>
-                              onRForceClick(rf.rforceOrder, crew)
-                            }
+                            onClick={() => onRForceClick(rf.rforceOrder, crew, rf)}
                           />
                         </div>
                       );

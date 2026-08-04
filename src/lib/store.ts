@@ -9,7 +9,12 @@ import {
   AvailabilityException,
   AppointmentLink,
   ResourceMapping,
+  RForceDismissal,
+  FlagResolution,
+  TimeBlock,
 } from "./types";
+import { timeBlockStartEnd } from "./calendar-utils";
+import { buildSalesforceUrl } from "./salesforce";
 
 // ── Crews ──
 
@@ -500,5 +505,152 @@ export async function deleteAvailabilityException(id: string): Promise<void> {
     .from("sched_availability_exceptions")
     .delete()
     .eq("id", id);
+  if (error) throw error;
+}
+
+// ── rForce Dismissals ──
+
+export async function fetchDismissals(): Promise<RForceDismissal[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb.from("sched_rforce_dismissals").select("*");
+  return (data as RForceDismissal[]) ?? [];
+}
+
+export async function dismissRForceOrder(
+  workOrderNumber: string,
+  rforceDate: string,
+  rforceStartTime?: string,
+  reason?: string
+): Promise<RForceDismissal | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_rforce_dismissals")
+    .upsert(
+      {
+        work_order_number: workOrderNumber,
+        rforce_date: rforceDate,
+        rforce_start_time: rforceStartTime || null,
+        reason: reason || null,
+      },
+      { onConflict: "work_order_number,rforce_date" }
+    )
+    .select()
+    .single();
+  if (error) throw error;
+  return data as RForceDismissal;
+}
+
+export async function undismissRForceOrder(
+  workOrderNumber: string,
+  rforceDate: string
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("sched_rforce_dismissals")
+    .delete()
+    .eq("work_order_number", workOrderNumber)
+    .eq("rforce_date", rforceDate);
+  if (error) throw error;
+}
+
+// ── Approve rForce Order (one-click create + link) ──
+
+const APPROVE_WO_TYPE_MAP: Record<string, string> = {
+  "Tech Measure": "tech_measure",
+  Install: "install",
+  Service: "service",
+  JIP: "jip",
+};
+
+export async function approveRForceOrder(
+  rforceOrder: RForceOrder,
+  crewId: string,
+  tb: TimeBlock,
+  scheduledDate: string
+): Promise<{ appointment: Appointment; link: AppointmentLink } | null> {
+  const { start, end } = timeBlockStartEnd(tb);
+  const appointmentType = (rforceOrder.work_order_type
+    ? APPROVE_WO_TYPE_MAP[rforceOrder.work_order_type]
+    : "install") as Appointment["appointment_type"];
+
+  const appt = await createAppointment({
+    crew_id: crewId,
+    secondary_crew_id: null,
+    tertiary_crew_id: null,
+    appointment_type: appointmentType || "install",
+    order_number: rforceOrder.order_number || null,
+    work_order_number: rforceOrder.work_order_number,
+    customer_name: rforceOrder.customer_name || "Unknown",
+    address: rforceOrder.address || "",
+    scheduled_date: scheduledDate,
+    start_time: start,
+    end_time: end,
+    duration_days: 1,
+    time_block: tb,
+    time_block_end: null,
+    manual_override: false,
+    override_source: null,
+    status: "scheduled",
+    notes: null,
+    reschedule_reason: null,
+    product_count: rforceOrder.product_count ?? null,
+    salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
+    scheduled_by: null,
+  });
+
+  if (!appt) return null;
+
+  const link = await linkAppointment(appt.id, appt.version, rforceOrder, "auto");
+
+  await createAppointmentEvent({
+    appointment_id: appt.id,
+    action: "approved_from_rforce",
+    actor_id: null,
+    actor_name_snapshot: null,
+    before_state: null,
+    after_state: { work_order_number: rforceOrder.work_order_number },
+    reason: "Approved from rForce import",
+  });
+
+  return { appointment: appt, link };
+}
+
+// ── Flag Resolutions ──
+
+export async function fetchFlagResolutions(): Promise<FlagResolution[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb.from("sched_flag_resolutions").select("*");
+  return (data as FlagResolution[]) ?? [];
+}
+
+export async function resolveFlag(
+  flagKey: string,
+  notes?: string
+): Promise<FlagResolution | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_flag_resolutions")
+    .upsert(
+      { flag_key: flagKey, notes: notes || null },
+      { onConflict: "flag_key" }
+    )
+    .select()
+    .single();
+  if (error) throw error;
+  return data as FlagResolution;
+}
+
+export async function unresolveFlag(flagKey: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("sched_flag_resolutions")
+    .delete()
+    .eq("flag_key", flagKey);
   if (error) throw error;
 }

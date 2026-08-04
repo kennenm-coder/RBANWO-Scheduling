@@ -179,7 +179,8 @@ export type AppointmentEventAction =
   | "linked"
   | "flagged"
   | "drag_moved"
-  | "drag_resized";
+  | "drag_resized"
+  | "approved_from_rforce";
 
 export interface AppointmentEvent {
   id: string;
@@ -261,4 +262,33 @@ export interface ResourceMapping {
   approved_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RForceDismissal {
+  id: string;
+  work_order_number: string;
+  rforce_date: string;
+  rforce_start_time: string | null;
+  dismissed_by: string | null;
+  dismissed_at: string;
+  reason: string | null;
+}
+
+export interface FlagResolution {
+  id: string;
+  flag_key: string;
+  resolved_by: string | null;
+  resolved_at: string;
+  notes: string | null;
+}
+
+export type RForceDisplayMode = "approval" | "discrepancy" | "synced" | "regular";
+
+export interface RForceDisplayItem {
+  rforceOrder: RForceOrder;
+  crewId: string;
+  timeBlock: TimeBlock;
+  displayMode: RForceDisplayMode;
+  linkedAppointment?: Appointment;
+  differences?: ReconciliationDifferences;
 }

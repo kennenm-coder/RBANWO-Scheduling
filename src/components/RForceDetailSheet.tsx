@@ -20,20 +20,24 @@ import {
   AlertTriangle,
   MessageSquare,
   Save,
+  Check,
 } from "lucide-react";
 
 interface Props {
   order: RForceOrder;
   crew?: Crew;
   onClose: () => void;
+  onApprove?: () => Promise<void>;
+  onDismiss?: () => Promise<void>;
 }
 
-export default function RForceDetailSheet({ order, crew, onClose }: Props) {
+export default function RForceDetailSheet({ order, crew, onClose, onApprove, onDismiss }: Props) {
   const { refreshData } = useData();
   const [scheduling, setScheduling] = useState(false);
   const [notes, setNotes] = useState(order.scheduler_notes || "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [approving, setApproving] = useState(false);
 
   const city = parseCity(order.address || "");
 
@@ -182,7 +186,44 @@ export default function RForceDetailSheet({ order, crew, onClose }: Props) {
               </button>
             </div>
 
-            <div className="flex gap-2 pt-4 border-t border-border">
+            {onApprove && onDismiss && (
+              <div className="flex gap-2 pt-4 border-t border-border">
+                <button
+                  onClick={async () => {
+                    setApproving(true);
+                    try {
+                      await onApprove();
+                      onClose();
+                    } finally {
+                      setApproving(false);
+                    }
+                  }}
+                  disabled={approving}
+                  className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                >
+                  <Check size={16} />
+                  {approving ? "Approving..." : "Approve"}
+                </button>
+                <button
+                  onClick={async () => {
+                    setApproving(true);
+                    try {
+                      await onDismiss();
+                      onClose();
+                    } finally {
+                      setApproving(false);
+                    }
+                  }}
+                  disabled={approving}
+                  className="flex-1 py-2.5 border border-border rounded-lg font-medium hover:bg-surface flex items-center justify-center gap-2 text-sm disabled:opacity-50 transition-colors"
+                >
+                  <X size={16} />
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            <div className={`flex gap-2 ${onApprove ? "pt-2" : "pt-4 border-t border-border"}`}>
               <button
                 onClick={() => setScheduling(true)}
                 className="flex-1 py-2.5 bg-primary text-white rounded-lg font-medium hover:opacity-90 flex items-center justify-center gap-2"
