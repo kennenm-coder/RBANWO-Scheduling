@@ -1,4 +1,16 @@
-import { Appointment, TimeBlock, AppointmentType, Crew, RForceOrder, ResourceMapping } from "./types";
+import {
+  Appointment,
+  TimeBlock,
+  AppointmentType,
+  Crew,
+  RForceOrder,
+  ResourceMapping,
+  AppointmentLink,
+  RForceDismissal,
+  RForceDisplayItem,
+  RForceDisplayMode,
+  ReconciliationDifferences,
+} from "./types";
 import {
   startOfWeek,
   addDays,
@@ -320,6 +332,152 @@ export function getRForceItemsForDay(
     const timeBlock: TimeBlock = isMeasure ? timeToBlock(hour) : "full_day";
 
     items.push({ rforceOrder: rf, crewId: crew.id, timeBlock });
+  }
+
+  return items;
+}
+
+export const WO_TYPE_MAP: Record<string, AppointmentType> = {
+  "Tech Measure": "tech_measure",
+  Install: "install",
+  Service: "service",
+  JIP: "jip",
+};
+
+const TIME_BLOCK_HOUR: Record<TimeBlock, number> = {
+  "9-10": 9,
+  "10-12": 10,
+  "12-2": 12,
+  "2-4": 14,
+  "4-6": 16,
+  full_day: 8,
+};
+
+function compareLinkedPair(
+  appt: Appointment,
+  rf: RForceOrder,
+  crews: Crew[],
+  mappings?: ResourceMapping[]
+): ReconciliationDifferences | null {
+  const diffs: ReconciliationDifferences = {};
+  let hasDiff = false;
+
+  if (rf.scheduled_start) {
+    const rfDate = rf.scheduled_start.slice(0, 10);
+    if (rfDate !== appt.scheduled_date) {
+      diffs.date = { app: appt.scheduled_date, rforce: rfDate };
+      hasDiff = true;
+    }
+  }
+
+  const rfResource =
+    rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+  if (rfResource) {
+    const appCrew = crews.find((c) => c.id === appt.crew_id);
+    const matched = matchCrewByName(rfResource, crews, mappings);
+    if (appCrew && matched && matched.id !== appCrew.id) {
+      diffs.crew = { app: appCrew.name, rforce: rfResource };
+      hasDiff = true;
+    } else if (appCrew && !matched) {
+      if (appCrew.name.toLowerCase().split(" ")[0] !== rfResource.toLowerCase().split(" ")[0]) {
+        diffs.crew = { app: appCrew.name, rforce: rfResource };
+        hasDiff = true;
+      }
+    }
+  }
+
+  if (rf.scheduled_start && appt.time_block) {
+    const rfHour = parseInt(rf.scheduled_start.slice(11, 13), 10);
+    const expectedHour = TIME_BLOCK_HOUR[appt.time_block];
+    if (!isNaN(rfHour) && expectedHour !== undefined && rfHour !== expectedHour) {
+      diffs.time = { app: appt.time_block, rforce: `hour ${rfHour}` };
+      hasDiff = true;
+    }
+  }
+
+  const rfTypeMapped = rf.work_order_type ? WO_TYPE_MAP[rf.work_order_type] : undefined;
+  if (rfTypeMapped && rfTypeMapped !== appt.appointment_type) {
+    diffs.type = { app: appt.appointment_type, rforce: rf.work_order_type || "unknown" };
+    hasDiff = true;
+  }
+
+  return hasDiff ? diffs : null;
+}
+
+export function getRForceDisplayItems(
+  rforceOrders: RForceOrder[],
+  appointments: Appointment[],
+  activeLinks: AppointmentLink[],
+  crews: Crew[],
+  date: Date,
+  dismissals: RForceDismissal[],
+  mappings?: ResourceMapping[]
+): RForceDisplayItem[] {
+  const dateStr = format(date, "yyyy-MM-dd");
+
+  const linksByExtKey = new Map<string, AppointmentLink>();
+  for (const link of activeLinks) {
+    if (!link.unlinked_at) linksByExtKey.set(link.external_key, link);
+  }
+
+  const apptsById = new Map<string, Appointment>();
+  for (const a of appointments) {
+    if (a.status !== "cancelled") apptsById.set(a.id, a);
+  }
+
+  const dismissalKeys = new Set<string>();
+  for (const d of dismissals) {
+    dismissalKeys.add(`${d.work_order_number}|${d.rforce_date}`);
+  }
+
+  const items: RForceDisplayItem[] = [];
+
+  for (const rf of rforceOrders) {
+    if (!rf.scheduled_start) continue;
+    if (rf.wo_status === "Appt Complete / Closed" || rf.wo_status === "Canceled") continue;
+
+    const startDate = rf.scheduled_start.slice(0, 10);
+    const endDate = rf.scheduled_end ? rf.scheduled_end.slice(0, 10) : startDate;
+    if (dateStr < startDate || dateStr > endDate) continue;
+
+    const resourceName =
+      rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+    if (!resourceName) continue;
+
+    const crew = matchCrewByName(resourceName, crews, mappings);
+    if (!crew) continue;
+
+    const hour = parseInt(rf.scheduled_start.slice(11, 13), 10);
+    const isMeasure = crew.crew_type === "measure_tech";
+    const timeBlock: TimeBlock = isMeasure ? timeToBlock(hour) : "full_day";
+
+    const link = linksByExtKey.get(rf.id);
+
+    if (link) {
+      const appt = apptsById.get(link.appointment_id);
+      if (!appt) continue;
+
+      const diffs = compareLinkedPair(appt, rf, crews, mappings);
+      const displayMode: RForceDisplayMode = diffs ? "discrepancy" : "synced";
+      items.push({
+        rforceOrder: rf,
+        crewId: crew.id,
+        timeBlock,
+        displayMode,
+        linkedAppointment: appt,
+        differences: diffs || undefined,
+      });
+    } else {
+      const dismissKey = `${rf.work_order_number}|${startDate}`;
+      if (dismissalKeys.has(dismissKey)) continue;
+
+      items.push({
+        rforceOrder: rf,
+        crewId: crew.id,
+        timeBlock,
+        displayMode: "approval",
+      });
+    }
   }
 
   return items;

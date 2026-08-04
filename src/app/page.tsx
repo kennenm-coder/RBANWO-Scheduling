@@ -26,7 +26,7 @@ function getSavedView(): ViewMode {
 }
 
 export default function CalendarPage() {
-  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks } = useData();
+  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [filterType, setFilterType] = useState<AppointmentType | "all">("all");
@@ -36,10 +36,11 @@ export default function CalendarPage() {
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [showRForce, setShowRForce] = useState(false);
 
-  const flagCount = useMemo(
-    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks).length,
-    [appointments, crews, rforceOrders, timeOffRequests, activeLinks]
-  );
+  const flagCount = useMemo(() => {
+    const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks);
+    const resolvedKeys = new Set(flagResolutions.map((r) => r.flag_key));
+    return allFlags.filter((f) => !resolvedKeys.has(f.id)).length;
+  }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions]);
 
   const initializedRef = useRef(false);
 

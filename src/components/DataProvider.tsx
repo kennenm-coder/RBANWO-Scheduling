@@ -18,6 +18,9 @@ import {
   AvailabilityException,
   AppointmentLink,
   ResourceMapping,
+  RForceDismissal,
+  FlagResolution,
+  TimeBlock,
 } from "@/lib/types";
 import {
   fetchCrews,
@@ -27,11 +30,17 @@ import {
   fetchAvailabilityRules,
   fetchActiveLinks,
   fetchResourceMappings,
+  fetchDismissals,
+  fetchFlagResolutions,
   createAppointment as createApptInDb,
   updateAppointment as updateApptInDb,
   cancelAppointment as cancelApptInDb,
   createTimeOffRequest as createTimeOffInDb,
   deleteTimeOffRequest as deleteTimeOffInDb,
+  approveRForceOrder as approveRForceInDb,
+  dismissRForceOrder as dismissRForceInDb,
+  resolveFlag as resolveFlagInDb,
+  unresolveFlag as unresolveFlagInDb,
 } from "@/lib/store";
 import { subscribeToAppointments } from "@/lib/realtime";
 import { addDays, subDays, format } from "date-fns";
@@ -45,6 +54,8 @@ interface DataContextValue {
   availabilityExceptions: AvailabilityException[];
   activeLinks: AppointmentLink[];
   resourceMappings: ResourceMapping[];
+  dismissals: RForceDismissal[];
+  flagResolutions: FlagResolution[];
   loading: boolean;
   connected: boolean;
   createAppointment: (
@@ -60,6 +71,20 @@ interface DataContextValue {
     version: number,
     reason?: string
   ) => Promise<void>;
+  approveRForce: (
+    rforceOrder: RForceOrder,
+    crewId: string,
+    timeBlock: TimeBlock,
+    scheduledDate: string
+  ) => Promise<Appointment | null>;
+  dismissRForce: (
+    workOrderNumber: string,
+    rforceDate: string,
+    rforceStartTime?: string,
+    reason?: string
+  ) => Promise<void>;
+  resolveFlag: (flagKey: string, notes?: string) => Promise<void>;
+  unresolveFlag: (flagKey: string) => Promise<void>;
   refreshData: () => Promise<void>;
   ensureDateRange: (date: Date) => void;
   addTimeOff: (req: Omit<TimeOffRequest, "id" | "created_at">) => Promise<TimeOffRequest | null>;
@@ -83,6 +108,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [availabilityExceptions, setAvailabilityExceptions] = useState<AvailabilityException[]>([]);
   const [activeLinks, setActiveLinks] = useState<AppointmentLink[]>([]);
   const [resourceMappings, setResourceMappings] = useState<ResourceMapping[]>([]);
+  const [dismissals, setDismissals] = useState<RForceDismissal[]>([]);
+  const [flagResolutions, setFlagResolutions] = useState<FlagResolution[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
@@ -92,7 +119,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const start = format(subDays(today, 30), "yyyy-MM-dd");
     const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-    const [c, a, r, t, av, links, rm] = await Promise.all([
+    const [c, a, r, t, av, links, rm, dism, flagRes] = await Promise.all([
       fetchCrews(),
       fetchAppointments(start, end),
       fetchRForceOrders(),
@@ -100,6 +127,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       fetchAvailabilityRules(),
       fetchActiveLinks(),
       fetchResourceMappings(),
+      fetchDismissals(),
+      fetchFlagResolutions(),
     ]);
 
     setCrews(c);
@@ -110,6 +139,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     setAvailabilityExceptions(av.exceptions);
     setActiveLinks(links);
     setResourceMappings(rm);
+    setDismissals(dism);
+    setFlagResolutions(flagRes);
     loadedRangeRef.current = { start, end };
     setLoading(false);
   }, []);
@@ -218,6 +249,67 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handleApproveRForce = useCallback(
+    async (
+      rforceOrder: RForceOrder,
+      crewId: string,
+      timeBlock: TimeBlock,
+      scheduledDate: string
+    ) => {
+      const result = await approveRForceInDb(rforceOrder, crewId, timeBlock, scheduledDate);
+      if (result) {
+        setAppointments((prev) => {
+          if (prev.find((a) => a.id === result.appointment.id)) return prev;
+          return [...prev, result.appointment];
+        });
+        setActiveLinks((prev) => [...prev, result.link]);
+      }
+      return result?.appointment ?? null;
+    },
+    []
+  );
+
+  const handleDismissRForce = useCallback(
+    async (
+      workOrderNumber: string,
+      rforceDate: string,
+      rforceStartTime?: string,
+      reason?: string
+    ) => {
+      const result = await dismissRForceInDb(workOrderNumber, rforceDate, rforceStartTime, reason);
+      if (result) {
+        setDismissals((prev) => [...prev, result]);
+      }
+    },
+    []
+  );
+
+  const handleResolveFlag = useCallback(
+    async (flagKey: string, notes?: string) => {
+      const result = await resolveFlagInDb(flagKey, notes);
+      if (result) {
+        setFlagResolutions((prev) => {
+          const existing = prev.findIndex((r) => r.flag_key === flagKey);
+          if (existing >= 0) {
+            const next = [...prev];
+            next[existing] = result;
+            return next;
+          }
+          return [...prev, result];
+        });
+      }
+    },
+    []
+  );
+
+  const handleUnresolveFlag = useCallback(
+    async (flagKey: string) => {
+      await unresolveFlagInDb(flagKey);
+      setFlagResolutions((prev) => prev.filter((r) => r.flag_key !== flagKey));
+    },
+    []
+  );
+
   return (
     <DataContext.Provider
       value={{
@@ -229,11 +321,17 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         availabilityExceptions,
         activeLinks,
         resourceMappings,
+        dismissals,
+        flagResolutions,
         loading,
         connected,
         createAppointment: handleCreate,
         updateAppointment: handleUpdate,
         cancelAppointment: handleCancel,
+        approveRForce: handleApproveRForce,
+        dismissRForce: handleDismissRForce,
+        resolveFlag: handleResolveFlag,
+        unresolveFlag: handleUnresolveFlag,
         refreshData: loadData,
         ensureDateRange,
         addTimeOff: handleAddTimeOff,
