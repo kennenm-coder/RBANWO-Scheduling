@@ -104,10 +104,12 @@ export async function updateAppointment(
 ): Promise<Appointment | null> {
   const sb = getSupabase();
   if (!sb) return null;
+  // Strip fields that may not exist as DB columns yet
+  const { manual_override, override_source, time_block_end, ...safeUpdates } = updates;
   const { data, error } = await sb
     .from("sched_appointments")
     .update({
-      ...updates,
+      ...safeUpdates,
       version: version + 1,
       updated_at: new Date().toISOString(),
     })

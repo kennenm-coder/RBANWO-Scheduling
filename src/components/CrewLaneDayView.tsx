@@ -29,6 +29,11 @@ import RForceDetailSheet from "./RForceDetailSheet";
 import { Plus, Palmtree, MapPinned, Ban } from "lucide-react";
 import { format } from "date-fns";
 import { getCrewAvailability, CrewDayAvailability } from "@/lib/availability";
+import { getDraggedAppointment, setDraggedAppointment } from "@/lib/drag-context";
+import { timeBlockStartEnd } from "@/lib/calendar-utils";
+import { updateAppointment as updateApptInDb, createAppointmentEvent } from "@/lib/store";
+import { getEligibleCrews } from "@/lib/crew-utils";
+import { useToast } from "./Toast";
 import dynamic from "next/dynamic";
 
 const SectionMap = dynamic(() => import("./SectionMap"), { ssr: false });
@@ -48,7 +53,9 @@ export default function CrewLaneDayView({
     crews, appointments, rforceOrders, timeOffRequests,
     availabilityRules, availabilityExceptions, activeLinks,
     resourceMappings, dismissals, approveRForce, dismissRForce,
+    updateAppointment,
   } = useData();
+  const { showToast } = useToast();
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
@@ -125,6 +132,79 @@ export default function CrewLaneDayView({
     return primary && primary.crew_type === "jip";
   }));
 
+  async function handleAppointmentDrop(appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) {
+    const appt = appointments.find((a) => a.id === appointmentId);
+    if (!appt) return;
+
+    const crewChanged = appt.crew_id !== targetCrewId;
+    const timeChanged = startTime && (startTime !== appt.start_time || endTime !== appt.end_time);
+    if (!crewChanged && !timeChanged) return;
+
+    const targetCrew = crews.find((c) => c.id === targetCrewId);
+    if (!targetCrew) return;
+
+    const eligible = getEligibleCrews(crews, appt.appointment_type);
+    if (!eligible.find((c) => c.id === targetCrewId)) {
+      showToast(`${targetCrew.name} cannot handle ${appt.appointment_type.replace(/_/g, " ")} appointments`, "error");
+      return;
+    }
+
+    let manualOverride = appt.manual_override;
+    let overrideSource = appt.override_source;
+
+    if (appt.work_order_number) {
+      const rf = rforceOrders.find((r) => r.work_order_number === appt.work_order_number);
+      if (rf && rf.scheduled_start) {
+        const rfDate = rf.scheduled_start.slice(0, 10);
+        const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+        if ((crewChanged && rfResource && targetCrew.name.toLowerCase() !== rfResource.toLowerCase()) || timeChanged) {
+          manualOverride = true;
+          overrideSource = {
+            crew_name: rfResource || undefined,
+            scheduled_date: rfDate,
+            time_block: appt.time_block || undefined,
+          };
+        } else if (!crewChanged || (rfResource && targetCrew.name.toLowerCase() === rfResource.toLowerCase())) {
+          manualOverride = false;
+          overrideSource = null;
+        }
+      }
+    }
+
+    const updates: Partial<Appointment> = {};
+    if (crewChanged) updates.crew_id = targetCrewId;
+    if (startTime) updates.start_time = startTime;
+    if (endTime) updates.end_time = endTime;
+    if (manualOverride !== undefined) updates.manual_override = manualOverride;
+    if (overrideSource !== undefined) updates.override_source = overrideSource;
+
+    try {
+      await updateAppointment(appt.id, appt.version, updates);
+
+      createAppointmentEvent({
+        appointment_id: appt.id,
+        action: "drag_moved",
+        actor_id: null,
+        actor_name_snapshot: null,
+        before_state: { crew_id: appt.crew_id, start_time: appt.start_time, end_time: appt.end_time },
+        after_state: { crew_id: targetCrewId, start_time: startTime || appt.start_time, end_time: endTime || appt.end_time },
+        reason: null,
+      });
+
+      const parts: string[] = [];
+      if (crewChanged) parts.push(targetCrew.name);
+      if (timeChanged) parts.push(`${startTime}–${endTime}`);
+      showToast(`Moved to ${parts.join(", ")}`, "success");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      if (msg === "VERSION_CONFLICT") {
+        showToast("Someone else just updated this appointment — please try again", "warning");
+      } else {
+        showToast(`Failed to move: ${msg}`, "error");
+      }
+    }
+  }
+
   return (
     <div className="flex-1 overflow-auto">
       {(filterType === "all" || filterType === "tech_measure") &&
@@ -147,6 +227,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
 
@@ -170,6 +251,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
 
@@ -194,6 +276,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
       {(filterType === "all" || filterType === "install") &&
@@ -216,6 +299,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
       {(filterType === "all" || filterType === "install") &&
@@ -238,6 +322,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
 
@@ -262,6 +347,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
       {(filterType === "all" || filterType === "service") &&
@@ -284,6 +370,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
 
@@ -308,6 +395,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
       {(filterType === "all" || filterType === "jip") &&
@@ -330,6 +418,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
       {(filterType === "all" || filterType === "jip") &&
@@ -352,6 +441,7 @@ export default function CrewLaneDayView({
             onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
+            onAppointmentDrop={handleAppointmentDrop}
           />
         )}
 
@@ -471,6 +561,7 @@ function CrewSection({
   onRForceClick,
   onApproveRForce,
   onDismissRForce,
+  onAppointmentDrop,
 }: {
   title: string;
   crews: Crew[];
@@ -487,8 +578,10 @@ function CrewSection({
   onRForceClick: (order: RForceOrder, crew: Crew, displayItem?: RForceDisplayItem) => void;
   onApproveRForce: (rforceOrder: RForceOrder, crewId: string, timeBlock: TimeBlock, scheduledDate: string) => Promise<Appointment | null>;
   onDismissRForce: (workOrderNumber: string, rforceDate: string, rforceStartTime?: string) => Promise<void>;
+  onAppointmentDrop?: (appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) => void;
 }) {
   const [showMap, setShowMap] = useState(false);
+  const [dragOverCrewId, setDragOverCrewId] = useState<string | null>(null);
 
   const rforceByWo = useMemo(() => {
     const map = new Map<string, RForceOrder>();
@@ -561,6 +654,63 @@ function CrewSection({
               const crewOffRight = ((TIMELINE_END - Math.min(crewWorkEnd, TIMELINE_END)) / TIMELINE_HOURS) * 100;
 
               const hasAnyContent = crewAppts.length > 0 || crewApprovals.length > 0;
+              const hasRForceContent = showRForce && (crewRForceVisible.length > 0 || crewApprovals.length > 0);
+              const twoLayer = hasRForceContent;
+
+              function handleRowDragOver(e: React.DragEvent) {
+                const dragged = getDraggedAppointment();
+                if (!dragged) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (dragOverCrewId !== crew.id) setDragOverCrewId(crew.id);
+              }
+              function handleRowDragLeave() {
+                if (dragOverCrewId === crew.id) setDragOverCrewId(null);
+              }
+              function handleRowDrop(e: React.DragEvent) {
+                e.preventDefault();
+                setDragOverCrewId(null);
+                const dragged = getDraggedAppointment();
+                if (!dragged) return;
+
+                // Calculate drop time from mouse X position on the timeline
+                const rect = e.currentTarget.getBoundingClientRect();
+                const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+                const dropHour = TIMELINE_START + (xPct / 100) * TIMELINE_HOURS;
+
+                // Snap to nearest half-hour
+                const snappedHour = Math.round(dropHour * 2) / 2;
+                const h = Math.floor(snappedHour);
+                const m = (snappedHour - h) * 60;
+                const startTime = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+
+                // Keep original duration
+                const origAppt = dragged.appointment;
+                const [origSH, origSM] = (origAppt.start_time || "08:00").split(":").map(Number);
+                const [origEH, origEM] = (origAppt.end_time || "16:00").split(":").map(Number);
+                const durationMins = (origEH * 60 + origEM) - (origSH * 60 + origSM);
+                const endMins = h * 60 + m + durationMins;
+                const eH = Math.floor(endMins / 60);
+                const eM = endMins % 60;
+                const endTime = `${String(Math.min(eH, 23)).padStart(2, "0")}:${String(eM).padStart(2, "0")}`;
+
+                onAppointmentDrop?.(dragged.appointment.id, crew.id, startTime, endTime);
+                setDraggedAppointment(null);
+              }
+
+              function renderGridlines() {
+                return HOUR_LABELS.map((_, i) => {
+                  const h = TIMELINE_START + i;
+                  const pct = (i / TIMELINE_HOURS) * 100;
+                  return (
+                    <div
+                      key={h}
+                      className={`absolute top-0 bottom-0 w-px ${h >= WORK_START && h <= WORK_END ? "bg-border/40" : "bg-border/15"}`}
+                      style={{ left: `${pct}%` }}
+                    />
+                  );
+                });
+              }
 
               return (
                 <div key={crew.id} className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : crewUnavailable ? "bg-muted/5" : ""}`}>
@@ -584,145 +734,271 @@ function CrewSection({
                       <div className="text-[10px] text-muted/50 mt-0.5 pl-[18px]">{avail.reason || "Unavailable"}</div>
                     )}
                   </div>
-                  <div
-                    className="flex-1 relative min-h-[90px] cursor-pointer"
-                    onClick={() => onCellClick(crew.id, "full_day")}
-                  >
-                    {/* Off-hours shading */}
-                    <div
-                      className="absolute top-0 bottom-0 left-0 bg-muted/5 dark:bg-muted/10 z-0"
-                      style={{ width: `${crewOffLeft}%` }}
-                    />
-                    <div
-                      className="absolute top-0 bottom-0 right-0 bg-muted/5 dark:bg-muted/10 z-0"
-                      style={{ width: `${crewOffRight}%` }}
-                    />
-                    {/* Hour gridlines */}
-                    {HOUR_LABELS.map((_, i) => {
-                      const h = TIMELINE_START + i;
-                      const pct = (i / TIMELINE_HOURS) * 100;
-                      return (
-                        <div
-                          key={h}
-                          className={`absolute top-0 bottom-0 w-px ${h >= WORK_START && h <= WORK_END ? "bg-border/40" : "bg-border/15"}`}
-                          style={{ left: `${pct}%` }}
-                        />
-                      );
-                    })}
-                    {/* Time-off overlay */}
-                    {off && !hasAnyContent && (
-                      <div className="absolute inset-0 bg-amber-200/40 dark:bg-amber-800/20 flex items-center justify-center z-[1]">
-                        <Palmtree size={14} className="text-amber-500/50 dark:text-amber-400/40" />
-                      </div>
-                    )}
-                    {/* Unavailable overlay */}
-                    {!off && crewUnavailable && !hasAnyContent && (
-                      <div className="absolute inset-0 bg-muted/8 flex items-center justify-center z-[1]">
-                        <Ban size={14} className="text-muted/25" />
-                      </div>
-                    )}
-                    {/* App appointment cards */}
-                    {crewAppts.map((a) => {
-                      const start = a.start_time || "08:00";
-                      const end = a.end_time || (a.time_block === "full_day" ? "16:00" : undefined);
-                      const leftPct = timeToPercent(start);
-                      let widthPct = end ? durationPercent(start, end) : 100 / TIMELINE_HOURS;
-                      if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
-                      const discItem = crewDiscrepancies.find(
-                        (d) => d.linkedAppointment?.id === a.id
-                      );
-                      return (
-                        <div
-                          key={a.id}
-                          className="absolute top-1 bottom-1 z-[2]"
-                          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                          onClick={(e) => { e.stopPropagation(); onCardClick(a); }}
-                        >
-                          <div className="relative h-full overflow-hidden">
-                            <AppointmentCard
-                              appointment={a}
-                              crew={crew}
-                              compact={false}
-                              hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
-                              orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
-                              accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
-                              isLinked={!!a.work_order_number}
-                              showRForce={showRForce}
-                              onClick={() => onCardClick(a)}
-                            />
-                            {discItem && (
-                              <DiscrepancyBadge
-                                differences={discItem.differences}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onRForceClick(discItem.rforceOrder, crew, discItem);
-                                }}
+                  {twoLayer ? (
+                    /* Two-layer layout: rForce on top, app on bottom */
+                    <div className="flex-1 flex flex-col min-w-0">
+                      {/* rForce layer (top) */}
+                      <div className="relative min-h-[44px] border-b border-dashed border-border/50">
+                        {renderGridlines()}
+                        {crewRForceVisible.map((rf) => {
+                          const startTime = rf.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
+                          const endTime = rf.rforceOrder.scheduled_end?.slice(11, 16) || undefined;
+                          const leftPct = timeToPercent(startTime);
+                          let widthPct = endTime ? durationPercent(startTime, endTime) : 100 / TIMELINE_HOURS;
+                          if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                          return (
+                            <div
+                              key={`rf-${rf.rforceOrder.work_order_number}`}
+                              className="absolute top-0.5 bottom-0.5 z-[2] overflow-hidden"
+                              style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRForceClick(rf.rforceOrder, crew, rf);
+                              }}
+                            >
+                              <RForceCard
+                                order={rf.rforceOrder}
+                                crew={crew}
+                                compact={false}
+                                onClick={() => onRForceClick(rf.rforceOrder, crew, rf)}
                               />
-                            )}
+                            </div>
+                          );
+                        })}
+                        {crewApprovals.map((item) => {
+                          const startTime = item.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
+                          const endTime = item.rforceOrder.scheduled_end?.slice(11, 16) || undefined;
+                          const leftPct = timeToPercent(startTime);
+                          let widthPct = endTime ? durationPercent(startTime, endTime) : 100 / TIMELINE_HOURS;
+                          if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                          const rfDate = item.rforceOrder.scheduled_start?.slice(0, 10) || "";
+                          return (
+                            <div
+                              key={`appr-${item.rforceOrder.work_order_number}`}
+                              className="absolute top-0.5 bottom-0.5 z-[3] overflow-hidden"
+                              style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ApprovalCard
+                                rforceOrder={item.rforceOrder}
+                                crew={crew}
+                                onApprove={async () => {
+                                  await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate);
+                                }}
+                                onDismiss={async () => {
+                                  await onDismissRForce(
+                                    item.rforceOrder.work_order_number,
+                                    rfDate,
+                                    item.rforceOrder.scheduled_start?.slice(11, 16)
+                                  );
+                                }}
+                                onClick={() => onRForceClick(item.rforceOrder, crew, item)}
+                              />
+                            </div>
+                          );
+                        })}
+                        {/* rForce label */}
+                        <div className="absolute top-0 left-0 px-1 py-px text-[7px] text-muted/40 uppercase tracking-wide z-[1] pointer-events-none">rForce</div>
+                      </div>
+                      {/* App layer (bottom) */}
+                      <div
+                        className={`relative min-h-[44px] cursor-pointer transition-colors ${dragOverCrewId === crew.id ? "bg-primary/10 ring-2 ring-primary ring-inset" : ""}`}
+                        onClick={() => onCellClick(crew.id, "full_day")}
+                        onDragOver={handleRowDragOver}
+                        onDragLeave={handleRowDragLeave}
+                        onDrop={handleRowDrop}
+                      >
+                        {renderGridlines()}
+                        {off && !hasAnyContent && (
+                          <div className="absolute inset-0 bg-amber-200/40 dark:bg-amber-800/20 flex items-center justify-center z-[1]">
+                            <Palmtree size={14} className="text-amber-500/50 dark:text-amber-400/40" />
                           </div>
+                        )}
+                        {crewAppts.map((a) => {
+                          const start = a.start_time || "08:00";
+                          const end = a.end_time || (a.time_block === "full_day" ? "16:00" : undefined);
+                          const leftPct = timeToPercent(start);
+                          let widthPct = end ? durationPercent(start, end) : 100 / TIMELINE_HOURS;
+                          if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                          const discItem = crewDiscrepancies.find(
+                            (d) => d.linkedAppointment?.id === a.id
+                          );
+                          return (
+                            <div
+                              key={a.id}
+                              className="absolute top-0.5 bottom-0.5 z-[2] cursor-grab active:cursor-grabbing"
+                              style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                              draggable
+                              onDragStart={(e) => {
+                                e.dataTransfer.effectAllowed = "move";
+                                e.dataTransfer.setData("text/plain", a.id);
+                                setDraggedAppointment({
+                                  appointment: a,
+                                  sourceCrewId: crew.id,
+                                  sourceDate: format(date, "yyyy-MM-dd"),
+                                  sourceTimeBlock: a.time_block,
+                                });
+                                (e.currentTarget as HTMLElement).style.opacity = "0.4";
+                              }}
+                              onDragEnd={(e) => {
+                                (e.currentTarget as HTMLElement).style.opacity = "1";
+                                setDraggedAppointment(null);
+                              }}
+                              onClick={(e) => { e.stopPropagation(); onCardClick(a); }}
+                            >
+                              <div className="relative h-full overflow-hidden">
+                                <AppointmentCard
+                                  appointment={a}
+                                  crew={crew}
+                                  compact={false}
+                                  hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
+                                  orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+                                  accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
+                                  isLinked={!!a.work_order_number}
+                                  showRForce={showRForce}
+                                  onClick={() => onCardClick(a)}
+                                />
+                                {discItem && (
+                                  <DiscrepancyBadge
+                                    differences={discItem.differences}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onRForceClick(discItem.rforceOrder, crew, discItem);
+                                    }}
+                                  />
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {/* App label */}
+                        <div className="absolute top-0 left-0 px-1 py-px text-[7px] text-muted/40 uppercase tracking-wide z-[1] pointer-events-none">App</div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Single-layer layout (rForce off or no rForce content) */
+                    <div
+                      className={`flex-1 relative min-h-[90px] cursor-pointer transition-colors ${dragOverCrewId === crew.id ? "bg-primary/10 ring-2 ring-primary ring-inset" : ""}`}
+                      onClick={() => onCellClick(crew.id, "full_day")}
+                      onDragOver={handleRowDragOver}
+                      onDragLeave={handleRowDragLeave}
+                      onDrop={handleRowDrop}
+                    >
+                      {/* Off-hours shading */}
+                      <div
+                        className="absolute top-0 bottom-0 left-0 bg-muted/5 dark:bg-muted/10 z-0"
+                        style={{ width: `${crewOffLeft}%` }}
+                      />
+                      <div
+                        className="absolute top-0 bottom-0 right-0 bg-muted/5 dark:bg-muted/10 z-0"
+                        style={{ width: `${crewOffRight}%` }}
+                      />
+                      {renderGridlines()}
+                      {/* Time-off overlay */}
+                      {off && !hasAnyContent && (
+                        <div className="absolute inset-0 bg-amber-200/40 dark:bg-amber-800/20 flex items-center justify-center z-[1]">
+                          <Palmtree size={14} className="text-amber-500/50 dark:text-amber-400/40" />
                         </div>
-                      );
-                    })}
-                    {/* Approval cards — always visible */}
-                    {crewApprovals.map((item) => {
-                      const startTime = item.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
-                      const endTime = item.rforceOrder.scheduled_end?.slice(11, 16) || undefined;
-                      const leftPct = timeToPercent(startTime);
-                      let widthPct = endTime ? durationPercent(startTime, endTime) : 100 / TIMELINE_HOURS;
-                      if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
-                      const rfDate = item.rforceOrder.scheduled_start?.slice(0, 10) || "";
-                      return (
-                        <div
-                          key={`appr-${item.rforceOrder.work_order_number}`}
-                          className="absolute top-1 bottom-1 z-[3] overflow-hidden"
-                          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <ApprovalCard
-                            rforceOrder={item.rforceOrder}
-                            crew={crew}
-                            onApprove={async () => {
-                              await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate);
+                      )}
+                      {/* Unavailable overlay */}
+                      {!off && crewUnavailable && !hasAnyContent && (
+                        <div className="absolute inset-0 bg-muted/8 flex items-center justify-center z-[1]">
+                          <Ban size={14} className="text-muted/25" />
+                        </div>
+                      )}
+                      {/* App appointment cards — draggable */}
+                      {crewAppts.map((a) => {
+                        const start = a.start_time || "08:00";
+                        const end = a.end_time || (a.time_block === "full_day" ? "16:00" : undefined);
+                        const leftPct = timeToPercent(start);
+                        let widthPct = end ? durationPercent(start, end) : 100 / TIMELINE_HOURS;
+                        if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                        const discItem = crewDiscrepancies.find(
+                          (d) => d.linkedAppointment?.id === a.id
+                        );
+                        return (
+                          <div
+                            key={a.id}
+                            className="absolute top-1 bottom-1 z-[2] cursor-grab active:cursor-grabbing"
+                            style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", a.id);
+                              setDraggedAppointment({
+                                appointment: a,
+                                sourceCrewId: crew.id,
+                                sourceDate: format(date, "yyyy-MM-dd"),
+                                sourceTimeBlock: a.time_block,
+                              });
+                              (e.currentTarget as HTMLElement).style.opacity = "0.4";
                             }}
-                            onDismiss={async () => {
-                              await onDismissRForce(
-                                item.rforceOrder.work_order_number,
-                                rfDate,
-                                item.rforceOrder.scheduled_start?.slice(11, 16)
-                              );
+                            onDragEnd={(e) => {
+                              (e.currentTarget as HTMLElement).style.opacity = "1";
+                              setDraggedAppointment(null);
                             }}
-                            onClick={() => onRForceClick(item.rforceOrder, crew, item)}
-                          />
-                        </div>
-                      );
-                    })}
-                    {/* rForce regular/synced tiles — only when showRForce is on */}
-                    {showRForce && crewRForceVisible.map((rf) => {
-                      const startTime = rf.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
-                      const endTime = rf.rforceOrder.scheduled_end?.slice(11, 16) || undefined;
-                      const leftPct = timeToPercent(startTime);
-                      let widthPct = endTime ? durationPercent(startTime, endTime) : 100 / TIMELINE_HOURS;
-                      if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
-                      return (
-                        <div
-                          key={`rf-${rf.rforceOrder.work_order_number}`}
-                          className="absolute top-1 bottom-1 z-[2] overflow-hidden"
-                          style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRForceClick(rf.rforceOrder, crew, rf);
-                          }}
-                        >
-                          <RForceCard
-                            order={rf.rforceOrder}
-                            crew={crew}
-                            compact={false}
-                            onClick={() => onRForceClick(rf.rforceOrder, crew, rf)}
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
+                            onClick={(e) => { e.stopPropagation(); onCardClick(a); }}
+                          >
+                            <div className="relative h-full overflow-hidden">
+                              <AppointmentCard
+                                appointment={a}
+                                crew={crew}
+                                compact={false}
+                                hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
+                                orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+                                accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
+                                isLinked={!!a.work_order_number}
+                                showRForce={showRForce}
+                                onClick={() => onCardClick(a)}
+                              />
+                              {discItem && (
+                                <DiscrepancyBadge
+                                  differences={discItem.differences}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onRForceClick(discItem.rforceOrder, crew, discItem);
+                                  }}
+                                />
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {/* Approval cards — always visible */}
+                      {crewApprovals.map((item) => {
+                        const startTime = item.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
+                        const endTime = item.rforceOrder.scheduled_end?.slice(11, 16) || undefined;
+                        const leftPct = timeToPercent(startTime);
+                        let widthPct = endTime ? durationPercent(startTime, endTime) : 100 / TIMELINE_HOURS;
+                        if (widthPct < 100 / TIMELINE_HOURS) widthPct = 100 / TIMELINE_HOURS;
+                        const rfDate = item.rforceOrder.scheduled_start?.slice(0, 10) || "";
+                        return (
+                          <div
+                            key={`appr-${item.rforceOrder.work_order_number}`}
+                            className="absolute top-1 bottom-1 z-[3] overflow-hidden"
+                            style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ApprovalCard
+                              rforceOrder={item.rforceOrder}
+                              crew={crew}
+                              onApprove={async () => {
+                                await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate);
+                              }}
+                              onDismiss={async () => {
+                                await onDismissRForce(
+                                  item.rforceOrder.work_order_number,
+                                  rfDate,
+                                  item.rforceOrder.scheduled_start?.slice(11, 16)
+                                );
+                              }}
+                              onClick={() => onRForceClick(item.rforceOrder, crew, item)}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
