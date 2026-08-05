@@ -769,6 +769,35 @@ function MeasureTimeLaneCell({
                     </div>
                   ) : hasItems ? (
                     <div>
+                      {/* rForce layer on top */}
+                      {blockRForce.length > 0 && (
+                        <div className={blockAppts.length > 0 ? "pb-0.5 mb-0.5" : ""} style={blockAppts.length > 0 ? { borderBottom: "1px dashed var(--color-border)" } : undefined}>
+                          {blockRForce.filter((rf) => rf.displayMode !== "approval").map((rf) => {
+                            const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
+                            return (
+                              <WeekCard key={rf.rforceOrder.work_order_number} dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder, rf)}>
+                                <CompactRForceContent order={rf.rforceOrder} crew={crewObj} isSynced={rf.displayMode === "synced"} />
+                              </WeekCard>
+                            );
+                          })}
+                          {blockRForce.filter((rf) => rf.displayMode === "approval").map((rf) => (
+                            <ApprovalCard
+                              key={`approve-${rf.rforceOrder.work_order_number}`}
+                              rforceOrder={rf.rforceOrder}
+                              crew={crewObj}
+                              compact
+                              onApprove={async () => {
+                                await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr);
+                              }}
+                              onDismiss={() =>
+                                onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16)) ?? Promise.resolve()
+                              }
+                              onClick={() => onRForceClick(rf.rforceOrder, rf)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                      {/* App layer below */}
                       {blockAppts.map((a) => {
                         const isSpanStart = a.time_block === block;
                         if (!isSpanStart && a.time_block_end) return null;
@@ -802,29 +831,6 @@ function MeasureTimeLaneCell({
                           </div>
                         );
                       })}
-                      {blockRForce.filter((rf) => rf.displayMode !== "approval").map((rf) => {
-                        const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
-                        return (
-                          <WeekCard key={rf.rforceOrder.work_order_number} dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder, rf)}>
-                            <CompactRForceContent order={rf.rforceOrder} crew={crewObj} />
-                          </WeekCard>
-                        );
-                      })}
-                      {blockRForce.filter((rf) => rf.displayMode === "approval").map((rf) => (
-                        <ApprovalCard
-                          key={`approve-${rf.rforceOrder.work_order_number}`}
-                          rforceOrder={rf.rforceOrder}
-                          crew={crewObj}
-                          compact
-                          onApprove={async () => {
-                            await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr);
-                          }}
-                          onDismiss={() =>
-                            onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16)) ?? Promise.resolve()
-                          }
-                          onClick={() => onRForceClick(rf.rforceOrder, rf)}
-                        />
-                      ))}
                       <button
                         onClick={() => onSchedule(block)}
                         className="w-full h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
@@ -1013,63 +1019,71 @@ function StandardCell({
         </div>
       )}
       {hasContent ? (
-        <div className="space-y-0.5">
-          {sortedAppts.map((a) => {
-            const dimmed = !!searchQuery && !appointmentMatchesSearch(a, crewObj, searchQuery);
-            const multiDay = getMultiDayLabel(a, day);
-            const discItem = discrepancyByApptId.get(a.id);
-            return (
-              <div key={a.id} className="relative">
-                <WeekCard
-                  dimmed={dimmed}
-                  onClick={() => onCardClick(a)}
-                  appointment={a}
-                  sourceCrewId={crew.id}
-                  sourceDate={dateStr}
-                  sourceTimeBlock={a.time_block}
-                >
-                  <CompactAppointmentContent
+        <div>
+          {/* rForce layer — shown above app tiles when overlay is on */}
+          {(visibleRForce.length > 0 || approvalItems.length > 0) && (
+            <div className="space-y-0.5 pb-0.5" style={visibleRForce.length > 0 || approvalItems.length > 0 ? { borderBottom: "1px dashed var(--color-border)" } : undefined}>
+              {visibleRForce.map((rf) => {
+                const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
+                return (
+                  <WeekCard key={rf.rforceOrder.work_order_number} dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder, rf)}>
+                    <CompactRForceContent order={rf.rforceOrder} crew={crewObj} isSynced={rf.displayMode === "synced"} />
+                  </WeekCard>
+                );
+              })}
+              {approvalItems.map((rf) => (
+                <ApprovalCard
+                  key={`approve-${rf.rforceOrder.work_order_number}`}
+                  rforceOrder={rf.rforceOrder}
+                  crew={crewObj}
+                  compact
+                  onApprove={async () => {
+                    await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr);
+                  }}
+                  onDismiss={async () => {
+                    await onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16));
+                  }}
+                  onClick={() => onRForceClick(rf.rforceOrder, rf)}
+                />
+              ))}
+            </div>
+          )}
+          {/* App layer — source of truth appointments */}
+          <div className="space-y-0.5 pt-0.5">
+            {sortedAppts.map((a) => {
+              const dimmed = !!searchQuery && !appointmentMatchesSearch(a, crewObj, searchQuery);
+              const multiDay = getMultiDayLabel(a, day);
+              const discItem = discrepancyByApptId.get(a.id);
+              return (
+                <div key={a.id} className="relative">
+                  <WeekCard
+                    dimmed={dimmed}
+                    onClick={() => onCardClick(a)}
                     appointment={a}
-                    crew={crewObj}
-                    hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
-                    multiDayLabel={multiDay}
-                    orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
-                    accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
-                  />
-                </WeekCard>
-                {discItem && <DiscrepancyBadge differences={discItem.differences} onClick={() => onRForceClick(discItem.rforceOrder, discItem)} />}
-              </div>
-            );
-          })}
-          {visibleRForce.map((rf) => {
-            const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
-            return (
-              <WeekCard key={rf.rforceOrder.work_order_number} dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder, rf)}>
-                <CompactRForceContent order={rf.rforceOrder} crew={crewObj} />
-              </WeekCard>
-            );
-          })}
-          {approvalItems.map((rf) => (
-            <ApprovalCard
-              key={`approve-${rf.rforceOrder.work_order_number}`}
-              rforceOrder={rf.rforceOrder}
-              crew={crewObj}
-              compact
-              onApprove={async () => {
-                await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr);
-              }}
-              onDismiss={async () => {
-                await onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16));
-              }}
-              onClick={() => onRForceClick(rf.rforceOrder, rf)}
-            />
-          ))}
-          <button
-            onClick={onSchedule}
-            className="w-full h-4 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
-          >
-            <Plus size={7} className="text-muted/15 hover:text-primary" />
-          </button>
+                    sourceCrewId={crew.id}
+                    sourceDate={dateStr}
+                    sourceTimeBlock={a.time_block}
+                  >
+                    <CompactAppointmentContent
+                      appointment={a}
+                      crew={crewObj}
+                      hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
+                      multiDayLabel={multiDay}
+                      orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+                      accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
+                    />
+                  </WeekCard>
+                  {discItem && <DiscrepancyBadge differences={discItem.differences} onClick={() => onRForceClick(discItem.rforceOrder, discItem)} />}
+                </div>
+              );
+            })}
+            <button
+              onClick={onSchedule}
+              className="w-full h-4 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
+            >
+              <Plus size={7} className="text-muted/15 hover:text-primary" />
+            </button>
+          </div>
         </div>
       ) : (
         <button
@@ -1220,24 +1234,34 @@ function CompactAppointmentContent({
 function CompactRForceContent({
   order,
   crew,
+  isSynced,
 }: {
   order: any;
   crew?: Crew;
+  isSynced?: boolean;
 }) {
-  const bgColor = crew?.color || "#888";
+  const borderColor = crew?.color || "#888";
   const city = parseCity(order.address || "");
 
   return (
-    <div className="rounded-sm px-1 py-0.5 text-white" style={{ backgroundColor: bgColor }}>
+    <div
+      className="rounded-sm px-1 py-0.5 border border-dashed"
+      style={{ borderColor, backgroundColor: `${borderColor}15` }}
+    >
       {order.order_alerts && (
-        <div className="truncate text-yellow-200 text-[8px] leading-tight">⚠ {order.order_alerts}</div>
+        <div className="truncate text-amber-600 dark:text-amber-400 text-[8px] leading-tight">⚠ {order.order_alerts}</div>
       )}
-      <div className="font-semibold truncate flex items-center gap-0.5">
+      <div className="font-semibold truncate flex items-center gap-0.5 text-foreground/80 text-[9px]">
         {order.customer_name || "Unknown"}
-        <span className="text-[6px] opacity-50 font-normal ml-auto bg-white/20 px-0.5 rounded">rF</span>
+        <span
+          className="text-[6px] font-normal ml-auto px-0.5 rounded"
+          style={{ backgroundColor: `${borderColor}30`, color: borderColor }}
+        >
+          {isSynced ? "rF ✓" : "rF"}
+        </span>
       </div>
-      {order.account_name && <div className="truncate opacity-70 text-[7px]">{order.account_name}</div>}
-      {city && <div className="truncate opacity-80 text-[8px]">{city}</div>}
+      {order.account_name && <div className="truncate text-foreground/50 text-[7px]">{order.account_name}</div>}
+      {city && <div className="truncate text-foreground/60 text-[8px]">{city}</div>}
     </div>
   );
 }
