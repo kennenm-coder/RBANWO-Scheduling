@@ -576,46 +576,60 @@ export async function approveRForceOrder(
     ? APPROVE_WO_TYPE_MAP[rforceOrder.work_order_type]
     : "install") as Appointment["appointment_type"];
 
-  const appt = await createAppointment({
-    crew_id: crewId,
-    secondary_crew_id: null,
-    tertiary_crew_id: null,
-    appointment_type: appointmentType || "install",
-    order_number: rforceOrder.order_number || null,
-    work_order_number: rforceOrder.work_order_number,
-    customer_name: rforceOrder.customer_name || "Unknown",
-    address: rforceOrder.address || "",
-    scheduled_date: scheduledDate,
-    start_time: start,
-    end_time: end,
-    duration_days: 1,
-    time_block: tb,
-    time_block_end: null,
-    manual_override: false,
-    override_source: null,
-    status: "scheduled",
-    notes: null,
-    reschedule_reason: null,
-    product_count: rforceOrder.product_count ?? null,
-    salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
-    scheduled_by: null,
-  });
+  const sb = getSupabase();
+  if (!sb) return null;
 
-  if (!appt) return null;
+  const { data: appt, error } = await sb
+    .from("sched_appointments")
+    .insert({
+      crew_id: crewId,
+      secondary_crew_id: null,
+      tertiary_crew_id: null,
+      appointment_type: appointmentType || "install",
+      order_number: rforceOrder.order_number || null,
+      work_order_number: rforceOrder.work_order_number,
+      customer_name: rforceOrder.customer_name || "Unknown",
+      address: rforceOrder.address || "",
+      scheduled_date: scheduledDate,
+      start_time: start,
+      end_time: end,
+      duration_days: 1,
+      time_block: tb,
+      status: "scheduled",
+      notes: null,
+      reschedule_reason: null,
+      product_count: rforceOrder.product_count ?? null,
+      salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
+      scheduled_by: null,
+    })
+    .select()
+    .single();
 
-  const link = await linkAppointment(appt.id, appt.version, rforceOrder, "auto");
+  if (error || !appt) return null;
+  const typedAppt = appt as Appointment;
 
-  await createAppointmentEvent({
-    appointment_id: appt.id,
-    action: "approved_from_rforce",
-    actor_id: null,
-    actor_name_snapshot: null,
-    before_state: null,
-    after_state: { work_order_number: rforceOrder.work_order_number },
-    reason: "Approved from rForce import",
-  });
+  let link: AppointmentLink | null = null;
+  try {
+    link = await linkAppointment(typedAppt.id, typedAppt.version, rforceOrder, "auto");
+  } catch {
+    // Link may fail due to RLS — appointment is still valid
+  }
 
-  return { appointment: appt, link };
+  try {
+    await createAppointmentEvent({
+      appointment_id: typedAppt.id,
+      action: "created",
+      actor_id: null,
+      actor_name_snapshot: null,
+      before_state: null,
+      after_state: { work_order_number: rforceOrder.work_order_number, source: "rforce_approval" },
+      reason: "Approved from rForce import",
+    });
+  } catch {
+    // Event logging is non-critical
+  }
+
+  return { appointment: typedAppt, link: link! };
 }
 
 // ── Flag Resolutions ──

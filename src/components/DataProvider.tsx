@@ -262,7 +262,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
           if (prev.find((a) => a.id === result.appointment.id)) return prev;
           return [...prev, result.appointment];
         });
-        setActiveLinks((prev) => [...prev, result.link]);
+        if (result.link) {
+          setActiveLinks((prev) => [...prev, result.link]);
+        }
       }
       return result?.appointment ?? null;
     },
