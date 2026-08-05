@@ -18,17 +18,18 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { crews, appointments, rforceOrders, timeOffRequests } = useData();
+  const { crews, appointments, rforceOrders, timeOffRequests, activeLinks, flagResolutions } = useData();
 
   const unmatchedCount = useMemo(
     () => findUnmatchedNames(crews, rforceOrders, timeOffRequests).length,
     [crews, rforceOrders, timeOffRequests]
   );
 
-  const flagCount = useMemo(
-    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests).length,
-    [appointments, crews, rforceOrders, timeOffRequests]
-  );
+  const flagCount = useMemo(() => {
+    const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks);
+    const resolvedKeys = new Set(flagResolutions.map((r) => r.flag_key));
+    return allFlags.filter((f) => !resolvedKeys.has(f.id)).length;
+  }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions]);
 
   return (
     <nav className="sticky bottom-0 z-40 bg-background border-t border-border safe-area-bottom">
