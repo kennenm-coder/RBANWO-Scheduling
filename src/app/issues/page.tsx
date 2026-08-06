@@ -84,6 +84,9 @@ export default function IssuesPage() {
   const [rforceExpanded, setRforceExpanded] = useState(true);
   const [waitingExpanded, setWaitingExpanded] = useState(true);
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
+  const [errorMap, setErrorMap] = useState<Map<string, string>>(new Map());
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; errors: number } | null>(null);
 
   // Detect all flags
   const rawFlags = useMemo(
@@ -127,17 +130,38 @@ export default function IssuesPage() {
       const isMeasure = crew?.crew_type === "measure_tech";
       const timeBlock: TimeBlock = isMeasure ? timeToBlock(hour) : "full_day";
       const dateStr = rf.scheduled_start?.slice(0, 10) || "";
-      return { item, rf, crew, timeBlock, dateStr };
+      const canApprove = !!crew && !!dateStr;
+      const reason = !resourceName
+        ? "No resource assigned in rForce"
+        : !crew
+          ? `No crew matches "${resourceName}"`
+          : !dateStr
+            ? "No scheduled date"
+            : undefined;
+      return { item, rf, crew, timeBlock, dateStr, canApprove, reason };
     });
   }, [approvalItems, crews, resourceMappings]);
+
+  // Counts for the approve-all button
+  const approvableCount = approvalData.filter((d) => d.canApprove).length;
+
+  function friendlyError(err: unknown): string {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "DOUBLE_BOOK") return "Crew already booked on this date";
+    if (msg.includes("RLS") || msg.includes("no data")) return "Permission denied — check RLS policies";
+    if (msg.includes("violates unique")) return "Crew already booked on this date";
+    return msg;
+  }
 
   async function handleApprove(rf: RForceOrder, crewId: string, timeBlock: TimeBlock, dateStr: string) {
     const id = rf.work_order_number;
     setProcessingIds((prev) => new Set(prev).add(id));
+    setErrorMap((prev) => { const next = new Map(prev); next.delete(id); return next; });
     try {
       await approveRForce(rf, crewId, timeBlock, dateStr);
     } catch (err) {
       console.error("Approve failed:", err);
+      setErrorMap((prev) => new Map(prev).set(id, friendlyError(err)));
     } finally {
       setProcessingIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
     }
@@ -154,6 +178,39 @@ export default function IssuesPage() {
     } finally {
       setProcessingIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
     }
+  }
+
+  async function handleApproveAll() {
+    const approvable = approvalData.filter((d) => d.canApprove);
+    if (approvable.length === 0) return;
+    setBulkRunning(true);
+    setBulkProgress({ done: 0, total: approvable.length, errors: 0 });
+    let done = 0;
+    let errors = 0;
+
+    // Process in batches of 5 to avoid overwhelming the DB
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < approvable.length; i += BATCH_SIZE) {
+      const batch = approvable.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map(({ rf, crew, timeBlock, dateStr }) =>
+          approveRForce(rf, crew!.id, timeBlock, dateStr).then(
+            () => ({ wo: rf.work_order_number, ok: true as const }),
+            (err: unknown) => {
+              setErrorMap((prev) => new Map(prev).set(rf.work_order_number, friendlyError(err)));
+              return { wo: rf.work_order_number, ok: false as const };
+            }
+          )
+        )
+      );
+      for (const r of results) {
+        done++;
+        if (r.status === "fulfilled" && !r.value.ok) errors++;
+        if (r.status === "rejected") errors++;
+      }
+      setBulkProgress({ done, total: approvable.length, errors });
+    }
+    setBulkRunning(false);
   }
 
   if (loading) {
@@ -213,15 +270,45 @@ export default function IssuesPage() {
             expanded={approvalsExpanded}
             onToggle={() => setApprovalsExpanded(!approvalsExpanded)}
           >
+            {/* ── Approve All bar ── */}
+            <div className="flex items-center gap-3 mb-3 p-2 rounded-lg bg-surface border border-border">
+              <button
+                onClick={handleApproveAll}
+                disabled={bulkRunning || approvableCount === 0}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-green-500 hover:bg-green-600 text-white text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {bulkRunning ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Approve All ({approvableCount})
+              </button>
+              <span className="text-xs text-muted">
+                {approvableCount} ready
+                {approvalData.length - approvableCount > 0 && (
+                  <> · <span className="text-warning">{approvalData.length - approvableCount} need crew match</span></>
+                )}
+              </span>
+              {bulkProgress && (
+                <span className="text-xs text-muted ml-auto">
+                  {bulkProgress.done}/{bulkProgress.total}
+                  {bulkProgress.errors > 0 && <span className="text-danger ml-1">({bulkProgress.errors} failed)</span>}
+                </span>
+              )}
+            </div>
+
             <div className="space-y-1.5">
-              {approvalData.map(({ item, rf, crew, timeBlock, dateStr }) => {
+              {approvalData.map(({ item, rf, crew, timeBlock, dateStr, canApprove, reason }) => {
                 const city = parseCity(rf.address || "");
                 const isProcessing = processingIds.has(rf.work_order_number);
-                const canApprove = !!crew && !!dateStr;
+                const error = errorMap.get(rf.work_order_number);
                 return (
                   <div
                     key={item.id}
-                    className="w-full p-3 rounded-lg border-2 border-dashed border-orange-400/50 dark:border-orange-500/30 bg-orange-50/50 dark:bg-orange-900/10 flex items-center gap-3"
+                    className={`w-full p-3 rounded-lg border-2 border-dashed flex items-center gap-3 ${
+                      error
+                        ? "border-red-400/50 dark:border-red-500/30 bg-red-50/50 dark:bg-red-900/10"
+                        : canApprove
+                          ? "border-orange-400/50 dark:border-orange-500/30 bg-orange-50/50 dark:bg-orange-900/10"
+                          : "border-gray-300/50 dark:border-gray-600/30 bg-gray-50/50 dark:bg-gray-800/20 opacity-60"
+                    }`}
                   >
                     <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: crew?.color || "#888" }} />
                     <div className="flex-1 min-w-0">
@@ -240,20 +327,38 @@ export default function IssuesPage() {
                         <span>{dateStr || "No date"}</span>
                         {timeBlock !== "full_day" && <><span>·</span><span>{timeBlock}</span></>}
                       </div>
+                      {/* Error feedback */}
+                      {error && (
+                        <div className="flex items-center gap-1 text-[11px] text-danger mt-1">
+                          <AlertCircle size={10} className="shrink-0" />
+                          <span>{error}</span>
+                        </div>
+                      )}
+                      {/* Why can't approve */}
+                      {!canApprove && reason && !error && (
+                        <div className="flex items-center gap-1 text-[11px] text-warning mt-1">
+                          <AlertTriangle size={10} className="shrink-0" />
+                          <span>{reason}</span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex gap-1.5 shrink-0">
                       <button
                         onClick={() => canApprove && handleApprove(rf, crew!.id, timeBlock, dateStr)}
-                        disabled={isProcessing || !canApprove}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-green-500 hover:bg-green-600 text-white text-xs font-medium transition-colors disabled:opacity-50"
-                        title={!canApprove ? "Cannot approve — no matching crew" : "Approve"}
+                        disabled={isProcessing || !canApprove || bulkRunning}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                          canApprove
+                            ? "bg-green-500 hover:bg-green-600 text-white disabled:opacity-50"
+                            : "bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
+                        }`}
+                        title={reason || "Approve"}
                       >
                         {isProcessing ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                         Approve
                       </button>
                       <button
                         onClick={() => handleDismiss(rf, dateStr)}
-                        disabled={isProcessing}
+                        disabled={isProcessing || bulkRunning}
                         className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-muted/20 hover:bg-muted/40 text-muted text-xs font-medium transition-colors disabled:opacity-50"
                       >
                         <X size={12} />

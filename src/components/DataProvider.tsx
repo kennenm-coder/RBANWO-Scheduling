@@ -95,7 +95,7 @@ interface DataContextValue {
     crewId: string,
     timeBlock: TimeBlock,
     scheduledDate: string
-  ) => Promise<Appointment | null>;
+  ) => Promise<Appointment>;
   dismissRForce: (
     workOrderNumber: string,
     rforceDate: string,
@@ -382,19 +382,18 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       timeBlock: TimeBlock,
       scheduledDate: string
     ) => {
+      // Throws on failure — caller should catch and surface the message
       const result = await approveRForceInDb(rforceOrder, crewId, timeBlock, scheduledDate, user?.id, displayName);
-      if (result) {
-        setAppointments((prev) => {
-          if (prev.find((a) => a.id === result.appointment.id)) return prev;
-          return [...prev, result.appointment];
-        });
-        if (result.link) {
-          setActiveLinks((prev) => [...prev, result.link]);
-        }
+      setAppointments((prev) => {
+        if (prev.find((a) => a.id === result.appointment.id)) return prev;
+        return [...prev, result.appointment];
+      });
+      if (result.link) {
+        setActiveLinks((prev) => [...prev, result.link]);
       }
-      return result?.appointment ?? null;
+      return result.appointment;
     },
-    []
+    [user?.id, displayName]
   );
 
   const handleDismissRForce = useCallback(
