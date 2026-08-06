@@ -100,7 +100,7 @@ export function reconcile(
         // --- Crew comparison ---
         const rfResource =
           rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
-        const appCrewName = crewMap.get(appt.crew_id);
+        const appCrewName = appt.crew_id ? crewMap.get(appt.crew_id) : undefined;
         const crewMismatch = !firstNamesMatch(rfResource ?? undefined, appCrewName);
 
         // --- Type comparison ---
@@ -113,7 +113,7 @@ export function reconcile(
         if (hasAnyMismatch) {
           differences = {};
           if (dateMismatch) {
-            differences.date = { app: appt.scheduled_date, rforce: rforceDate };
+            differences.date = { app: appt.scheduled_date || "unscheduled", rforce: rforceDate };
           }
           if (timeMismatch) {
             differences.time = {
@@ -156,9 +156,9 @@ export function reconcile(
       orderNumber: rf.order_number,
       workOrderNumber: rf.work_order_number,
       status,
-      appDate: appt?.scheduled_date,
+      appDate: appt?.scheduled_date || undefined,
       rforceDate: rf.scheduled_start?.split("T")[0],
-      appCrew: appt ? crewMap.get(appt.crew_id) : undefined,
+      appCrew: appt?.crew_id ? crewMap.get(appt.crew_id) : undefined,
       rforceCrew: assignedTo || undefined,
       customerName: rf.customer_name || "",
       address: rf.address || "",
@@ -175,14 +175,14 @@ export function reconcile(
   }
 
   for (const appt of appointments) {
-    if (appt.status === "cancelled") continue;
+    if (appt.status === "cancelled" || appt.status === "unscheduled") continue;
     if (!appt.work_order_number || seen.has(appt.work_order_number)) continue;
     results.push({
       orderNumber: appt.order_number || "",
       workOrderNumber: appt.work_order_number,
       status: "not_in_rforce",
-      appDate: appt.scheduled_date,
-      appCrew: crewMap.get(appt.crew_id),
+      appDate: appt.scheduled_date || undefined,
+      appCrew: appt.crew_id ? crewMap.get(appt.crew_id) : undefined,
       customerName: appt.customer_name,
       address: appt.address,
       salesforceUrl: buildSalesforceUrl(appt.work_order_number),

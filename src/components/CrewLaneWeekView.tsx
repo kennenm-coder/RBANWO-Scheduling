@@ -149,7 +149,7 @@ export default function CrewLaneWeekView({
   }
 
   function getMultiDayLabel(appt: Appointment, day: Date): string | null {
-    if (appt.duration_days <= 1) return null;
+    if (appt.duration_days <= 1 || !appt.scheduled_date) return null;
     const startDate = parseISO(appt.scheduled_date);
     const endDate = addDays(startDate, appt.duration_days - 1);
     const dayStr = format(day, "yyyy-MM-dd");
@@ -537,7 +537,7 @@ export default function CrewLaneWeekView({
 
       {editingAppt && (
         <ScheduleModal
-          date={new Date(editingAppt.scheduled_date)}
+          date={editingAppt.scheduled_date ? new Date(editingAppt.scheduled_date) : new Date()}
           editingAppointment={editingAppt}
           onClose={() => setEditingAppt(null)}
         />
@@ -545,7 +545,7 @@ export default function CrewLaneWeekView({
 
       {reschedulingAppt && (
         <ScheduleModal
-          date={new Date(reschedulingAppt.scheduled_date)}
+          date={reschedulingAppt.scheduled_date ? new Date(reschedulingAppt.scheduled_date) : new Date()}
           editingAppointment={reschedulingAppt}
           rescheduleMode
           onClose={() => setReschedulingAppt(null)}

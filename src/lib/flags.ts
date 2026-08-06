@@ -58,6 +58,9 @@ export function detectFlags(
   const activeAppts = appointments.filter((a) => a.status !== "cancelled");
 
   for (const appt of activeAppts) {
+    // Skip unscheduled appointments — they have no crew/date/time to check
+    if (appt.status === "unscheduled" || !appt.scheduled_date || !appt.crew_id) continue;
+
     const crew = crews.find((c) => c.id === appt.crew_id);
     const crewName = crew?.name || "Unknown";
 
@@ -137,7 +140,7 @@ export function detectFlags(
     const linked = activeAppts.find(
       (a) => a.work_order_number === rf.work_order_number
     );
-    if (!linked) continue;
+    if (!linked || !linked.scheduled_date || !linked.crew_id) continue;
 
     const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
     const linkedCrew = crews.find((c) => c.id === linked.crew_id);
@@ -152,12 +155,24 @@ export function detectFlags(
       : true;
     const crewMismatch = !crewNameMatch;
 
-    // --- Time block mismatch ---
+    // --- Time mismatch ---
+    // Compare actual start_time (HH:MM) against rForce scheduled_start time
+    const rforceTime = rf.scheduled_start.slice(11, 16); // "HH:MM"
     const rforceHour = extractHour(rf.scheduled_start);
+    const appStartTime = linked.start_time; // "HH:MM"
     const appTimeBlock = linked.time_block;
+
+    // Direct start_time comparison (primary — catches day-view drags)
+    // Normalize to HH:MM for comparison (DB may store HH:MM:SS)
+    const appTimeNorm = appStartTime?.slice(0, 5);
+    const startTimeMismatch = !!(appTimeNorm && rforceTime && appTimeNorm !== rforceTime);
+
+    // Time block comparison (fallback for measure techs with block-based scheduling)
     const expectedHour = appTimeBlock ? TIME_BLOCK_HOUR[appTimeBlock] : null;
-    const timeMismatch =
+    const blockMismatch =
       rforceHour !== null && expectedHour !== null && rforceHour !== expectedHour;
+
+    const timeMismatch = startTimeMismatch || blockMismatch;
 
     // --- Type mismatch ---
     const rfTypeMapped = rf.work_order_type ? WO_TYPE_MAP[rf.work_order_type] : undefined;
@@ -175,7 +190,7 @@ export function detectFlags(
         diffs.crew = { app: linkedCrewName || "unassigned", rforce: rfResource };
       }
       if (timeMismatch) {
-        diffs.time = { app: appTimeBlock || "none", rforce: `hour ${rforceHour}` };
+        diffs.time = { app: appStartTime || appTimeBlock || "none", rforce: rforceTime || `hour ${rforceHour}` };
       }
       if (typeMismatch) {
         diffs.type = { app: linked.appointment_type, rforce: rf.work_order_type || "unknown" };
@@ -185,7 +200,7 @@ export function detectFlags(
         const parts: string[] = [];
         if (dateMismatch) parts.push(`rForce: ${rfDate}`);
         if (crewMismatch && rfResource) parts.push(`rForce crew: ${rfResource}`);
-        if (timeMismatch) parts.push(`rForce time: hour ${rforceHour}`);
+        if (timeMismatch) parts.push(`rForce time: ${rforceTime || `hour ${rforceHour}`}`);
         if (typeMismatch) parts.push(`rForce type: ${rf.work_order_type}`);
         flags.push({
           id: `ovr-${rf.work_order_number}`,
@@ -200,7 +215,7 @@ export function detectFlags(
         const details: string[] = [];
         if (dateMismatch) details.push(`date: app ${linked.scheduled_date}, rForce ${rfDate}`);
         if (crewMismatch && rfResource) details.push(`crew: app ${linkedCrewName || "unassigned"}, rForce ${rfResource}`);
-        if (timeMismatch) details.push(`time: app ${appTimeBlock}, rForce hour ${rforceHour}`);
+        if (timeMismatch) details.push(`time: app ${appStartTime || appTimeBlock || "?"}, rForce ${rforceTime || `hour ${rforceHour}`}`);
         if (typeMismatch) details.push(`type: app ${linked.appointment_type}, rForce ${rf.work_order_type}`);
         flags.push({
           id: `disc-${rf.work_order_number}`,

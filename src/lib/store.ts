@@ -104,10 +104,12 @@ export async function updateAppointment(
 ): Promise<Appointment | null> {
   const sb = getSupabase();
   if (!sb) return null;
+  // Strip fields that may not exist as DB columns yet
+  const { manual_override, override_source, time_block_end, merge_source_wo, ...safeUpdates } = updates;
   const { data, error } = await sb
     .from("sched_appointments")
     .update({
-      ...updates,
+      ...safeUpdates,
       version: version + 1,
       updated_at: new Date().toISOString(),
     })
@@ -136,6 +138,50 @@ export async function cancelAppointment(
     status: "cancelled",
     reschedule_reason: reason || null,
   });
+}
+
+/** Move an appointment back to the queue by setting status='unscheduled' and clearing scheduling fields. */
+export async function unscheduleAppointment(
+  id: string,
+  version: number,
+  reason?: string
+): Promise<Appointment | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_appointments")
+    .update({
+      status: "unscheduled",
+      crew_id: null,
+      scheduled_date: null,
+      start_time: null,
+      end_time: null,
+      time_block: null,
+      reschedule_reason: reason || "Unscheduled by user",
+      version: version + 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("version", version)
+    .select()
+    .single();
+  if (error) {
+    if (error.code === "PGRST116") throw new Error("VERSION_CONFLICT");
+    throw error;
+  }
+  return data as Appointment;
+}
+
+/** Fetch appointments with status='unscheduled' (not bound to a date range). */
+export async function fetchUnscheduledAppointments(): Promise<Appointment[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("sched_appointments")
+    .select("*")
+    .eq("status", "unscheduled")
+    .order("updated_at", { ascending: false });
+  return (data as Appointment[]) ?? [];
 }
 
 // ── rForce Orders (CSV import) ──
@@ -513,8 +559,13 @@ export async function deleteAvailabilityException(id: string): Promise<void> {
 export async function fetchDismissals(): Promise<RForceDismissal[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  const { data } = await sb.from("sched_rforce_dismissals").select("*");
-  return (data as RForceDismissal[]) ?? [];
+  try {
+    const { data } = await sb.from("sched_rforce_dismissals").select("*");
+    return (data as RForceDismissal[]) ?? [];
+  } catch {
+    // Table may not exist yet — return empty
+    return [];
+  }
 }
 
 export async function dismissRForceOrder(
@@ -637,8 +688,13 @@ export async function approveRForceOrder(
 export async function fetchFlagResolutions(): Promise<FlagResolution[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  const { data } = await sb.from("sched_flag_resolutions").select("*");
-  return (data as FlagResolution[]) ?? [];
+  try {
+    const { data } = await sb.from("sched_flag_resolutions").select("*");
+    return (data as FlagResolution[]) ?? [];
+  } catch {
+    // Table may not exist yet — return empty
+    return [];
+  }
 }
 
 export async function resolveFlag(

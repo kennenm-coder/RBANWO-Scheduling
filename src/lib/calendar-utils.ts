@@ -98,7 +98,7 @@ export function getAppointmentsForDay(
 ): Appointment[] {
   const dateStr = format(date, "yyyy-MM-dd");
   return appointments.filter((a) => {
-    if (a.status === "cancelled") return false;
+    if (a.status === "cancelled" || !a.scheduled_date) return false;
     if (a.scheduled_date === dateStr) return true;
     if (a.duration_days > 1) {
       const start = parseISO(a.scheduled_date);
@@ -222,7 +222,7 @@ export function crewTypeLabel(type: Crew["crew_type"]): string {
   }
 }
 
-function timeToBlock(hour: number): TimeBlock {
+export function timeToBlock(hour: number): TimeBlock {
   if (hour < 10) return "9-10";
   if (hour < 12) return "10-12";
   if (hour < 14) return "12-2";
@@ -241,7 +241,7 @@ export function matchCrewByMapping(
   return undefined;
 }
 
-function matchCrewByName(resourceName: string, crews: Crew[], mappings?: ResourceMapping[]): Crew | undefined {
+export function matchCrewByName(resourceName: string, crews: Crew[], mappings?: ResourceMapping[]): Crew | undefined {
   if (mappings && mappings.length > 0) {
     const mapped = matchCrewByMapping(resourceName, crews, mappings);
     if (mapped) return mapped;
@@ -365,7 +365,7 @@ function compareLinkedPair(
   if (rf.scheduled_start) {
     const rfDate = rf.scheduled_start.slice(0, 10);
     if (rfDate !== appt.scheduled_date) {
-      diffs.date = { app: appt.scheduled_date, rforce: rfDate };
+      diffs.date = { app: appt.scheduled_date || "unscheduled", rforce: rfDate };
       hasDiff = true;
     }
   }
