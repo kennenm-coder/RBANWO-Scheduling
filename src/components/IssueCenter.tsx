@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useData } from "./DataProvider";
-import { detectFlags, Flag } from "@/lib/flags";
+import { detectFlags, applyResolutions, categorizeFlags, countActionableFlags, SchedulingFlag } from "@/lib/flags";
+import { openSalesforce } from "@/lib/salesforce";
+import { FlagClass } from "@/lib/types";
 import {
   X,
   AlertTriangle,
@@ -17,6 +19,12 @@ import {
   Square,
   Eye,
   EyeOff,
+  Clock,
+  ShieldAlert,
+  Link2,
+  ExternalLink,
+  ArrowRight,
+  RefreshCw,
 } from "lucide-react";
 
 interface Props {
@@ -24,27 +32,42 @@ interface Props {
   onNavigate?: (date: string) => void;
 }
 
-const ICON_MAP: Record<string, React.ReactNode> = {
+const CODE_ICON: Record<string, React.ReactNode> = {
   time_off_conflict: <Users size={14} className="text-danger" />,
   double_booking: <Calendar size={14} className="text-danger" />,
-  discrepancy: <AlertTriangle size={14} className="text-warning" />,
+  missing_crew: <Users size={14} className="text-warning" />,
+  missing_scheduled_date: <Calendar size={14} className="text-warning" />,
+  missing_time: <Clock size={14} className="text-warning" />,
   missing_address: <MapPin size={14} className="text-warning" />,
-  manual: <Info size={14} className="text-primary" />,
-  manual_override: <ArrowRightLeft size={14} className="text-blue-500" />,
-  unlinked: <Unlink size={14} className="text-muted" />,
+  invalid_resource_type: <ShieldAlert size={14} className="text-warning" />,
+  date_mismatch: <Calendar size={14} className="text-warning" />,
+  time_mismatch: <Clock size={14} className="text-warning" />,
+  resource_mismatch: <Users size={14} className="text-warning" />,
+  type_mismatch: <ArrowRightLeft size={14} className="text-warning" />,
+  manual_override_active: <ArrowRightLeft size={14} className="text-blue-500" />,
+  unlinked_appointment: <Unlink size={14} className="text-muted" />,
+  duplicate_link: <Link2 size={14} className="text-warning" />,
+  unmapped_resource: <Users size={14} className="text-muted" />,
+  source_record_missing: <AlertTriangle size={14} className="text-muted" />,
 };
 
-const SEVERITY_ICON = {
+const SEVERITY_ICON: Record<string, React.ReactNode> = {
   error: <AlertCircle size={14} className="text-danger" />,
   warning: <AlertTriangle size={14} className="text-warning" />,
   info: <Info size={14} className="text-muted" />,
 };
 
+const CLASS_LABELS: Record<FlagClass, string> = {
+  live_app: "App issue",
+  external_confirmation: "rForce sync",
+  workflow: "Data integrity",
+};
+
 export default function IssueCenter({ onClose, onNavigate }: Props) {
   const { appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, resolveFlag, unresolveFlag } = useData();
-  const [showResolved, setShowResolved] = useState(false);
+  const [showWaiting, setShowWaiting] = useState(true);
 
-  const flags = useMemo(
+  const rawFlags = useMemo(
     () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks),
     [appointments, crews, rforceOrders, timeOffRequests, activeLinks]
   );
@@ -55,14 +78,15 @@ export default function IssueCenter({ onClose, onNavigate }: Props) {
     return set;
   }, [flagResolutions]);
 
-  const unresolvedFlags = flags.filter((f) => !resolvedKeys.has(f.id));
-  const resolvedFlags = flags.filter((f) => resolvedKeys.has(f.id));
-  const displayFlags = showResolved ? [...unresolvedFlags, ...resolvedFlags] : unresolvedFlags;
+  const flags = useMemo(
+    () => applyResolutions(rawFlags, resolvedKeys),
+    [rawFlags, resolvedKeys]
+  );
 
-  const errorCount = unresolvedFlags.filter((f) => f.severity === "error").length;
-  const warningCount = unresolvedFlags.filter((f) => f.severity === "warning").length;
-  const overrideCount = unresolvedFlags.filter((f) => f.type === "manual_override").length;
-  const unlinkedCount = unresolvedFlags.filter((f) => f.type === "unlinked").length;
+  const sections = useMemo(() => categorizeFlags(flags), [flags]);
+  const actionableCount = countActionableFlags(flags);
+
+  const totalOpen = sections.actionRequired.length + sections.updateRForce.length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -71,72 +95,100 @@ export default function IssueCenter({ onClose, onNavigate }: Props) {
         <div className="p-4 flex items-center justify-between border-b border-border">
           <div>
             <h2 className="text-lg font-semibold">Issues</h2>
-            <div className="text-xs text-muted mt-0.5">
-              {errorCount > 0 && (
-                <span className="text-danger font-medium">{errorCount} errors</span>
+            <div className="text-xs text-muted mt-0.5 flex items-center gap-1.5 flex-wrap">
+              {sections.actionRequired.length > 0 && (
+                <span className="text-danger font-medium">{sections.actionRequired.length} action required</span>
               )}
-              {errorCount > 0 && warningCount > 0 && " · "}
-              {warningCount > 0 && (
-                <span className="text-warning font-medium">{warningCount} warnings</span>
-              )}
-              {overrideCount > 0 && (
+              {sections.updateRForce.length > 0 && (
                 <>
-                  {(errorCount > 0 || warningCount > 0) && " · "}
-                  <span className="text-blue-500 font-medium">{overrideCount} overrides</span>
+                  {sections.actionRequired.length > 0 && <span>·</span>}
+                  <span className="text-warning font-medium">{sections.updateRForce.length} update rForce</span>
                 </>
               )}
-              {unlinkedCount > 0 && (
+              {sections.waitingForImport.length > 0 && (
                 <>
-                  {(errorCount > 0 || warningCount > 0 || overrideCount > 0) && " · "}
-                  <span className="text-muted font-medium">{unlinkedCount} unlinked</span>
+                  {totalOpen > 0 && <span>·</span>}
+                  <span className="text-blue-500 font-medium">{sections.waitingForImport.length} waiting</span>
                 </>
               )}
-              {resolvedFlags.length > 0 && (
-                <>
-                  {(errorCount > 0 || warningCount > 0 || overrideCount > 0 || unlinkedCount > 0) && " · "}
-                  <span className="text-green-600 font-medium">{resolvedFlags.length} resolved</span>
-                </>
-              )}
-              {errorCount === 0 && warningCount === 0 && overrideCount === 0 && unlinkedCount === 0 && resolvedFlags.length === 0 && "No issues detected"}
+              {totalOpen === 0 && sections.waitingForImport.length === 0 && "No issues detected"}
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {resolvedFlags.length > 0 && (
+            {sections.waitingForImport.length > 0 && (
               <button
-                onClick={() => setShowResolved(!showResolved)}
+                onClick={() => setShowWaiting(!showWaiting)}
                 className="flex items-center gap-1 text-xs text-muted hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-surface"
-                title={showResolved ? "Hide resolved" : "Show resolved"}
+                title={showWaiting ? "Hide waiting" : "Show waiting"}
               >
-                {showResolved ? <EyeOff size={14} /> : <Eye size={14} />}
-                {showResolved ? "Hide" : "Show"} resolved
+                {showWaiting ? <EyeOff size={14} /> : <Eye size={14} />}
+                {showWaiting ? "Hide" : "Show"} waiting
               </button>
             )}
-            <button
-              onClick={onClose}
-              className="p-1 rounded-full hover:bg-surface"
-            >
+            <button onClick={onClose} className="p-1 rounded-full hover:bg-surface">
               <X size={20} />
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
-          {displayFlags.length === 0 ? (
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Action Required */}
+          {sections.actionRequired.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-danger mb-2 uppercase tracking-wide">
+                Action Required ({sections.actionRequired.length})
+              </div>
+              <div className="space-y-1.5">
+                {sections.actionRequired.map((flag) => (
+                  <FlagRow key={flag.id} flag={flag} onNavigate={onNavigate} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Update rForce */}
+          {sections.updateRForce.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-warning mb-2 uppercase tracking-wide">
+                Update rForce ({sections.updateRForce.length})
+              </div>
+              <div className="space-y-1.5">
+                {sections.updateRForce.map((flag) => (
+                  <FlagRow
+                    key={flag.id}
+                    flag={flag}
+                    onNavigate={onNavigate}
+                    onAcknowledge={() => resolveFlag(flag.id, "Marked as updated in rForce")}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Waiting for Import */}
+          {showWaiting && sections.waitingForImport.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-blue-500 mb-2 uppercase tracking-wide">
+                Waiting for Import ({sections.waitingForImport.length})
+              </div>
+              <div className="space-y-1.5">
+                {sections.waitingForImport.map((flag) => (
+                  <FlagRow
+                    key={flag.id}
+                    flag={flag}
+                    isWaiting
+                    onNavigate={onNavigate}
+                    onUndoAcknowledge={() => unresolveFlag(flag.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {totalOpen === 0 && sections.waitingForImport.length === 0 && (
             <div className="text-center text-muted py-12 text-sm">
               No scheduling issues detected.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {displayFlags.map((flag) => (
-                <FlagRow
-                  key={flag.id}
-                  flag={flag}
-                  resolved={resolvedKeys.has(flag.id)}
-                  onNavigate={onNavigate}
-                  onResolve={() => resolveFlag(flag.id)}
-                  onUnresolve={() => unresolveFlag(flag.id)}
-                />
-              ))}
             </div>
           )}
         </div>
@@ -147,48 +199,80 @@ export default function IssueCenter({ onClose, onNavigate }: Props) {
 
 function FlagRow({
   flag,
-  resolved,
+  isWaiting,
   onNavigate,
-  onResolve,
-  onUnresolve,
+  onAcknowledge,
+  onUndoAcknowledge,
 }: {
-  flag: Flag;
-  resolved: boolean;
+  flag: SchedulingFlag;
+  isWaiting?: boolean;
   onNavigate?: (date: string) => void;
-  onResolve: () => void;
-  onUnresolve: () => void;
+  onAcknowledge?: () => void;
+  onUndoAcknowledge?: () => void;
 }) {
+  const icon = CODE_ICON[flag.code] || SEVERITY_ICON[flag.severity];
+
   return (
     <div
       className={`w-full text-left p-3 rounded-lg border border-border hover:bg-surface transition-colors flex items-start gap-3 ${
-        flag.type === "manual_override" ? "border-l-2 border-l-blue-500" : ""
-      } ${resolved ? "opacity-50" : ""}`}
+        flag.code === "manual_override_active" ? "border-l-2 border-l-blue-500" : ""
+      } ${isWaiting ? "opacity-50" : ""}`}
     >
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          resolved ? onUnresolve() : onResolve();
-        }}
-        className="mt-0.5 shrink-0 text-muted hover:text-green-600 transition-colors"
-        title={resolved ? "Mark unresolved" : "Mark resolved"}
-      >
-        {resolved ? <CheckSquare size={16} className="text-green-600" /> : <Square size={16} />}
-      </button>
+      {/* Checkbox area */}
+      <div className="mt-0.5 shrink-0">
+        {flag.canAcknowledge && !isWaiting && onAcknowledge && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onAcknowledge(); }}
+            className="text-muted hover:text-blue-500 transition-colors"
+            title="Mark as updated in rForce"
+          >
+            <Square size={16} />
+          </button>
+        )}
+        {isWaiting && onUndoAcknowledge && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onUndoAcknowledge(); }}
+            className="text-blue-500 hover:text-muted transition-colors"
+            title="Undo"
+          >
+            <CheckSquare size={16} />
+          </button>
+        )}
+        {flag.autoClears && (
+          <div className="w-4 h-4 flex items-center justify-center" title="Clears automatically when fixed">
+            <RefreshCw size={11} className="text-muted/50" />
+          </div>
+        )}
+      </div>
+
       <button
         onClick={() => flag.date && onNavigate?.(flag.date)}
         className="flex-1 min-w-0 text-left flex items-start gap-3"
       >
-        <div className="mt-0.5 shrink-0">
-          {ICON_MAP[flag.type] || SEVERITY_ICON[flag.severity]}
-        </div>
+        <div className="mt-0.5 shrink-0">{icon}</div>
         <div className="flex-1 min-w-0">
-          <div className={`text-sm ${resolved ? "line-through" : ""}`}>{flag.message}</div>
-          <div className="text-[10px] text-muted mt-0.5 uppercase tracking-wide">
-            {flag.type.replace(/_/g, " ")}
+          <div className={`text-sm ${isWaiting ? "line-through" : ""}`}>{flag.message}</div>
+          <div className="text-[10px] text-muted mt-0.5">
+            {CLASS_LABELS[flag.flagClass]}
             {flag.date && ` · ${flag.date}`}
+            {flag.workOrderNumber && ` · WO: ${flag.workOrderNumber}`}
+          </div>
+          <div className="text-[10px] text-muted/70 mt-0.5 flex items-center gap-1">
+            <ArrowRight size={8} className="shrink-0" />
+            <span>{flag.resolution}</span>
           </div>
         </div>
       </button>
+
+      {flag.workOrderNumber && (
+        <button
+          onClick={(e) => { e.stopPropagation(); openSalesforce(flag.workOrderNumber!, ""); }}
+          className="p-1 rounded-md hover:bg-surface text-muted transition-colors shrink-0"
+          title="Open in rForce"
+        >
+          <ExternalLink size={12} />
+        </button>
+      )}
     </div>
   );
 }

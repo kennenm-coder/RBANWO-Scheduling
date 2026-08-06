@@ -39,7 +39,13 @@ export default function CalendarPage() {
   const flagCount = useMemo(() => {
     const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks);
     const resolvedKeys = new Set(flagResolutions.map((r) => r.flag_key));
-    return allFlags.filter((f) => !resolvedKeys.has(f.id)).length;
+    // Apply resolutions to get correct states, then count only actionable
+    const withState = allFlags.map((f) => {
+      if (f.autoClears) return f;
+      if (resolvedKeys.has(f.id)) return { ...f, state: "waiting_for_import" as const };
+      return f;
+    });
+    return withState.filter((f) => f.state === "open" && f.severity !== "info").length;
   }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions]);
 
   const initializedRef = useRef(false);

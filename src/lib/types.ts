@@ -286,6 +286,86 @@ export interface FlagResolution {
   notes: string | null;
 }
 
+// ── Flag System (three-class lifecycle) ──
+
+export type FlagClass = "live_app" | "external_confirmation" | "workflow";
+
+export type FlagState = "open" | "waiting_for_import" | "resolved" | "snoozed" | "superseded";
+
+export type FlagCode =
+  // Live app issues (auto-clear)
+  | "double_booking"
+  | "time_off_conflict"
+  | "availability_conflict"
+  | "invalid_resource_type"
+  | "missing_crew"
+  | "missing_scheduled_date"
+  | "missing_time"
+  | "invalid_time_range"
+  | "overlapping_multi_block"
+  | "missing_address"
+  | "duplicate_app_appointment"
+  // External confirmation issues
+  | "date_mismatch"
+  | "time_mismatch"
+  | "resource_mismatch"
+  | "type_mismatch"
+  | "rforce_cancellation_mismatch"
+  | "manual_override_active"
+  // Workflow/data-integrity issues
+  | "unlinked_appointment"
+  | "duplicate_link"
+  | "unmapped_resource"
+  | "source_record_missing";
+
+export type FlagSeverity = "error" | "warning" | "info";
+
+export interface FlagFingerprint {
+  appointmentId?: string;
+  workOrderNumber?: string;
+  flagCode: FlagCode;
+  affectedField?: string;
+  appValue?: string;
+  importedValue?: string;
+}
+
+export interface SchedulingFlag {
+  /** Stable identity: hash of fingerprint */
+  id: string;
+  /** The fingerprint components used to build the id */
+  fingerprint: FlagFingerprint;
+  /** Which of the three classes this flag belongs to */
+  flagClass: FlagClass;
+  /** Current lifecycle state */
+  state: FlagState;
+  /** The flag code (machine-readable type) */
+  code: FlagCode;
+  /** Severity for display */
+  severity: FlagSeverity;
+  /** Human-readable description of the issue */
+  message: string;
+  /** What action will resolve this flag */
+  resolution: string;
+  /** Whether this flag auto-clears (live_app) or needs acknowledgment (external/workflow) */
+  autoClears: boolean;
+  /** Whether a "waiting for import" checkbox is available */
+  canAcknowledge: boolean;
+  // ── Context ──
+  appointmentId?: string;
+  crewId?: string;
+  date?: string;
+  workOrderNumber?: string;
+  /** For external confirmation: the difference details */
+  differences?: FlagDifferences;
+}
+
+export interface FlagDifferences {
+  date?: { app: string; rforce: string };
+  time?: { app: string; rforce: string };
+  crew?: { app: string; rforce: string };
+  type?: { app: string; rforce: string };
+}
+
 export type RForceDisplayMode = "approval" | "discrepancy" | "synced" | "regular" | "merge_suggested";
 
 export interface RForceDisplayItem {
