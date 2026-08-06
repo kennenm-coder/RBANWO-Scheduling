@@ -430,6 +430,17 @@ export function getRForceDisplayItems(
     dismissalKeys.add(`${d.work_order_number}|${d.rforce_date}`);
   }
 
+  // Build a set of work_order_numbers that already have an active app appointment.
+  // This catches approved orders even when the link INSERT failed (e.g. RLS).
+  const linkedWOs = new Set<string>();
+  const apptByWO = new Map<string, Appointment>();
+  for (const a of appointments) {
+    if (a.work_order_number && a.status !== "cancelled") {
+      linkedWOs.add(a.work_order_number);
+      apptByWO.set(a.work_order_number, a);
+    }
+  }
+
   const items: RForceDisplayItem[] = [];
 
   for (const rf of rforceOrders) {
@@ -457,6 +468,19 @@ export function getRForceDisplayItems(
       const appt = apptsById.get(link.appointment_id);
       if (!appt) continue;
 
+      const diffs = compareLinkedPair(appt, rf, crews, mappings);
+      const displayMode: RForceDisplayMode = diffs ? "discrepancy" : "synced";
+      items.push({
+        rforceOrder: rf,
+        crewId: crew.id,
+        timeBlock,
+        displayMode,
+        linkedAppointment: appt,
+        differences: diffs || undefined,
+      });
+    } else if (linkedWOs.has(rf.work_order_number)) {
+      // Matched by work_order_number — treat as synced (or discrepancy)
+      const appt = apptByWO.get(rf.work_order_number)!;
       const diffs = compareLinkedPair(appt, rf, crews, mappings);
       const displayMode: RForceDisplayMode = diffs ? "discrepancy" : "synced";
       items.push({

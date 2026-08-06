@@ -232,9 +232,6 @@ export default function ScheduleModal({
           status: "scheduled",
           reschedule_reason: null,
           scheduled_by: null,
-          manual_override: false,
-          override_source: null,
-          time_block_end: null,
         });
       }
       onClose();

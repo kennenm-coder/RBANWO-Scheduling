@@ -66,9 +66,9 @@ export interface Appointment {
   end_time: string;
   duration_days: number;
   time_block: TimeBlock | null;
-  time_block_end: TimeBlock | null;
-  manual_override: boolean;
-  override_source: { crew_name?: string; scheduled_date?: string; time_block?: string } | null;
+  time_block_end?: TimeBlock | null;
+  manual_override?: boolean;
+  override_source?: { crew_name?: string; scheduled_date?: string; time_block?: string } | null;
   status: AppointmentStatus;
   notes: string | null;
   reschedule_reason: string | null;
