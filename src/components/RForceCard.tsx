@@ -2,16 +2,17 @@
 
 import { RForceOrder, Crew } from "@/lib/types";
 import { parseCity } from "@/lib/crew-utils";
-import { MapPin, AlertTriangle } from "lucide-react";
+import { MapPin, AlertTriangle, Check } from "lucide-react";
 
 interface Props {
   order: RForceOrder;
   crew?: Crew;
   compact?: boolean;
+  isSynced?: boolean;
   onClick?: () => void;
 }
 
-export default function RForceCard({ order, crew, compact, onClick }: Props) {
+export default function RForceCard({ order, crew, compact, isSynced, onClick }: Props) {
   const borderColor = crew?.color || "#888";
   const city = parseCity(order.address || "");
   const hasAlerts = !!(order.order_alerts || order.scheduler_notes);
@@ -19,7 +20,9 @@ export default function RForceCard({ order, crew, compact, onClick }: Props) {
   return (
     <div
       onClick={onClick}
-      className="rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-xs leading-tight overflow-hidden border-2 border-dashed"
+      className={`rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-xs leading-tight overflow-hidden border-2 ${
+        isSynced ? "border-solid opacity-60" : "border-dashed"
+      }`}
       style={{ borderColor, backgroundColor: `${borderColor}15` }}
     >
       {hasAlerts && (
@@ -31,10 +34,13 @@ export default function RForceCard({ order, crew, compact, onClick }: Props) {
       <div className="font-semibold truncate flex items-center gap-1 text-foreground">
         {order.customer_name || "Unknown"}
         <span
-          className="text-[9px] font-normal ml-auto shrink-0 px-1 rounded"
-          style={{ backgroundColor: `${borderColor}30`, color: borderColor }}
+          className={`text-[9px] font-normal ml-auto shrink-0 px-1 rounded flex items-center gap-0.5 ${
+            isSynced ? "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300" : ""
+          }`}
+          style={isSynced ? undefined : { backgroundColor: `${borderColor}30`, color: borderColor }}
         >
-          rForce
+          {isSynced && <Check size={8} />}
+          {isSynced ? "rF ✓" : "rForce"}
         </span>
       </div>
       {order.account_name && (

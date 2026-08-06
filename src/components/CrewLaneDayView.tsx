@@ -658,9 +658,8 @@ function CrewSection({
               const crewItems = rforceDisplayItems.filter((r) => r.crewId === crew.id);
               const crewApprovals = crewItems.filter((r) => r.displayMode === "approval");
               const crewDiscrepancies = crewItems.filter((r) => r.displayMode === "discrepancy");
-              // Only show unlinked rForce tiles — synced items duplicate the app tile
               const crewRForceVisible = crewItems.filter((r) =>
-                r.displayMode === "regular"
+                r.displayMode === "regular" || r.displayMode === "synced"
               );
               const avail = getCrewAvailability(crew.id, date, availabilityRules, availabilityExceptions);
               const crewUnavailable = !avail.available;
@@ -788,6 +787,7 @@ function CrewSection({
                                 order={rf.rforceOrder}
                                 crew={crew}
                                 compact={false}
+                                isSynced={rf.displayMode === "synced"}
                                 onClick={() => onRForceClick(rf.rforceOrder, crew, rf)}
                               />
                             </div>
