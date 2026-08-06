@@ -1,36 +1,21 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 import { Loader2 } from "lucide-react";
 
-/** Public routes that don't require authentication. */
-const PUBLIC_PATHS = new Set(["/login"]);
-
 /**
- * Wraps children with an auth gate.
- * - While loading the session: shows a spinner
- * - If not authenticated: redirects to /login
- * - If authenticated: renders children
+ * Soft auth gate — shows a loading spinner while the session initialises,
+ * then always renders children regardless of auth state.
+ *
+ * When we're ready to enforce login, flip ENFORCE_AUTH to true (or replace
+ * this component with the hard-gate version that redirects to /login).
  */
+const ENFORCE_AUTH = false;
+
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
+  const { loading } = useAuth();
 
-  const isPublic = PUBLIC_PATHS.has(pathname);
-
-  useEffect(() => {
-    if (!loading && !user && !isPublic) {
-      router.replace("/login");
-    }
-  }, [loading, user, isPublic, router]);
-
-  // Already on a public page — always render
-  if (isPublic) return <>{children}</>;
-
-  // Still loading — show spinner
+  // Still loading the session — brief spinner so the UI doesn't flash
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center min-h-[60vh]">
@@ -42,8 +27,9 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
     );
   }
 
-  // Not authenticated — render nothing while redirect fires
-  if (!user) return null;
+  // Soft gate: always render children (auth enforcement is off for now)
+  if (!ENFORCE_AUTH) return <>{children}</>;
 
+  // Hard gate path (currently unreachable) — left for future activation
   return <>{children}</>;
 }
