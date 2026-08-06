@@ -5,7 +5,7 @@ import { useEffect, useState, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
-import { geocodeFastZip, geocodeBatch, GeoResult } from "@/lib/geocode";
+import { geocodeFastZip, geocodeBatch, GeoResult, GeoPrecision } from "@/lib/geocode";
 import { getRForceItemsForDay } from "@/lib/calendar-utils";
 import { getAppointmentsForCrewAndDay } from "@/lib/calendar-utils";
 import { mapsHref } from "@/lib/salesforce";
@@ -13,17 +13,21 @@ import { Crew } from "@/lib/types";
 import { format } from "date-fns";
 import { Loader2, Navigation } from "lucide-react";
 
-function crewMarkerIcon(color: string, label?: string | number): L.DivIcon {
+function crewMarkerIcon(color: string, label?: string | number, precision?: GeoPrecision): L.DivIcon {
+  const isApproximate = precision === "zip" || precision === "unknown";
   const text = label != null ? `<span style="
-    color:#fff;font-size:10px;font-weight:700;
-    line-height:22px;text-shadow:0 1px 2px rgba(0,0,0,0.4);
+    color:${isApproximate ? "#666" : "#fff"};font-size:10px;font-weight:700;
+    line-height:22px;text-shadow:0 1px 2px rgba(0,0,0,${isApproximate ? "0.15" : "0.4"});
   ">${label}</span>` : "";
+  const border = isApproximate
+    ? `border:2px dashed ${color};background:${color}33`
+    : `border:2px solid white;background:${color}`;
   return L.divIcon({
     className: "",
     html: `<div style="
       width:22px;height:22px;border-radius:50%;
-      background:${color};border:2px solid white;
-      box-shadow:0 2px 4px rgba(0,0,0,0.3);
+      ${border};
+      box-shadow:0 2px 4px rgba(0,0,0,${isApproximate ? "0.15" : "0.3"});
       display:flex;align-items:center;justify-content:center;
     ">${text}</div>`,
     iconSize: [22, 22],
@@ -73,7 +77,7 @@ export default function SectionMap({ date, crews }: Props) {
 
   const dayAppointments = useMemo(() => {
     return appointments.filter(
-      (a) => a.scheduled_date === dateStr && a.status !== "cancelled" && crewIds.has(a.crew_id)
+      (a) => a.scheduled_date === dateStr && a.status !== "cancelled" && a.crew_id != null && crewIds.has(a.crew_id)
     );
   }, [appointments, dateStr, crewIds]);
 
@@ -216,7 +220,7 @@ export default function SectionMap({ date, crews }: Props) {
           <Marker
             key={m.id}
             position={[m.geo.lat, m.geo.lng]}
-            icon={crewMarkerIcon(m.crewColor, crewOrder.get(m.id))}
+            icon={crewMarkerIcon(m.crewColor, crewOrder.get(m.id), m.geo.precision)}
           >
             <Popup>
               <div className="text-xs min-w-[160px]">

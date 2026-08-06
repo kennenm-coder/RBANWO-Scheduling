@@ -32,9 +32,11 @@ import {
   fetchResourceMappings,
   fetchDismissals,
   fetchFlagResolutions,
+  fetchUnscheduledAppointments,
   createAppointment as createApptInDb,
   updateAppointment as updateApptInDb,
   cancelAppointment as cancelApptInDb,
+  unscheduleAppointment as unscheduleApptInDb,
   createTimeOffRequest as createTimeOffInDb,
   deleteTimeOffRequest as deleteTimeOffInDb,
   approveRForceOrder as approveRForceInDb,
@@ -42,12 +44,14 @@ import {
   resolveFlag as resolveFlagInDb,
   unresolveFlag as unresolveFlagInDb,
 } from "@/lib/store";
+import { mergeRForceIntoAppointment as mergeInDb, MergeResult } from "@/lib/merge";
 import { subscribeToAppointments } from "@/lib/realtime";
 import { addDays, subDays, format } from "date-fns";
 
 interface DataContextValue {
   crews: Crew[];
   appointments: Appointment[];
+  unscheduledAppointments: Appointment[];
   rforceOrders: RForceOrder[];
   timeOffRequests: TimeOffRequest[];
   availabilityRules: AvailabilityRule[];
@@ -71,6 +75,15 @@ interface DataContextValue {
     version: number,
     reason?: string
   ) => Promise<void>;
+  unscheduleAppointment: (
+    id: string,
+    version: number,
+    reason?: string
+  ) => Promise<void>;
+  mergeRForce: (
+    appointment: Appointment,
+    rforceOrder: RForceOrder
+  ) => Promise<MergeResult>;
   approveRForce: (
     rforceOrder: RForceOrder,
     crewId: string,
@@ -102,6 +115,7 @@ export function useData(): DataContextValue {
 export default function DataProvider({ children }: { children: ReactNode }) {
   const [crews, setCrews] = useState<Crew[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [unscheduledAppointments, setUnscheduledAppointments] = useState<Appointment[]>([]);
   const [rforceOrders, setRforceOrders] = useState<RForceOrder[]>([]);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const [availabilityRules, setAvailabilityRules] = useState<AvailabilityRule[]>([]);
@@ -115,40 +129,46 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
 
   const loadData = useCallback(async () => {
-    const today = new Date();
-    const start = format(subDays(today, 30), "yyyy-MM-dd");
-    const end = format(addDays(today, 180), "yyyy-MM-dd");
+    try {
+      const today = new Date();
+      const start = format(subDays(today, 30), "yyyy-MM-dd");
+      const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-    const [c, a, r, t, av, links, rm, dism, flagRes] = await Promise.all([
-      fetchCrews(),
-      fetchAppointments(start, end),
-      fetchRForceOrders(),
-      fetchTimeOffRequests(),
-      fetchAvailabilityRules(),
-      fetchActiveLinks(),
-      fetchResourceMappings(),
-      fetchDismissals(),
-      fetchFlagResolutions(),
-    ]);
+      const [c, a, r, t, av, links, rm, dism, flagRes, unsched] = await Promise.all([
+        fetchCrews(),
+        fetchAppointments(start, end),
+        fetchRForceOrders(),
+        fetchTimeOffRequests(),
+        fetchAvailabilityRules(),
+        fetchActiveLinks(),
+        fetchResourceMappings(),
+        fetchDismissals().catch(() => [] as RForceDismissal[]),
+        fetchFlagResolutions().catch(() => [] as FlagResolution[]),
+        fetchUnscheduledAppointments(),
+      ]);
 
-    setCrews(c);
-    setAppointments(a);
-    setRforceOrders(r);
-    setTimeOffRequests(t);
-    setAvailabilityRules(av.rules);
-    setAvailabilityExceptions(av.exceptions);
-    setActiveLinks(links);
-    setResourceMappings(rm);
-    setDismissals(dism);
-    setFlagResolutions(flagRes);
-    loadedRangeRef.current = { start, end };
-    setLoading(false);
+      setCrews(c);
+      setAppointments(a);
+      setRforceOrders(r);
+      setTimeOffRequests(t);
+      setAvailabilityRules(av.rules);
+      setAvailabilityExceptions(av.exceptions);
+      setActiveLinks(links);
+      setResourceMappings(rm);
+      setDismissals(dism);
+      setFlagResolutions(flagRes);
+      setUnscheduledAppointments(unsched);
+      loadedRangeRef.current = { start, end };
+    } catch (err) {
+      console.error("Failed to load data:", err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const ensureDateRange = useCallback(
     (date: Date) => {
       if (!loadedRangeRef.current) return;
-      const dateStr = format(date, "yyyy-MM-dd");
       const margin = format(addDays(date, 14), "yyyy-MM-dd");
       const marginBefore = format(subDays(date, 14), "yyyy-MM-dd");
       const { start, end } = loadedRangeRef.current;
@@ -168,22 +188,38 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     loadData();
   }, [loadData]);
 
+  // Realtime: route appointments to scheduled or unscheduled lists
   useEffect(() => {
     const unsub = subscribeToAppointments((event, appt) => {
       setConnected(true);
-      setAppointments((prev) => {
-        switch (event) {
-          case "INSERT":
-            if (prev.find((a) => a.id === appt.id)) return prev;
-            return [...prev, appt];
-          case "UPDATE":
+
+      if (appt.status === "unscheduled") {
+        // Route to unscheduled list, remove from scheduled
+        setAppointments((prev) => prev.filter((a) => a.id !== appt.id));
+        setUnscheduledAppointments((prev) => {
+          if (prev.find((a) => a.id === appt.id))
             return prev.map((a) => (a.id === appt.id ? appt : a));
-          case "DELETE":
-            return prev.filter((a) => a.id !== appt.id);
-          default:
-            return prev;
-        }
-      });
+          return [...prev, appt];
+        });
+      } else {
+        // Route to scheduled list, remove from unscheduled
+        setUnscheduledAppointments((prev) =>
+          prev.filter((a) => a.id !== appt.id)
+        );
+        setAppointments((prev) => {
+          switch (event) {
+            case "INSERT":
+              if (prev.find((a) => a.id === appt.id)) return prev;
+              return [...prev, appt];
+            case "UPDATE":
+              return prev.map((a) => (a.id === appt.id ? appt : a));
+            case "DELETE":
+              return prev.filter((a) => a.id !== appt.id);
+            default:
+              return prev;
+          }
+        });
+      }
     });
     setConnected(true);
     return unsub;
@@ -195,10 +231,14 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     ) => {
       const result = await createApptInDb(appt);
       if (result) {
-        setAppointments((prev) => {
-          if (prev.find((a) => a.id === result.id)) return prev;
-          return [...prev, result];
-        });
+        if (result.status === "unscheduled") {
+          setUnscheduledAppointments((prev) => [...prev, result]);
+        } else {
+          setAppointments((prev) => {
+            if (prev.find((a) => a.id === result.id)) return prev;
+            return [...prev, result];
+          });
+        }
       }
       return result;
     },
@@ -209,9 +249,23 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     async (id: string, version: number, updates: Partial<Appointment>) => {
       const result = await updateApptInDb(id, version, updates);
       if (result) {
-        setAppointments((prev) =>
-          prev.map((a) => (a.id === result.id ? result : a))
-        );
+        if (result.status === "unscheduled") {
+          // Moved to unscheduled
+          setAppointments((prev) => prev.filter((a) => a.id !== id));
+          setUnscheduledAppointments((prev) => {
+            if (prev.find((a) => a.id === result.id))
+              return prev.map((a) => (a.id === result.id ? result : a));
+            return [...prev, result];
+          });
+        } else {
+          // Scheduled: ensure in calendar list, remove from unscheduled
+          setUnscheduledAppointments((prev) =>
+            prev.filter((a) => a.id !== id)
+          );
+          setAppointments((prev) =>
+            prev.map((a) => (a.id === result.id ? result : a))
+          );
+        }
       }
       return result;
     },
@@ -226,6 +280,36 @@ export default function DataProvider({ children }: { children: ReactNode }) {
           a.id === id ? { ...a, status: "cancelled" as const } : a
         )
       );
+    },
+    []
+  );
+
+  const handleUnschedule = useCallback(
+    async (id: string, version: number, reason?: string) => {
+      const result = await unscheduleApptInDb(id, version, reason);
+      if (result) {
+        // Remove from calendar
+        setAppointments((prev) => prev.filter((a) => a.id !== id));
+        // Add to unscheduled
+        setUnscheduledAppointments((prev) => [...prev, result]);
+      }
+    },
+    []
+  );
+
+  const handleMerge = useCallback(
+    async (appointment: Appointment, rforceOrder: RForceOrder) => {
+      const result = await mergeInDb(appointment, rforceOrder);
+      // Update the appointment in local state
+      setAppointments((prev) =>
+        prev.map((a) =>
+          a.id === result.appointment.id ? result.appointment : a
+        )
+      );
+      if (result.link) {
+        setActiveLinks((prev) => [...prev, result.link!]);
+      }
+      return result;
     },
     []
   );
@@ -317,6 +401,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       value={{
         crews,
         appointments,
+        unscheduledAppointments,
         rforceOrders,
         timeOffRequests,
         availabilityRules,
@@ -330,6 +415,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         createAppointment: handleCreate,
         updateAppointment: handleUpdate,
         cancelAppointment: handleCancel,
+        unscheduleAppointment: handleUnschedule,
+        mergeRForce: handleMerge,
         approveRForce: handleApproveRForce,
         dismissRForce: handleDismissRForce,
         resolveFlag: handleResolveFlag,

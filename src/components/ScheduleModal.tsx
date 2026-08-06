@@ -232,6 +232,7 @@ export default function ScheduleModal({
           status: "scheduled",
           reschedule_reason: null,
           scheduled_by: null,
+          merge_source_wo: null,
         });
       }
       onClose();

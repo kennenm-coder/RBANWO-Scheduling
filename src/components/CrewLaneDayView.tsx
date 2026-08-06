@@ -29,7 +29,7 @@ import RForceDetailSheet from "./RForceDetailSheet";
 import { Plus, Palmtree, MapPinned, Ban } from "lucide-react";
 import { format } from "date-fns";
 import { getCrewAvailability, CrewDayAvailability } from "@/lib/availability";
-import { getDraggedAppointment, setDraggedAppointment } from "@/lib/drag-context";
+import { getDraggedAppointment, setDraggedAppointment, getDraggedOrder, setDraggedOrder } from "@/lib/drag-context";
 import { timeBlockStartEnd } from "@/lib/calendar-utils";
 import { updateAppointment as updateApptInDb, createAppointmentEvent } from "@/lib/store";
 import { getEligibleCrews } from "@/lib/crew-utils";
@@ -60,6 +60,7 @@ export default function CrewLaneDayView({
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
     block: TimeBlock;
+    prefill?: RForceOrder;
   } | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
@@ -228,6 +229,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
 
@@ -252,6 +254,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
 
@@ -277,6 +280,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
       {(filterType === "all" || filterType === "install") &&
@@ -300,6 +304,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
       {(filterType === "all" || filterType === "install") &&
@@ -323,6 +328,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
 
@@ -348,6 +354,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
       {(filterType === "all" || filterType === "service") &&
@@ -371,6 +378,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
 
@@ -396,6 +404,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
       {(filterType === "all" || filterType === "jip") &&
@@ -419,6 +428,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
       {(filterType === "all" || filterType === "jip") &&
@@ -442,6 +452,7 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
         )}
 
@@ -465,6 +476,7 @@ export default function CrewLaneDayView({
           date={date}
           crewId={scheduleTarget.crewId}
           timeBlock={scheduleTarget.block}
+          prefill={scheduleTarget.prefill}
           onClose={() => setScheduleTarget(null)}
         />
       )}
@@ -562,6 +574,7 @@ function CrewSection({
   onApproveRForce,
   onDismissRForce,
   onAppointmentDrop,
+  onQueueDrop,
 }: {
   title: string;
   crews: Crew[];
@@ -579,6 +592,7 @@ function CrewSection({
   onApproveRForce: (rforceOrder: RForceOrder, crewId: string, timeBlock: TimeBlock, scheduledDate: string) => Promise<Appointment | null>;
   onDismissRForce: (workOrderNumber: string, rforceDate: string, rforceStartTime?: string) => Promise<void>;
   onAppointmentDrop?: (appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) => void;
+  onQueueDrop?: (order: RForceOrder, crewId: string) => void;
 }) {
   const [showMap, setShowMap] = useState(false);
   const [dragOverCrewId, setDragOverCrewId] = useState<string | null>(null);
@@ -659,7 +673,8 @@ function CrewSection({
 
               function handleRowDragOver(e: React.DragEvent) {
                 const dragged = getDraggedAppointment();
-                if (!dragged) return;
+                const order = getDraggedOrder();
+                if (!dragged && !order) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
                 if (dragOverCrewId !== crew.id) setDragOverCrewId(crew.id);
@@ -671,31 +686,39 @@ function CrewSection({
                 e.preventDefault();
                 setDragOverCrewId(null);
                 const dragged = getDraggedAppointment();
-                if (!dragged) return;
+                if (dragged) {
+                  // Calculate drop time from mouse X position on the timeline
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+                  const dropHour = TIMELINE_START + (xPct / 100) * TIMELINE_HOURS;
 
-                // Calculate drop time from mouse X position on the timeline
-                const rect = e.currentTarget.getBoundingClientRect();
-                const xPct = ((e.clientX - rect.left) / rect.width) * 100;
-                const dropHour = TIMELINE_START + (xPct / 100) * TIMELINE_HOURS;
+                  // Snap to nearest half-hour
+                  const snappedHour = Math.round(dropHour * 2) / 2;
+                  const h = Math.floor(snappedHour);
+                  const m = (snappedHour - h) * 60;
+                  const startTime = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 
-                // Snap to nearest half-hour
-                const snappedHour = Math.round(dropHour * 2) / 2;
-                const h = Math.floor(snappedHour);
-                const m = (snappedHour - h) * 60;
-                const startTime = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+                  // Keep original duration
+                  const origAppt = dragged.appointment;
+                  const [origSH, origSM] = (origAppt.start_time || "08:00").split(":").map(Number);
+                  const [origEH, origEM] = (origAppt.end_time || "16:00").split(":").map(Number);
+                  const durationMins = (origEH * 60 + origEM) - (origSH * 60 + origSM);
+                  const endMins = h * 60 + m + durationMins;
+                  const eH = Math.floor(endMins / 60);
+                  const eM = endMins % 60;
+                  const endTime = `${String(Math.min(eH, 23)).padStart(2, "0")}:${String(eM).padStart(2, "0")}`;
 
-                // Keep original duration
-                const origAppt = dragged.appointment;
-                const [origSH, origSM] = (origAppt.start_time || "08:00").split(":").map(Number);
-                const [origEH, origEM] = (origAppt.end_time || "16:00").split(":").map(Number);
-                const durationMins = (origEH * 60 + origEM) - (origSH * 60 + origSM);
-                const endMins = h * 60 + m + durationMins;
-                const eH = Math.floor(endMins / 60);
-                const eM = endMins % 60;
-                const endTime = `${String(Math.min(eH, 23)).padStart(2, "0")}:${String(eM).padStart(2, "0")}`;
+                  onAppointmentDrop?.(dragged.appointment.id, crew.id, startTime, endTime);
+                  setDraggedAppointment(null);
+                  return;
+                }
 
-                onAppointmentDrop?.(dragged.appointment.id, crew.id, startTime, endTime);
-                setDraggedAppointment(null);
+                // Queue item drop — open ScheduleModal prefilled with rForce order
+                const order = getDraggedOrder();
+                if (order) {
+                  onQueueDrop?.(order, crew.id);
+                  setDraggedOrder(null);
+                }
               }
 
               function renderGridlines() {

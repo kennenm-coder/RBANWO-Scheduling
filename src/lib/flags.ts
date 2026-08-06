@@ -58,6 +58,9 @@ export function detectFlags(
   const activeAppts = appointments.filter((a) => a.status !== "cancelled");
 
   for (const appt of activeAppts) {
+    // Skip unscheduled appointments — they have no crew/date/time to check
+    if (appt.status === "unscheduled" || !appt.scheduled_date || !appt.crew_id) continue;
+
     const crew = crews.find((c) => c.id === appt.crew_id);
     const crewName = crew?.name || "Unknown";
 
@@ -137,7 +140,7 @@ export function detectFlags(
     const linked = activeAppts.find(
       (a) => a.work_order_number === rf.work_order_number
     );
-    if (!linked) continue;
+    if (!linked || !linked.scheduled_date || !linked.crew_id) continue;
 
     const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
     const linkedCrew = crews.find((c) => c.id === linked.crew_id);
@@ -160,7 +163,9 @@ export function detectFlags(
     const appTimeBlock = linked.time_block;
 
     // Direct start_time comparison (primary — catches day-view drags)
-    const startTimeMismatch = !!(appStartTime && rforceTime && appStartTime !== rforceTime);
+    // Normalize to HH:MM for comparison (DB may store HH:MM:SS)
+    const appTimeNorm = appStartTime?.slice(0, 5);
+    const startTimeMismatch = !!(appTimeNorm && rforceTime && appTimeNorm !== rforceTime);
 
     // Time block comparison (fallback for measure techs with block-based scheduling)
     const expectedHour = appTimeBlock ? TIME_BLOCK_HOUR[appTimeBlock] : null;

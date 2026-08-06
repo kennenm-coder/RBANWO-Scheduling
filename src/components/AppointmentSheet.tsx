@@ -21,6 +21,7 @@ import {
   AlertTriangle,
   MessageSquare,
   Save,
+  Undo2,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import EventHistory from "./EventHistory";
@@ -40,11 +41,12 @@ export default function AppointmentSheet({
   onReschedule,
   onFlag,
 }: Props) {
-  const { crews, rforceOrders, activeLinks, cancelAppointment, updateAppointment, refreshData } = useData();
+  const { crews, rforceOrders, activeLinks, cancelAppointment, unscheduleAppointment, updateAppointment, refreshData } = useData();
   const [cancelling, setCancelling] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [restoring, setRestoring] = useState(false);
+  const [unscheduling, setUnscheduling] = useState(false);
 
   const activeLink = useMemo(() => {
     return activeLinks.find((l) => l.appointment_id === appointment.id) || null;
@@ -110,6 +112,18 @@ export default function AppointmentSheet({
     }
   };
 
+  const handleUnschedule = async () => {
+    setUnscheduling(true);
+    try {
+      await unscheduleAppointment(appointment.id, appointment.version);
+      onClose();
+    } catch {
+      alert("Failed to unschedule. The appointment may have been modified.");
+    } finally {
+      setUnscheduling(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       <div
@@ -170,7 +184,7 @@ export default function AppointmentSheet({
           </InfoRow>
 
           <InfoRow icon={<Calendar size={16} />} label="Date">
-            {appointment.scheduled_date}
+            {appointment.scheduled_date || "Unscheduled"}
             {appointment.duration_days > 1 &&
               ` (${appointment.duration_days} days)`}
           </InfoRow>
@@ -178,7 +192,9 @@ export default function AppointmentSheet({
           <InfoRow icon={<Clock size={16} />} label="Time">
             {appointment.time_block
               ? timeBlockLabel(appointment.time_block)
-              : `${appointment.start_time} – ${appointment.end_time}`}
+              : appointment.start_time && appointment.end_time
+                ? `${appointment.start_time} – ${appointment.end_time}`
+                : "Not set"}
           </InfoRow>
 
           <InfoRow icon={<MapPin size={16} />} label="Address">
@@ -372,6 +388,15 @@ export default function AppointmentSheet({
                     Flag
                   </button>
                 )}
+                <button
+                  onClick={handleUnschedule}
+                  disabled={unscheduling}
+                  className="px-3 py-1.5 border border-border rounded-lg text-xs hover:bg-surface flex items-center gap-1 disabled:opacity-50"
+                  title="Remove from calendar and return to queue"
+                >
+                  <Undo2 size={12} />
+                  {unscheduling ? "..." : "Unschedule"}
+                </button>
                 <div className="flex-1" />
                 <button
                   onClick={() => setShowCancelForm(true)}

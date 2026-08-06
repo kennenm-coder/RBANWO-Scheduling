@@ -19,7 +19,7 @@ export function searchAppointments(
   if (!query.trim()) return appointments;
   const crewMap = new Map(crews.map((c) => [c.id, c]));
   return appointments.filter((a) => {
-    const crew = crewMap.get(a.crew_id);
+    const crew = a.crew_id ? crewMap.get(a.crew_id) : undefined;
     return matchesQuery(
       [
         a.customer_name,

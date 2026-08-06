@@ -23,7 +23,8 @@ export type AppointmentStatus =
   | "in_progress"
   | "complete"
   | "cancelled"
-  | "rescheduled";
+  | "rescheduled"
+  | "unscheduled";
 
 export type TimeBlock =
   | "9-10"
@@ -53,7 +54,7 @@ export interface Crew {
 
 export interface Appointment {
   id: string;
-  crew_id: string;
+  crew_id: string | null;           // null when status='unscheduled'
   secondary_crew_id: string | null;
   tertiary_crew_id: string | null;
   appointment_type: AppointmentType;
@@ -61,9 +62,9 @@ export interface Appointment {
   work_order_number: string | null;
   customer_name: string;
   address: string;
-  scheduled_date: string;
-  start_time: string;
-  end_time: string;
+  scheduled_date: string | null;     // null when status='unscheduled'
+  start_time: string | null;         // null when status='unscheduled'
+  end_time: string | null;           // null when status='unscheduled'
   duration_days: number;
   time_block: TimeBlock | null;
   time_block_end?: TimeBlock | null;
@@ -75,6 +76,7 @@ export interface Appointment {
   product_count: number | null;
   salesforce_url: string | null;
   scheduled_by: string | null;
+  merge_source_wo: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -180,7 +182,9 @@ export type AppointmentEventAction =
   | "flagged"
   | "drag_moved"
   | "drag_resized"
-  | "approved_from_rforce";
+  | "approved_from_rforce"
+  | "unscheduled"
+  | "merged";
 
 export interface AppointmentEvent {
   id: string;
@@ -236,7 +240,7 @@ export interface AvailabilityException {
   created_at: string;
 }
 
-export type LinkMatchMethod = "wo_exact" | "manual" | "auto";
+export type LinkMatchMethod = "wo_exact" | "manual" | "auto" | "fuzzy";
 
 export interface AppointmentLink {
   id: string;
@@ -282,7 +286,7 @@ export interface FlagResolution {
   notes: string | null;
 }
 
-export type RForceDisplayMode = "approval" | "discrepancy" | "synced" | "regular";
+export type RForceDisplayMode = "approval" | "discrepancy" | "synced" | "regular" | "merge_suggested";
 
 export interface RForceDisplayItem {
   rforceOrder: RForceOrder;
@@ -291,4 +295,41 @@ export interface RForceDisplayItem {
   displayMode: RForceDisplayMode;
   linkedAppointment?: Appointment;
   differences?: ReconciliationDifferences;
+  fuzzyMatch?: FuzzyMatchCandidate;
+}
+
+// ── Fuzzy Matching ──
+
+export type MatchConfidence = "high" | "medium";
+
+export interface FuzzyMatchCandidate {
+  appointment: Appointment;
+  rforceOrder: RForceOrder;
+  confidence: MatchConfidence;
+  matchReasons: string[];
+  score: number;
+}
+
+// ── Queue Pipeline ──
+
+export type QueueItemCategory =
+  | "needs_confirmation"
+  | "merge_suggested"
+  | "unscheduled"
+  | "app_unscheduled"
+  | "discrepancy"
+  | "not_in_rforce";
+
+export interface QueueItem {
+  id: string;
+  category: QueueItemCategory;
+  rforceOrder?: RForceOrder;
+  appointment?: Appointment;
+  fuzzyMatch?: FuzzyMatchCandidate;
+  customerName: string;
+  address: string;
+  workOrderNumber?: string;
+  orderNumber?: string;
+  workOrderType?: string;
+  productCount?: number;
 }
