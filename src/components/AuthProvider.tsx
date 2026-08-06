@@ -27,6 +27,15 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+/** Shortcut for audit trail: returns actor_id and actor_name_snapshot for events. */
+export function useCurrentActor() {
+  const { user, displayName } = useAuth();
+  return {
+    actorId: user?.id ?? null,
+    actorName: user ? displayName : null,
+  };
+}
+
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);

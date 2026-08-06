@@ -46,6 +46,7 @@ import {
 } from "@/lib/store";
 import { mergeRForceIntoAppointment as mergeInDb, MergeResult } from "@/lib/merge";
 import { subscribeToAppointments } from "@/lib/realtime";
+import { useAuth } from "./AuthProvider";
 import { addDays, subDays, format } from "date-fns";
 
 interface DataContextValue {
@@ -113,6 +114,7 @@ export function useData(): DataContextValue {
 }
 
 export default function DataProvider({ children }: { children: ReactNode }) {
+  const { user, displayName } = useAuth();
   const [crews, setCrews] = useState<Crew[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [unscheduledAppointments, setUnscheduledAppointments] = useState<Appointment[]>([]);
@@ -340,7 +342,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       timeBlock: TimeBlock,
       scheduledDate: string
     ) => {
-      const result = await approveRForceInDb(rforceOrder, crewId, timeBlock, scheduledDate);
+      const result = await approveRForceInDb(rforceOrder, crewId, timeBlock, scheduledDate, user?.id, displayName);
       if (result) {
         setAppointments((prev) => {
           if (prev.find((a) => a.id === result.appointment.id)) return prev;

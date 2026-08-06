@@ -644,7 +644,9 @@ export async function approveRForceOrder(
   rforceOrder: RForceOrder,
   crewId: string,
   tb: TimeBlock,
-  scheduledDate: string
+  scheduledDate: string,
+  actorId?: string | null,
+  actorName?: string | null
 ): Promise<{ appointment: Appointment; link: AppointmentLink } | null> {
   const { start, end } = timeBlockStartEnd(tb);
   const appointmentType = (rforceOrder.work_order_type
@@ -675,7 +677,7 @@ export async function approveRForceOrder(
       reschedule_reason: null,
       product_count: rforceOrder.product_count ?? null,
       salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
-      scheduled_by: null,
+      scheduled_by: actorId || null,
       origin: "rforce_approved",
       sync_state: "linked_pending_confirmation",
     })
@@ -696,8 +698,8 @@ export async function approveRForceOrder(
     await createAppointmentEvent({
       appointment_id: typedAppt.id,
       action: "created",
-      actor_id: null,
-      actor_name_snapshot: null,
+      actor_id: actorId || null,
+      actor_name_snapshot: actorName || null,
       before_state: null,
       after_state: { work_order_number: rforceOrder.work_order_number, source: "rforce_approval" },
       reason: "Approved from rForce import",

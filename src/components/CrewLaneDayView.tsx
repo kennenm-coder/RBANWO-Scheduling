@@ -26,6 +26,7 @@ import {
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
 import { onSchedulerEditedLinkedAppointment } from "@/lib/sync-transitions";
+import { useCurrentActor } from "./AuthProvider";
 import { crewHasType, sortByFirstName, getEligibleCrews } from "@/lib/crew-utils";
 import RForceDetailSheet from "./RForceDetailSheet";
 import { Palmtree, MapPinned, Ban } from "lucide-react";
@@ -55,6 +56,7 @@ export default function CrewLaneDayView({
     updateAppointment,
   } = useData();
   const { showToast } = useToast();
+  const { actorId, actorName } = useCurrentActor();
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
@@ -184,8 +186,8 @@ export default function CrewLaneDayView({
       createAppointmentEvent({
         appointment_id: appt.id,
         action: "drag_moved",
-        actor_id: null,
-        actor_name_snapshot: null,
+        actor_id: actorId,
+        actor_name_snapshot: actorName,
         before_state: { crew_id: appt.crew_id, start_time: appt.start_time, end_time: appt.end_time },
         after_state: { crew_id: targetCrewId, start_time: startTime || appt.start_time, end_time: endTime || appt.end_time },
         reason: null,

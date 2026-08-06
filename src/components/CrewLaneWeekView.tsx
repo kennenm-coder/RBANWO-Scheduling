@@ -28,6 +28,7 @@ import {
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
 import { onSchedulerEditedLinkedAppointment } from "@/lib/sync-transitions";
+import { useCurrentActor } from "./AuthProvider";
 import { getDepartmentSections, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType, getEligibleCrews } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences } from "@/lib/preferences";
@@ -67,6 +68,7 @@ export default function CrewLaneWeekView({
     approveRForce, dismissRForce,
   } = useData();
   const { showToast } = useToast();
+  const { actorId, actorName } = useCurrentActor();
 
   const days = getWeekDays(currentDate);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
@@ -245,8 +247,8 @@ export default function CrewLaneWeekView({
       createAppointmentEvent({
         appointment_id: appt.id,
         action: "drag_moved",
-        actor_id: null,
-        actor_name_snapshot: null,
+        actor_id: actorId,
+        actor_name_snapshot: actorName,
         before_state: { crew_id: appt.crew_id, scheduled_date: appt.scheduled_date, time_block: appt.time_block },
         after_state: { crew_id: targetCrewId, scheduled_date: targetDate, time_block: targetTimeBlock },
         reason: null,
@@ -305,8 +307,8 @@ export default function CrewLaneWeekView({
       createAppointmentEvent({
         appointment_id: appt.id,
         action: "drag_resized",
-        actor_id: null,
-        actor_name_snapshot: null,
+        actor_id: actorId,
+        actor_name_snapshot: actorName,
         before_state: { time_block: appt.time_block, time_block_end: appt.time_block_end },
         after_state: { time_block: appt.time_block, time_block_end: newEnd },
         reason: null,
