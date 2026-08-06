@@ -696,11 +696,13 @@ export async function approveRForceOrder(
       }
     }
     // If RPC failed (function doesn't exist yet), fall through to multi-step
-  } catch {
-    // RPC not available — fall through to multi-step approach
+  } catch (rpcCatchErr) {
+    // RPC function doesn't exist yet — fall through to multi-step
   }
 
   // Fallback: multi-step (for backwards compatibility before migration runs)
+  // Note: origin/sync_state columns may not exist yet if Phase 2a migration
+  // hasn't been applied. Insert core fields only, then try sync fields separately.
   const { data: appt, error } = await sb
     .from("sched_appointments")
     .insert({
@@ -723,14 +725,25 @@ export async function approveRForceOrder(
       product_count: rforceOrder.product_count ?? null,
       salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
       scheduled_by: actorId || null,
-      origin: "rforce_approved",
-      sync_state: "linked_pending_confirmation",
     })
     .select()
     .single();
 
-  if (error || !appt) return null;
+  if (error || !appt) {
+    console.error("[approve] Fallback INSERT failed:", error?.message);
+    return null;
+  }
   const typedAppt = appt as Appointment;
+
+  // Try to set sync fields (non-fatal — columns may not exist yet)
+  try {
+    await updateSyncFields(typedAppt.id, {
+      origin: "rforce_approved",
+      sync_state: "linked_pending_confirmation",
+    });
+  } catch {
+    // Phase 2a migration not applied yet — safe to skip
+  }
 
   let link: AppointmentLink | null = null;
   try {
