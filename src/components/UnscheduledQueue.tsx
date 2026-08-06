@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useData } from "./DataProvider";
 import { buildQueueItems } from "@/lib/queue-pipeline";
 import { openSalesforce } from "@/lib/salesforce";
@@ -12,7 +12,20 @@ import {
   QueueItem,
   QueueItemCategory,
 } from "@/lib/types";
-import { parseCity } from "@/lib/crew-utils";
+import {
+  filterQueueItems,
+  sortQueueItems,
+  getCategoryCounts,
+  getActiveFilters,
+  getUniqueResources,
+  DEFAULT_FILTERS,
+  QueueFilterState,
+  SortOption,
+  SORT_OPTIONS,
+  DatePreset,
+} from "@/lib/queue-filters";
+import { getAvailableWoTypes, getWoTypeColor } from "@/lib/wo-type-colors";
+import { useQueueFilters } from "@/hooks/useQueueFilters";
 import {
   Calendar,
   ExternalLink,
@@ -29,8 +42,18 @@ import {
   GitMerge,
   Undo2,
   Loader2,
+  Filter,
+  ChevronDown,
+  ChevronUp,
+  SlidersHorizontal,
+  ArrowUpDown,
+  StickyNote,
+  AlertOctagon,
+  Info,
 } from "lucide-react";
 import { setDraggedOrder } from "@/lib/drag-context";
+
+// ── Category config (queue-status colors, separate from WO-type colors) ──
 
 const CATEGORY_CONFIG: Record<
   QueueItemCategory,
@@ -74,6 +97,16 @@ const CATEGORY_CONFIG: Record<
   },
 };
 
+const DATE_PRESETS: { value: DatePreset; label: string }[] = [
+  { value: "", label: "Any date" },
+  { value: "no_date", label: "No date" },
+  { value: "today", label: "Today" },
+  { value: "tomorrow", label: "Tomorrow" },
+  { value: "this_week", label: "This week" },
+  { value: "next_week", label: "Next week" },
+  { value: "overdue", label: "Overdue" },
+];
+
 export default function UnscheduledQueue() {
   const {
     rforceOrders,
@@ -85,13 +118,15 @@ export default function UnscheduledQueue() {
     resourceMappings,
     mergeRForce,
   } = useData();
-  const [filter, setFilter] = useState<QueueItemCategory | "all">("all");
-  const [searchQuery, setSearchQuery] = useState("");
+
+  const { filters, setFilters, resetFilters, isDefault } = useQueueFilters();
+  const [showMore, setShowMore] = useState(false);
   const [scheduleOrder, setScheduleOrder] = useState<RForceOrder | null>(null);
   const [linkRForceOrder, setLinkRForceOrder] = useState<RForceOrder | null>(null);
   const [linkAppointment, setLinkAppointment] = useState<Appointment | null>(null);
   const [mergingId, setMergingId] = useState<string | null>(null);
 
+  // Build the full unified queue
   const allItems = useMemo(
     () =>
       buildQueueItems(
@@ -106,28 +141,23 @@ export default function UnscheduledQueue() {
     [rforceOrders, appointments, unscheduledAppointments, crews, activeLinks, dismissals, resourceMappings]
   );
 
-  const preFiltered =
-    filter === "all" ? allItems : allItems.filter((i) => i.category === filter);
+  // Dynamic filter options derived from data
+  const woTypeOptions = useMemo(() => getAvailableWoTypes(allItems), [allItems]);
+  const resourceOptions = useMemo(() => getUniqueResources(allItems), [allItems]);
 
-  const filtered = searchQuery.trim()
-    ? preFiltered.filter((i) => {
-        const q = searchQuery.toLowerCase();
-        return (
-          i.customerName?.toLowerCase().includes(q) ||
-          i.workOrderNumber?.toLowerCase().includes(q) ||
-          i.orderNumber?.toLowerCase().includes(q) ||
-          i.address?.toLowerCase().includes(q) ||
-          i.workOrderType?.toLowerCase().includes(q)
-        );
-      })
-    : preFiltered;
+  // Apply filters + sort
+  const filtered = useMemo(() => {
+    const f = filterQueueItems(allItems, filters);
+    return sortQueueItems(f, filters.sortBy, filters.sortDir);
+  }, [allItems, filters]);
 
-  const counts = allItems.reduce(
-    (acc, i) => {
-      acc[i.category] = (acc[i.category] || 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>
+  // Category counts (respects other filters, not category itself)
+  const categoryCounts = useMemo(() => getCategoryCounts(allItems, filters), [allItems, filters]);
+
+  // Active filter chips
+  const activeFilters = useMemo(
+    () => getActiveFilters(filters, setFilters),
+    [filters, setFilters]
   );
 
   const handleMerge = async (item: QueueItem) => {
@@ -142,57 +172,282 @@ export default function UnscheduledQueue() {
     }
   };
 
+  const updateFilter = useCallback(
+    <K extends keyof QueueFilterState>(key: K, value: QueueFilterState[K]) => {
+      setFilters((f) => ({ ...f, [key]: value }));
+    },
+    [setFilters]
+  );
+
+  const toggleWoType = useCallback(
+    (type: string) => {
+      setFilters((f) => ({
+        ...f,
+        woTypes: f.woTypes.includes(type)
+          ? f.woTypes.filter((t) => t !== type)
+          : [...f.woTypes, type],
+      }));
+    },
+    [setFilters]
+  );
+
+  const toggleCategory = useCallback(
+    (cat: QueueItemCategory) => {
+      setFilters((f) => ({
+        ...f,
+        categories: f.categories.includes(cat)
+          ? f.categories.filter((c) => c !== cat)
+          : [...f.categories, cat],
+      }));
+    },
+    [setFilters]
+  );
+
   return (
-    <div className="flex-1 overflow-auto">
-      {/* Search bar */}
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* ── Search bar ── */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
         <div className="flex items-center gap-1.5 flex-1 bg-surface border border-border rounded-lg px-2.5 py-1.5">
           <Search size={13} className="text-muted shrink-0" />
           <input
             type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search queue..."
+            value={filters.search}
+            onChange={(e) => updateFilter("search", e.target.value)}
+            placeholder="Search name, WO#, address, city, ZIP, resource..."
             className="bg-transparent text-xs outline-none w-full"
           />
-          {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="p-0.5 text-muted hover:text-foreground">
+          {filters.search && (
+            <button onClick={() => updateFilter("search", "")} className="p-0.5 text-muted hover:text-foreground">
               <X size={10} />
             </button>
           )}
         </div>
-        {searchQuery && (
-          <span className="text-[10px] text-muted shrink-0">{filtered.length}</span>
+        {/* Sort */}
+        <select
+          value={filters.sortBy}
+          onChange={(e) => updateFilter("sortBy", e.target.value as SortOption)}
+          className="bg-surface border border-border rounded-md px-1.5 py-1 text-[10px] text-muted outline-none"
+          title="Sort by"
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* ── Primary filter row ── */}
+      <div className="px-3 py-1.5 border-b border-border space-y-1.5">
+        {/* WO type chips */}
+        <div className="flex items-center gap-1 overflow-x-auto">
+          <span className="text-[9px] text-muted font-medium shrink-0 mr-0.5">Type:</span>
+          {woTypeOptions.map((wt) => {
+            const color = getWoTypeColor(wt.value);
+            const active = filters.woTypes.includes(wt.value);
+            return (
+              <button
+                key={wt.value}
+                onClick={() => toggleWoType(wt.value)}
+                className={`px-2 py-0.5 rounded-full text-[9px] font-medium whitespace-nowrap transition-all border ${
+                  active
+                    ? `${color.bg} ${color.text} border-current`
+                    : "bg-surface text-muted border-transparent hover:border-border"
+                }`}
+              >
+                {wt.label} ({wt.count})
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Queue status chips */}
+        <div className="flex items-center gap-1 overflow-x-auto">
+          <span className="text-[9px] text-muted font-medium shrink-0 mr-0.5">Status:</span>
+          {(Object.keys(CATEGORY_CONFIG) as QueueItemCategory[]).map((key) => {
+            const count = categoryCounts[key] || 0;
+            const cfg = CATEGORY_CONFIG[key];
+            const active = filters.categories.includes(key);
+            return (
+              <button
+                key={key}
+                onClick={() => toggleCategory(key)}
+                className={`px-2 py-0.5 rounded-full text-[9px] font-medium whitespace-nowrap transition-all border ${
+                  active
+                    ? `${cfg.bg} ${cfg.color} border-current`
+                    : "bg-surface text-muted border-transparent hover:border-border"
+                }`}
+              >
+                {cfg.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Secondary row: resource, date, more */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Resource select */}
+          <select
+            value={filters.assignedResource}
+            onChange={(e) => updateFilter("assignedResource", e.target.value)}
+            className="bg-surface border border-border rounded-md px-1.5 py-0.5 text-[10px] text-muted outline-none max-w-[130px]"
+          >
+            <option value="">Any resource</option>
+            <option value="__unassigned__">Unassigned</option>
+            {resourceOptions.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+
+          {/* Date preset */}
+          <select
+            value={filters.datePreset}
+            onChange={(e) => updateFilter("datePreset", e.target.value as DatePreset)}
+            className="bg-surface border border-border rounded-md px-1.5 py-0.5 text-[10px] text-muted outline-none"
+          >
+            {DATE_PRESETS.map((d) => (
+              <option key={d.value} value={d.value}>{d.label}</option>
+            ))}
+          </select>
+
+          {/* More filters button */}
+          <button
+            onClick={() => setShowMore(!showMore)}
+            className={`flex items-center gap-0.5 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors ${
+              showMore ? "bg-primary/10 text-primary" : "bg-surface text-muted hover:bg-border"
+            }`}
+          >
+            <SlidersHorizontal size={9} />
+            More
+            {showMore ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
+          </button>
+
+          {/* Clear all */}
+          {!isDefault && (
+            <button
+              onClick={resetFilters}
+              className="ml-auto text-[10px] text-red-500 hover:text-red-600 font-medium"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+
+        {/* ── Expanded filters panel ── */}
+        {showMore && (
+          <div className="pt-1.5 pb-0.5 border-t border-border/50 space-y-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {/* City */}
+              <div className="flex items-center gap-1 bg-surface border border-border rounded-md px-1.5 py-0.5">
+                <MapPin size={9} className="text-muted shrink-0" />
+                <input
+                  type="text"
+                  value={filters.city}
+                  onChange={(e) => updateFilter("city", e.target.value)}
+                  placeholder="City"
+                  className="bg-transparent text-[10px] outline-none w-[70px]"
+                />
+              </div>
+
+              {/* ZIP */}
+              <div className="flex items-center gap-1 bg-surface border border-border rounded-md px-1.5 py-0.5">
+                <span className="text-[9px] text-muted">#</span>
+                <input
+                  type="text"
+                  value={filters.zip}
+                  onChange={(e) => updateFilter("zip", e.target.value)}
+                  placeholder="ZIP"
+                  className="bg-transparent text-[10px] outline-none w-[50px]"
+                />
+              </div>
+
+              {/* Product count min/max */}
+              <div className="flex items-center gap-0.5">
+                <Package size={9} className="text-muted" />
+                <input
+                  type="number"
+                  min={0}
+                  value={filters.productCountMin ?? ""}
+                  onChange={(e) => updateFilter("productCountMin", e.target.value ? Number(e.target.value) : undefined)}
+                  placeholder="Min"
+                  className="bg-surface border border-border rounded-md px-1 py-0.5 text-[10px] outline-none w-[40px]"
+                />
+                <span className="text-[9px] text-muted">–</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={filters.productCountMax ?? ""}
+                  onChange={(e) => updateFilter("productCountMax", e.target.value ? Number(e.target.value) : undefined)}
+                  placeholder="Max"
+                  className="bg-surface border border-border rounded-md px-1 py-0.5 text-[10px] outline-none w-[40px]"
+                />
+              </div>
+            </div>
+
+            {/* Quick toggles */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <QuickToggle
+                label="Has alerts"
+                icon={<AlertOctagon size={9} />}
+                active={filters.hasAlerts === true}
+                onClick={() => updateFilter("hasAlerts", filters.hasAlerts === true ? null : true)}
+              />
+              <QuickToggle
+                label="Has notes"
+                icon={<StickyNote size={9} />}
+                active={filters.hasSchedulerNotes === true}
+                onClick={() => updateFilter("hasSchedulerNotes", filters.hasSchedulerNotes === true ? null : true)}
+              />
+              <QuickToggle
+                label="Possible merge"
+                icon={<GitMerge size={9} />}
+                active={filters.hasPossibleMerge === true}
+                onClick={() => updateFilter("hasPossibleMerge", filters.hasPossibleMerge === true ? null : true)}
+              />
+              <QuickToggle
+                label="Missing info"
+                icon={<Info size={9} />}
+                active={filters.hasMissingInfo === true}
+                onClick={() => updateFilter("hasMissingInfo", filters.hasMissingInfo === true ? null : true)}
+              />
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Filter chips */}
-      <div className="flex gap-1 px-3 py-2 overflow-x-auto border-b border-border">
-        <FilterChip
-          label={`All (${allItems.length})`}
-          active={filter === "all"}
-          onClick={() => setFilter("all")}
-        />
-        {(Object.keys(CATEGORY_CONFIG) as QueueItemCategory[]).map((key) => {
-          const count = counts[key] || 0;
-          if (count === 0) return null;
-          const cfg = CATEGORY_CONFIG[key];
-          return (
-            <FilterChip
-              key={key}
-              label={`${cfg.label} (${count})`}
-              active={filter === key}
-              onClick={() => setFilter(key)}
-            />
-          );
-        })}
-      </div>
+      {/* ── Active filters + result count ── */}
+      {(activeFilters.length > 0 || !isDefault) && (
+        <div className="px-3 py-1 border-b border-border/50 flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] font-semibold text-foreground shrink-0">
+            Showing {filtered.length} of {allItems.length}
+          </span>
+          {activeFilters.map((af) => (
+            <span
+              key={af.key}
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-medium"
+            >
+              {af.label}
+              <button onClick={af.onRemove} className="hover:text-red-500 ml-0.5">
+                <X size={8} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
-      {/* Items */}
-      <div className="p-2 space-y-1.5">
+      {/* ── Queue items ── */}
+      <div className="flex-1 overflow-auto p-2 space-y-1.5">
         {filtered.length === 0 && (
-          <div className="p-8 text-center text-muted text-sm">
-            No items match this filter.
+          <div className="p-8 text-center text-muted text-sm space-y-2">
+            <div>No items match these filters.</div>
+            {!isDefault && (
+              <button
+                onClick={resetFilters}
+                className="text-primary text-xs underline hover:no-underline"
+              >
+                Clear all filters
+              </button>
+            )}
           </div>
         )}
         {filtered.map((item) => (
@@ -210,6 +465,7 @@ export default function UnscheduledQueue() {
         ))}
       </div>
 
+      {/* ── Modals ── */}
       {scheduleOrder && (
         <ScheduleModal
           date={new Date()}
@@ -217,7 +473,6 @@ export default function UnscheduledQueue() {
           onClose={() => setScheduleOrder(null)}
         />
       )}
-
       {linkRForceOrder && (
         <LinkModal
           mode="link_to_app"
@@ -225,7 +480,6 @@ export default function UnscheduledQueue() {
           onClose={() => setLinkRForceOrder(null)}
         />
       )}
-
       {linkAppointment && (
         <LinkModal
           mode="link_to_rforce"
@@ -234,6 +488,34 @@ export default function UnscheduledQueue() {
         />
       )}
     </div>
+  );
+}
+
+// ── Quick Toggle Chip ──
+
+function QuickToggle({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[9px] font-medium transition-all border ${
+        active
+          ? "bg-primary/10 text-primary border-primary/30"
+          : "bg-surface text-muted border-transparent hover:border-border"
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 
@@ -260,7 +542,7 @@ function QueueItemCard({
 }) {
   const cfg = CATEGORY_CONFIG[item.category];
   const Icon = cfg.icon;
-  const city = parseCity(item.address || "");
+  const woColor = getWoTypeColor(item.normalizedWoType);
 
   const isDraggable =
     item.category === "unscheduled" ||
@@ -285,12 +567,14 @@ function QueueItemCard({
         setDraggedOrder(null);
         (e.currentTarget as HTMLElement).style.opacity = "1";
       }}
-      className={`rounded-lg border bg-background shadow-sm hover:shadow-md transition-all overflow-hidden ${
+      className={`rounded-lg border bg-background shadow-sm hover:shadow-md transition-all overflow-hidden border-l-[3px] ${
+        woColor.border
+      } ${
         isDraggable ? "cursor-grab active:cursor-grabbing" : ""
       } ${
         isMerge
-          ? "border-green-500/50 dark:border-green-400/30"
-          : "border-border"
+          ? "border-r-green-500/50 border-t-green-500/50 border-b-green-500/50 dark:border-r-green-400/30 dark:border-t-green-400/30 dark:border-b-green-400/30"
+          : "border-r-border border-t-border border-b-border"
       }`}
     >
       <div className="flex items-stretch">
@@ -301,11 +585,19 @@ function QueueItemCard({
         )}
 
         <div className="flex-1 min-w-0 p-2.5">
-          {/* Row 1: Name + badge */}
+          {/* Row 1: Name + badges */}
           <div className="flex items-center gap-1.5 mb-1">
             <span className="font-semibold text-sm truncate flex-1">
               {item.customerName || "Unknown"}
             </span>
+            {/* WO type badge */}
+            <span
+              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 ${woColor.bg} ${woColor.text}`}
+              title={item.sourceWoType || item.normalizedWoType}
+            >
+              {woColor.label}
+            </span>
+            {/* Queue status badge */}
             <span
               className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold shrink-0 ${cfg.bg} ${cfg.color}`}
             >
@@ -325,17 +617,24 @@ function QueueItemCard({
             )}
           </div>
 
-          {/* Row 2: City + type */}
-          <div className="flex items-center gap-2 text-xs text-muted mb-1">
-            {city && (
+          {/* Row 2: City + ZIP + date + resource */}
+          <div className="flex items-center gap-2 text-xs text-muted mb-1 flex-wrap">
+            {item.city && (
               <span className="flex items-center gap-0.5 truncate">
                 <MapPin size={10} className="shrink-0" />
-                {city}
+                {item.city}
+                {item.zip && <span className="text-muted/60">{item.zip}</span>}
               </span>
             )}
-            {item.workOrderType && (
-              <span className="font-medium text-foreground/70 shrink-0">
-                {item.workOrderType}
+            {item.effectiveDate && (
+              <span className="flex items-center gap-0.5 shrink-0">
+                <Calendar size={10} className="shrink-0" />
+                {item.effectiveDate}
+              </span>
+            )}
+            {item.assignedResource && (
+              <span className="font-medium text-foreground/70 truncate max-w-[120px]" title={item.assignedResource}>
+                {item.assignedResource}
               </span>
             )}
           </div>
@@ -359,10 +658,44 @@ function QueueItemCard({
                 WO: {item.workOrderNumber}
               </span>
             )}
+            {item.orderNumber && (
+              <span className="text-[10px] text-muted bg-surface px-1.5 py-0.5 rounded">
+                Order: {item.orderNumber}
+              </span>
+            )}
             {item.productCount != null && item.productCount > 0 && (
               <span className="text-[10px] text-muted bg-surface px-1.5 py-0.5 rounded flex items-center gap-0.5">
                 <Package size={8} />
                 {item.productCount}
+                {(item.windows || item.patioDoors || item.doors) && (
+                  <span className="text-muted/60 ml-0.5">
+                    ({[
+                      item.windows ? `${item.windows}W` : null,
+                      item.patioDoors ? `${item.patioDoors}PD` : null,
+                      item.doors ? `${item.doors}D` : null,
+                    ]
+                      .filter(Boolean)
+                      .join("/")})
+                  </span>
+                )}
+              </span>
+            )}
+            {item.hasAlerts && (
+              <span className="text-[10px] bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded flex items-center gap-0.5" title={item.rforceOrder?.order_alerts || ""}>
+                <AlertOctagon size={8} />
+                Alert
+              </span>
+            )}
+            {item.hasSchedulerNotes && (
+              <span className="text-[10px] bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded flex items-center gap-0.5" title={item.schedulerNotes || ""}>
+                <StickyNote size={8} />
+                Note
+              </span>
+            )}
+            {item.hasMissingInfo && (
+              <span className="text-[10px] bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                <Info size={8} />
+                Missing info
               </span>
             )}
           </div>
@@ -448,30 +781,5 @@ function QueueItemCard({
         </div>
       </div>
     </div>
-  );
-}
-
-// ── Filter Chip ──
-
-function FilterChip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors ${
-        active
-          ? "bg-primary text-white"
-          : "bg-surface text-muted hover:bg-border"
-      }`}
-    >
-      {label}
-    </button>
   );
 }

@@ -332,4 +332,23 @@ export interface QueueItem {
   orderNumber?: string;
   workOrderType?: string;
   productCount?: number;
+  // ── Normalized fields for filtering (populated by queue pipeline) ──
+  normalizedWoType: string;        // Our AppointmentType key or "unknown"
+  sourceWoType: string;            // Original rForce work_order_type string
+  effectiveDate?: string;          // YYYY-MM-DD: rForce date for rForce items, app date for app items
+  assignedResource?: string;       // primary_resource / tech_measure_name / installer / service_rep
+  city: string;
+  state: string;
+  zip: string;
+  orderStatus?: string;            // rForce order_status
+  woStatus?: string;               // rForce wo_status
+  appointmentStatus?: string;      // App appointment status
+  windows?: number;
+  patioDoors?: number;
+  doors?: number;
+  hasAlerts: boolean;
+  hasSchedulerNotes: boolean;
+  hasPossibleMerge: boolean;
+  hasMissingInfo: boolean;         // Missing address, product count, or customer name
+  schedulerNotes?: string;         // rForce scheduler_notes (for search)
 }
