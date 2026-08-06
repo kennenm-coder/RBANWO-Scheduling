@@ -656,6 +656,50 @@ export async function approveRForceOrder(
   const sb = getSupabase();
   if (!sb) return null;
 
+  // Try atomic RPC first — single transaction for create + link + event
+  try {
+    const { data: rpcResult, error: rpcError } = await sb.rpc("approve_rforce_order", {
+      p_crew_id: crewId,
+      p_appointment_type: appointmentType || "install",
+      p_order_number: rforceOrder.order_number || null,
+      p_work_order_number: rforceOrder.work_order_number,
+      p_customer_name: rforceOrder.customer_name || "Unknown",
+      p_address: rforceOrder.address || "",
+      p_scheduled_date: scheduledDate,
+      p_start_time: start,
+      p_end_time: end,
+      p_time_block: tb,
+      p_product_count: rforceOrder.product_count ?? null,
+      p_salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
+      p_rforce_order_id: rforceOrder.id,
+      p_actor_id: actorId || null,
+      p_actor_name: actorName || null,
+    });
+
+    if (!rpcError && rpcResult) {
+      const result = rpcResult as { appointment_id: string; appointment_version: number; link_id: string };
+      // Fetch the full appointment and link for the caller
+      const { data: appt } = await sb
+        .from("sched_appointments")
+        .select("*")
+        .eq("id", result.appointment_id)
+        .single();
+      const { data: link } = await sb
+        .from("sched_appointment_links")
+        .select("*")
+        .eq("id", result.link_id)
+        .single();
+
+      if (appt) {
+        return { appointment: appt as Appointment, link: link as AppointmentLink };
+      }
+    }
+    // If RPC failed (function doesn't exist yet), fall through to multi-step
+  } catch {
+    // RPC not available — fall through to multi-step approach
+  }
+
+  // Fallback: multi-step (for backwards compatibility before migration runs)
   const { data: appt, error } = await sb
     .from("sched_appointments")
     .insert({
@@ -691,7 +735,7 @@ export async function approveRForceOrder(
   try {
     link = await linkAppointment(typedAppt.id, typedAppt.version, rforceOrder, "auto");
   } catch {
-    // Link may fail due to RLS — appointment is still valid
+    // Link INSERT may fail due to RLS or ALREADY_LINKED — non-fatal
   }
 
   try {
