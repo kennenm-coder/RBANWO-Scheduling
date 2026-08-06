@@ -118,6 +118,7 @@ export default function UnscheduledQueue() {
     resourceMappings,
     matchRejections,
     mergeRForce,
+    rejectMatch,
   } = useData();
 
   const { filters, setFilters, resetFilters, isDefault } = useQueueFilters();
@@ -463,6 +464,11 @@ export default function UnscheduledQueue() {
             onLinkRForce={(rf) => setLinkRForceOrder(rf)}
             onLinkApp={(appt) => setLinkAppointment(appt)}
             onMerge={() => handleMerge(item)}
+            onRejectMatch={
+              item.category === "merge_suggested" && item.fuzzyMatch && item.workOrderNumber
+                ? () => rejectMatch(item.fuzzyMatch!.appointment.id, item.workOrderNumber!)
+                : undefined
+            }
           />
         ))}
       </div>
@@ -532,6 +538,7 @@ function QueueItemCard({
   onLinkRForce,
   onLinkApp,
   onMerge,
+  onRejectMatch,
 }: {
   item: QueueItem;
   rforceOrders: RForceOrder[];
@@ -541,6 +548,7 @@ function QueueItemCard({
   onLinkRForce: (rf: RForceOrder) => void;
   onLinkApp: (appt: Appointment) => void;
   onMerge: () => void;
+  onRejectMatch?: () => void;
 }) {
   const cfg = CATEGORY_CONFIG[item.category];
   const Icon = cfg.icon;
@@ -705,18 +713,30 @@ function QueueItemCard({
           {/* Row 4: Actions */}
           <div className="flex items-center gap-1.5 mt-2">
             {isMerge && (
-              <button
-                onClick={onMerge}
-                disabled={merging}
-                className="px-2.5 py-1 bg-green-600 text-white text-[11px] font-medium rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-1"
-              >
-                {merging ? (
-                  <Loader2 size={10} className="animate-spin" />
-                ) : (
-                  <GitMerge size={10} />
+              <>
+                <button
+                  onClick={onMerge}
+                  disabled={merging}
+                  className="px-2.5 py-1 bg-green-600 text-white text-[11px] font-medium rounded-md hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-1"
+                >
+                  {merging ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <GitMerge size={10} />
+                  )}
+                  Merge
+                </button>
+                {onRejectMatch && (
+                  <button
+                    onClick={onRejectMatch}
+                    className="px-2 py-1 border border-border text-[11px] rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-muted hover:text-red-600 dark:hover:text-red-400 transition-colors flex items-center gap-0.5"
+                    title="Not a match — won't suggest again"
+                  >
+                    <XCircle size={10} />
+                    Not a match
+                  </button>
                 )}
-                Merge
-              </button>
+              </>
             )}
             {(item.category === "unscheduled" ||
               item.category === "needs_confirmation" ||
