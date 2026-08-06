@@ -6,6 +6,7 @@ import { buildQueueItems } from "@/lib/queue-pipeline";
 import { openSalesforce } from "@/lib/salesforce";
 import ScheduleModal from "./ScheduleModal";
 import LinkModal from "./LinkModal";
+import MergeConfirmModal from "./MergeConfirmModal";
 import {
   Appointment,
   RForceOrder,
@@ -127,6 +128,7 @@ export default function UnscheduledQueue() {
   const [linkRForceOrder, setLinkRForceOrder] = useState<RForceOrder | null>(null);
   const [linkAppointment, setLinkAppointment] = useState<Appointment | null>(null);
   const [mergingId, setMergingId] = useState<string | null>(null);
+  const [mergeConfirmItem, setMergeConfirmItem] = useState<QueueItem | null>(null);
 
   // Build the full unified queue
   const allItems = useMemo(
@@ -163,15 +165,21 @@ export default function UnscheduledQueue() {
     [filters, setFilters]
   );
 
-  const handleMerge = async (item: QueueItem) => {
+  const handleMergeClick = (item: QueueItem) => {
     if (!item.fuzzyMatch || !item.rforceOrder) return;
-    setMergingId(item.id);
+    setMergeConfirmItem(item);
+  };
+
+  const handleMergeConfirm = async () => {
+    if (!mergeConfirmItem?.fuzzyMatch || !mergeConfirmItem?.rforceOrder) return;
+    setMergingId(mergeConfirmItem.id);
     try {
-      await mergeRForce(item.fuzzyMatch.appointment, item.rforceOrder);
+      await mergeRForce(mergeConfirmItem.fuzzyMatch.appointment, mergeConfirmItem.rforceOrder);
     } catch (err) {
       console.error("Merge failed:", err);
     } finally {
       setMergingId(null);
+      setMergeConfirmItem(null);
     }
   };
 
@@ -463,7 +471,7 @@ export default function UnscheduledQueue() {
             onSchedule={(rf) => setScheduleOrder(rf)}
             onLinkRForce={(rf) => setLinkRForceOrder(rf)}
             onLinkApp={(appt) => setLinkAppointment(appt)}
-            onMerge={() => handleMerge(item)}
+            onMerge={() => handleMergeClick(item)}
             onRejectMatch={
               item.category === "merge_suggested" && item.fuzzyMatch && item.workOrderNumber
                 ? () => rejectMatch(item.fuzzyMatch!.appointment.id, item.workOrderNumber!)
@@ -493,6 +501,20 @@ export default function UnscheduledQueue() {
           mode="link_to_rforce"
           appointment={linkAppointment}
           onClose={() => setLinkAppointment(null)}
+        />
+      )}
+      {mergeConfirmItem?.fuzzyMatch && mergeConfirmItem?.rforceOrder && (
+        <MergeConfirmModal
+          appointment={mergeConfirmItem.fuzzyMatch.appointment}
+          rforceOrder={mergeConfirmItem.rforceOrder}
+          fuzzyMatch={mergeConfirmItem.fuzzyMatch}
+          onConfirm={handleMergeConfirm}
+          onReject={() => {
+            if (mergeConfirmItem.fuzzyMatch && mergeConfirmItem.workOrderNumber) {
+              rejectMatch(mergeConfirmItem.fuzzyMatch.appointment.id, mergeConfirmItem.workOrderNumber);
+            }
+          }}
+          onClose={() => setMergeConfirmItem(null)}
         />
       )}
     </div>
