@@ -25,6 +25,7 @@ import {
   timeBlockStartEnd,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
+import { onSchedulerEditedLinkedAppointment } from "@/lib/sync-transitions";
 import { crewHasType, sortByFirstName, getEligibleCrews } from "@/lib/crew-utils";
 import RForceDetailSheet from "./RForceDetailSheet";
 import { Palmtree, MapPinned, Ban } from "lucide-react";
@@ -189,6 +190,9 @@ export default function CrewLaneDayView({
         after_state: { crew_id: targetCrewId, start_time: startTime || appt.start_time, end_time: endTime || appt.end_time },
         reason: null,
       });
+
+      // If linked and in_sync, transition to waiting_for_import
+      onSchedulerEditedLinkedAppointment(appt);
 
       const parts: string[] = [];
       if (crewChanged) parts.push(targetCrew.name);

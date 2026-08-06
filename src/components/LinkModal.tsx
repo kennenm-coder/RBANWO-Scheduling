@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import { RForceOrder, Appointment } from "@/lib/types";
 import { linkAppointment } from "@/lib/store";
+import { onAppointmentLinked } from "@/lib/sync-transitions";
 import { X, Search, Link2, MapPin } from "lucide-react";
 
 interface LinkToRForceProps {
@@ -83,6 +84,7 @@ export default function LinkModal(props: Props) {
           rf,
           rf.work_order_number === props.appointment.work_order_number ? "wo_exact" : "manual"
         );
+        onAppointmentLinked(props.appointment.id, props.appointment.sync_state);
       } else {
         const appt = item as Appointment;
         await linkAppointment(
@@ -91,6 +93,7 @@ export default function LinkModal(props: Props) {
           props.rforceOrder,
           props.rforceOrder.work_order_number === appt.work_order_number ? "wo_exact" : "manual"
         );
+        onAppointmentLinked(appt.id, appt.sync_state);
       }
       await refreshData();
       props.onClose();

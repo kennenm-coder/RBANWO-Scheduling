@@ -7,6 +7,7 @@ import {
   TimeBlock,
   RForceOrder,
 } from "@/lib/types";
+import { captureOriginalEntry } from "@/lib/sync-transitions";
 import {
   getTimeBlocksForType,
   timeBlockLabel,
@@ -233,6 +234,17 @@ export default function ScheduleModal({
           reschedule_reason: null,
           scheduled_by: null,
           merge_source_wo: null,
+          // Capture immutable snapshot of manual entry for later reconciliation
+          original_entry_snapshot: captureOriginalEntry({
+            customer_name: customerName,
+            address,
+            scheduled_date: selectedDate,
+            crew_id: selectedCrewId,
+            time_block: selectedBlock,
+            start_time: start,
+            notes: notes || null,
+            appointment_type: type,
+          }),
         });
       }
       onClose();

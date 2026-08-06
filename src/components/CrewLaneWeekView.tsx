@@ -27,6 +27,7 @@ import {
   appointmentSpansBlock,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
+import { onSchedulerEditedLinkedAppointment } from "@/lib/sync-transitions";
 import { getDepartmentSections, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType, getEligibleCrews } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences } from "@/lib/preferences";
@@ -251,6 +252,9 @@ export default function CrewLaneWeekView({
         reason: null,
       });
 
+      // If linked and in_sync, transition to waiting_for_import
+      onSchedulerEditedLinkedAppointment(appt);
+
       showToast(`Moved to ${targetCrew.name} on ${targetDate}`, "success");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -307,6 +311,9 @@ export default function CrewLaneWeekView({
         after_state: { time_block: appt.time_block, time_block_end: newEnd },
         reason: null,
       });
+
+      // If linked and in_sync, transition to waiting_for_import
+      onSchedulerEditedLinkedAppointment(appt);
 
       showToast(newEnd ? `Extended to ${newEnd}` : "Shrunk to single block", "success");
     } catch (err: unknown) {
