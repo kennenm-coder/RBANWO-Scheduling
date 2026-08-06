@@ -681,61 +681,17 @@ export async function approveRForceOrder(
   scheduledDate: string,
   actorId?: string | null,
   actorName?: string | null
-): Promise<{ appointment: Appointment; link: AppointmentLink } | null> {
+): Promise<{ appointment: Appointment; link: AppointmentLink }> {
   const { start, end } = timeBlockStartEnd(tb);
   const appointmentType = (rforceOrder.work_order_type
     ? APPROVE_WO_TYPE_MAP[rforceOrder.work_order_type]
     : "install") as Appointment["appointment_type"];
 
   const sb = getSupabase();
-  if (!sb) return null;
+  if (!sb) throw new Error("No database connection");
 
-  // Try atomic RPC first — single transaction for create + link + event
-  try {
-    const { data: rpcResult, error: rpcError } = await sb.rpc("approve_rforce_order", {
-      p_crew_id: crewId,
-      p_appointment_type: appointmentType || "install",
-      p_order_number: rforceOrder.order_number || null,
-      p_work_order_number: rforceOrder.work_order_number,
-      p_customer_name: rforceOrder.customer_name || "Unknown",
-      p_address: rforceOrder.address || "",
-      p_scheduled_date: scheduledDate,
-      p_start_time: start,
-      p_end_time: end,
-      p_time_block: tb,
-      p_product_count: rforceOrder.product_count ?? null,
-      p_salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
-      p_rforce_order_id: rforceOrder.id,
-      p_actor_id: actorId || null,
-      p_actor_name: actorName || null,
-    });
-
-    if (!rpcError && rpcResult) {
-      const result = rpcResult as { appointment_id: string; appointment_version: number; link_id: string };
-      // Fetch the full appointment and link for the caller
-      const { data: appt } = await sb
-        .from("sched_appointments")
-        .select("*")
-        .eq("id", result.appointment_id)
-        .single();
-      const { data: link } = await sb
-        .from("sched_appointment_links")
-        .select("*")
-        .eq("id", result.link_id)
-        .single();
-
-      if (appt) {
-        return { appointment: appt as Appointment, link: link as AppointmentLink };
-      }
-    }
-    // If RPC failed (function doesn't exist yet), fall through to multi-step
-  } catch (rpcCatchErr) {
-    // RPC function doesn't exist yet — fall through to multi-step
-  }
-
-  // Fallback: multi-step (for backwards compatibility before migration runs)
-  // Note: origin/sync_state columns may not exist yet if Phase 2a migration
-  // hasn't been applied. Insert core fields only, then try sync fields separately.
+  // Direct INSERT — skip the RPC (it references origin/sync_state columns
+  // that don't exist in the live DB yet).
   const { data: appt, error } = await sb
     .from("sched_appointments")
     .insert({
@@ -762,9 +718,14 @@ export async function approveRForceOrder(
     .select()
     .single();
 
-  if (error || !appt) {
-    console.error("[approve] Fallback INSERT failed:", error?.message);
-    return null;
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("DOUBLE_BOOK");
+    }
+    throw new Error(error.message || "Insert failed");
+  }
+  if (!appt) {
+    throw new Error("Insert returned no data — check RLS policies on sched_appointments");
   }
   const typedAppt = appt as Appointment;
 
