@@ -64,6 +64,8 @@ export default function AvailabilityEditor({
   );
   const [effectiveEnd, setEffectiveEnd] = useState("");
   const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadRules();
@@ -96,22 +98,31 @@ export default function AvailabilityEditor({
 
   async function handleSave() {
     if (weekdays.length === 0) return;
+    setSaving(true);
+    setError(null);
 
-    await upsertAvailabilityRule({
-      crew_id: crewId,
-      kind,
-      weekdays,
-      repeat_interval: repeatInterval,
-      start_time: kind === "block" ? startTime : null,
-      end_time: kind === "block" ? endTime : null,
-      effective_start: effectiveStart,
-      effective_end: effectiveEnd || null,
-      reason: reason || null,
-      is_active: true,
-    });
-    resetForm();
-    await loadRules();
-    onChanged?.();
+    try {
+      await upsertAvailabilityRule({
+        crew_id: crewId,
+        kind,
+        weekdays,
+        repeat_interval: repeatInterval,
+        start_time: kind === "block" ? startTime : null,
+        end_time: kind === "block" ? endTime : null,
+        effective_start: effectiveStart,
+        effective_end: effectiveEnd || null,
+        reason: reason || null,
+        is_active: true,
+      });
+      resetForm();
+      await loadRules();
+      onChanged?.();
+    } catch (err) {
+      console.error("Rule save failed:", err);
+      setError(err instanceof Error ? err.message : "Failed to save rule");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleDelete(id: string) {
@@ -293,17 +304,24 @@ export default function AvailabilityEditor({
             />
           </div>
 
+          {error && (
+            <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+              {error}
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button
               onClick={handleSave}
-              disabled={weekdays.length === 0}
+              disabled={weekdays.length === 0 || saving}
               className="flex-1 py-2 bg-primary text-white rounded-lg text-xs font-medium hover:opacity-90 disabled:opacity-50"
             >
-              Save Rule
+              {saving ? "Saving..." : "Save Rule"}
             </button>
             <button
               onClick={resetForm}
-              className="px-4 py-2 border border-border rounded-lg text-xs hover:bg-surface"
+              disabled={saving}
+              className="px-4 py-2 border border-border rounded-lg text-xs hover:bg-surface disabled:opacity-50"
             >
               Cancel
             </button>

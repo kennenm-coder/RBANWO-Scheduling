@@ -536,12 +536,45 @@ export async function upsertAvailabilityRule(
 ): Promise<AvailabilityRule | null> {
   const sb = getSupabase();
   if (!sb) return null;
+
+  // Strip repeat_interval on first attempt — column may not exist yet
+  const { repeat_interval, ...coreFields } = rule as Record<string, unknown>;
+  const payload = { ...coreFields, updated_at: new Date().toISOString() };
+
   const { data, error } = await sb
     .from("sched_availability_rules")
-    .upsert({ ...rule, updated_at: new Date().toISOString() })
+    .upsert(payload)
     .select()
     .single();
-  if (error) throw new Error(error.message);
+
+  if (error) {
+    // If the error is about a missing column, try with repeat_interval included
+    // (migration may have been applied since the initial attempt)
+    if (error.message?.includes("repeat_interval") && repeat_interval != null) {
+      const retryPayload = { ...payload, repeat_interval };
+      const { data: d2, error: e2 } = await sb
+        .from("sched_availability_rules")
+        .upsert(retryPayload)
+        .select()
+        .single();
+      if (e2) throw new Error(e2.message);
+      return d2 as AvailabilityRule | null;
+    }
+    throw new Error(error.message);
+  }
+
+  // If repeat_interval column exists, update it separately (non-fatal)
+  if (repeat_interval != null && repeat_interval !== 1 && data) {
+    try {
+      await sb
+        .from("sched_availability_rules")
+        .update({ repeat_interval })
+        .eq("id", (data as AvailabilityRule).id);
+    } catch {
+      // Column may not exist yet — safe to skip
+    }
+  }
+
   return data as AvailabilityRule | null;
 }
 

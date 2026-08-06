@@ -137,6 +137,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
+  const cancelledWOsRef = useRef<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     try {
@@ -158,8 +159,32 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         fetchUnscheduledAppointments(),
       ]);
 
+      // Auto-cancel appointments whose rForce order is cancelled — keeps
+      // calendar slots clear without waiting for a manual reconciliation.
+      const cancelledWOs = new Set(
+        r.filter((rf) => rf.wo_status === "Canceled" || rf.wo_status === "Cancelled")
+          .map((rf) => rf.work_order_number)
+      );
+      cancelledWOsRef.current = cancelledWOs;
+      const needsAutoCancel = a.filter(
+        (appt) =>
+          appt.work_order_number &&
+          cancelledWOs.has(appt.work_order_number) &&
+          appt.status === "scheduled"
+      );
+      if (needsAutoCancel.length > 0) {
+        // Fire-and-forget DB updates — non-fatal if some fail
+        for (const appt of needsAutoCancel) {
+          cancelApptInDb(appt.id, appt.version, "Auto-cancelled: rForce order cancelled").catch(() => {});
+        }
+      }
+      // Remove cancelled-WO appointments from local state immediately
+      const visibleAppts = cancelledWOs.size > 0
+        ? a.filter((appt) => !(appt.work_order_number && cancelledWOs.has(appt.work_order_number) && appt.status === "scheduled"))
+        : a;
+
       setCrews(c);
-      setAppointments(a);
+      setAppointments(visibleAppts);
       setRforceOrders(r);
       setTimeOffRequests(t);
       setAvailabilityRules(av.rules);
@@ -189,7 +214,12 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         const newEnd = format(addDays(date, 180), "yyyy-MM-dd");
         loadedRangeRef.current = { start: newStart, end: newEnd };
         fetchAppointments(newStart, newEnd).then((a) => {
-          setAppointments(a);
+          // Same cancelled-WO filter as loadData
+          const cancelled = cancelledWOsRef.current;
+          const filtered = cancelled.size > 0
+            ? a.filter((appt) => !(appt.work_order_number && cancelled.has(appt.work_order_number) && appt.status === "scheduled"))
+            : a;
+          setAppointments(filtered);
         });
       }
     },
