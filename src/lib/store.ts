@@ -1,6 +1,9 @@
 import { getSupabase } from "./supabase";
 import {
   Appointment,
+  AppointmentOrigin,
+  SyncState,
+  OriginalEntrySnapshot,
   Crew,
   RForceOrder,
   TimeOffRequest,
@@ -79,7 +82,7 @@ export async function fetchAppointments(
 }
 
 export async function createAppointment(
-  appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at">
+  appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>
 ): Promise<Appointment | null> {
   const sb = getSupabase();
   if (!sb) return null;
@@ -104,8 +107,8 @@ export async function updateAppointment(
 ): Promise<Appointment | null> {
   const sb = getSupabase();
   if (!sb) return null;
-  // Strip fields that may not exist as DB columns yet
-  const { manual_override, override_source, time_block_end, merge_source_wo, ...safeUpdates } = updates;
+  // Strip fields managed by specific state-transition functions or that may not exist as DB columns yet
+  const { manual_override, override_source, time_block_end, merge_source_wo, origin, sync_state, original_entry_snapshot, last_reconciled_import_id, ...safeUpdates } = updates;
   const { data, error } = await sb
     .from("sched_appointments")
     .update({
@@ -182,6 +185,27 @@ export async function fetchUnscheduledAppointments(): Promise<Appointment[]> {
     .eq("status", "unscheduled")
     .order("updated_at", { ascending: false });
   return (data as Appointment[]) ?? [];
+}
+
+// ── Sync State Transitions ──
+
+/** Controlled update of sync-model fields. Bypasses the ad-hoc strip in updateAppointment. */
+export async function updateSyncFields(
+  id: string,
+  fields: {
+    origin?: AppointmentOrigin;
+    sync_state?: SyncState;
+    original_entry_snapshot?: OriginalEntrySnapshot | null;
+    last_reconciled_import_id?: string | null;
+  }
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("sched_appointments")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
 }
 
 // ── rForce Orders (CSV import) ──
@@ -652,6 +676,8 @@ export async function approveRForceOrder(
       product_count: rforceOrder.product_count ?? null,
       salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
       scheduled_by: null,
+      origin: "rforce_approved",
+      sync_state: "linked_pending_confirmation",
     })
     .select()
     .single();

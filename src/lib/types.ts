@@ -26,6 +26,30 @@ export type AppointmentStatus =
   | "rescheduled"
   | "unscheduled";
 
+export type AppointmentOrigin = "manual" | "rforce_approved" | "merged";
+
+export type SyncState =
+  | "manual_awaiting_rforce"
+  | "match_suggested"
+  | "linked_pending_confirmation"
+  | "waiting_for_import"
+  | "in_sync"
+  | "source_missing"
+  | "ambiguous_match"
+  | "conflict";
+
+export interface OriginalEntrySnapshot {
+  customer_name: string;
+  address: string;
+  scheduled_date: string | null;
+  crew_id: string | null;
+  time_block: TimeBlock | null;
+  start_time: string | null;
+  notes: string | null;
+  appointment_type: AppointmentType;
+  captured_at: string;
+}
+
 export type TimeBlock =
   | "9-10"
   | "10-12"
@@ -77,6 +101,11 @@ export interface Appointment {
   salesforce_url: string | null;
   scheduled_by: string | null;
   merge_source_wo: string | null;
+  // ── Sync model (Phase 2a) ──
+  origin: AppointmentOrigin;
+  sync_state: SyncState;
+  original_entry_snapshot: OriginalEntrySnapshot | null;
+  last_reconciled_import_id: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -184,7 +213,8 @@ export type AppointmentEventAction =
   | "drag_resized"
   | "approved_from_rforce"
   | "unscheduled"
-  | "merged";
+  | "merged"
+  | "sync_state_changed";
 
 export interface AppointmentEvent {
   id: string;

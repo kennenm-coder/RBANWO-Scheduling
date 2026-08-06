@@ -63,7 +63,7 @@ interface DataContextValue {
   loading: boolean;
   connected: boolean;
   createAppointment: (
-    appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at">
+    appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>
   ) => Promise<Appointment | null>;
   updateAppointment: (
     id: string,
@@ -227,7 +227,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   const handleCreate = useCallback(
     async (
-      appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at">
+      appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>
     ) => {
       const result = await createApptInDb(appt);
       if (result) {

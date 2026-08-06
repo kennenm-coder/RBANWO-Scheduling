@@ -12,6 +12,7 @@
 import { Appointment, RForceOrder, AppointmentLink, AppointmentType } from "./types";
 import {
   updateAppointment,
+  updateSyncFields,
   linkAppointment,
   createAppointmentEvent,
 } from "./store";
@@ -116,6 +117,16 @@ export async function mergeRForceIntoAppointment(
     updates
   );
   if (!updated) throw new Error("Failed to update appointment during merge");
+
+  // ── Set sync model: origin=merged, sync_state=in_sync ──
+  try {
+    await updateSyncFields(updated.id, {
+      origin: "merged",
+      sync_state: "in_sync",
+    });
+  } catch {
+    // Sync field update is non-critical — merge data is already applied
+  }
 
   // ── Create link (may fail due to RLS — merge still succeeds) ──
 
