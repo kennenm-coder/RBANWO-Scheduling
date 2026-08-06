@@ -23,22 +23,18 @@ import {
   getRForceDisplayItems,
   checkDiscrepancy,
   MEASURE_TIME_BLOCKS,
-  timeBlockLabel,
+  timeBlockStartEnd,
+  appointmentSpansBlock,
 } from "@/lib/calendar-utils";
-import { getTimeOffForDate } from "@/lib/store";
-import { getDepartmentSections, isDualRole, getBlockedTimeBlocks } from "@/lib/crew-utils";
-import { parseCity, crewHasType } from "@/lib/crew-utils";
+import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
+import { getDepartmentSections, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType, getEligibleCrews } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences } from "@/lib/preferences";
 import { format, isToday, parseISO, addDays } from "date-fns";
-import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink } from "lucide-react";
+import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban } from "lucide-react";
 import { getDraggedOrder, setDraggedOrder, getDraggedAppointment, setDraggedAppointment, getResizingAppointment, setResizingAppointment } from "@/lib/drag-context";
-import { getEligibleCrews } from "@/lib/crew-utils";
-import { timeBlockStartEnd, appointmentSpansBlock } from "@/lib/calendar-utils";
-import { updateAppointment as updateApptInDb, createAppointmentEvent } from "@/lib/store";
 import { useToast } from "./Toast";
-import { getAllCrewsAvailabilityForWeek, isTimeBlockAvailable, CrewDayAvailability } from "@/lib/availability";
-import { Ban } from "lucide-react";
+import { getAllCrewsAvailabilityForWeek, CrewDayAvailability } from "@/lib/availability";
 
 interface Props {
   currentDate: Date;

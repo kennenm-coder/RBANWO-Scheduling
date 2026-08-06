@@ -22,17 +22,15 @@ import {
   getAppointmentsForCrewAndDay,
   getRForceDisplayItems,
   checkDiscrepancy,
+  timeBlockStartEnd,
 } from "@/lib/calendar-utils";
-import { getTimeOffForDate } from "@/lib/store";
-import { crewHasType, sortByFirstName } from "@/lib/crew-utils";
+import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
+import { crewHasType, sortByFirstName, getEligibleCrews } from "@/lib/crew-utils";
 import RForceDetailSheet from "./RForceDetailSheet";
-import { Plus, Palmtree, MapPinned, Ban } from "lucide-react";
+import { Palmtree, MapPinned, Ban } from "lucide-react";
 import { format } from "date-fns";
-import { getCrewAvailability, CrewDayAvailability } from "@/lib/availability";
+import { getCrewAvailability } from "@/lib/availability";
 import { getDraggedAppointment, setDraggedAppointment, getDraggedOrder, setDraggedOrder } from "@/lib/drag-context";
-import { timeBlockStartEnd } from "@/lib/calendar-utils";
-import { updateAppointment as updateApptInDb, createAppointmentEvent } from "@/lib/store";
-import { getEligibleCrews } from "@/lib/crew-utils";
 import { useToast } from "./Toast";
 import dynamic from "next/dynamic";
 
