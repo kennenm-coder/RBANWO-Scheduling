@@ -251,7 +251,7 @@ export default function UnscheduledQueue() {
       {/* ── Primary filter row ── */}
       <div className="px-3 py-1.5 border-b border-border space-y-1.5">
         {/* WO type chips */}
-        <div className="flex items-center gap-1 overflow-x-auto">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
           <span className="text-[9px] text-muted font-medium shrink-0 mr-0.5">Type:</span>
           {woTypeOptions.map((wt) => {
             const color = getWoTypeColor(wt.value);
@@ -273,7 +273,7 @@ export default function UnscheduledQueue() {
         </div>
 
         {/* Queue status chips */}
-        <div className="flex items-center gap-1 overflow-x-auto">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
           <span className="text-[9px] text-muted font-medium shrink-0 mr-0.5">Status:</span>
           {(Object.keys(CATEGORY_CONFIG) as QueueItemCategory[]).map((key) => {
             const count = categoryCounts[key] || 0;

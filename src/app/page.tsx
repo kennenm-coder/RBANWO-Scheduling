@@ -181,20 +181,21 @@ export default function CalendarPage() {
         </a>
       </div>
 
-      {/* Queue panel */}
+      {/* Queue panel — always mounted so memos stay warm; CSS hides when closed */}
       <div
         className={`shrink-0 border-r border-border bg-background overflow-hidden transition-all duration-300 ${
           queueOpen ? "w-full sm:w-[380px]" : "w-0"
         }`}
       >
-        {queueOpen && (
-          <div className="w-full sm:w-[380px] h-full flex flex-col">
-            <div className="px-3 py-2 border-b border-border bg-surface flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Unscheduled Queue</h2>
-            </div>
-            <UnscheduledQueue />
+        <div
+          className="w-full sm:w-[380px] h-full flex flex-col"
+          aria-hidden={!queueOpen}
+        >
+          <div className="px-3 py-2 border-b border-border bg-surface flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Unscheduled Queue</h2>
           </div>
-        )}
+          <UnscheduledQueue />
+        </div>
       </div>
 
       {/* Calendar */}
