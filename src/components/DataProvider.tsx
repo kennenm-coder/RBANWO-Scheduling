@@ -20,6 +20,7 @@ import {
   ResourceMapping,
   RForceDismissal,
   FlagResolution,
+  MatchRejection,
   TimeBlock,
 } from "@/lib/types";
 import {
@@ -43,6 +44,9 @@ import {
   dismissRForceOrder as dismissRForceInDb,
   resolveFlag as resolveFlagInDb,
   unresolveFlag as unresolveFlagInDb,
+  fetchMatchRejections,
+  rejectMatch as rejectMatchInDb,
+  unrejectMatch as unrejectMatchInDb,
 } from "@/lib/store";
 import { mergeRForceIntoAppointment as mergeInDb, MergeResult } from "@/lib/merge";
 import { subscribeToAppointments } from "@/lib/realtime";
@@ -61,6 +65,7 @@ interface DataContextValue {
   resourceMappings: ResourceMapping[];
   dismissals: RForceDismissal[];
   flagResolutions: FlagResolution[];
+  matchRejections: MatchRejection[];
   loading: boolean;
   connected: boolean;
   createAppointment: (
@@ -99,6 +104,8 @@ interface DataContextValue {
   ) => Promise<void>;
   resolveFlag: (flagKey: string, notes?: string) => Promise<void>;
   unresolveFlag: (flagKey: string) => Promise<void>;
+  rejectMatch: (appointmentId: string, workOrderNumber: string, reason?: string) => Promise<void>;
+  unrejectMatch: (appointmentId: string, workOrderNumber: string) => Promise<void>;
   refreshData: () => Promise<void>;
   ensureDateRange: (date: Date) => void;
   addTimeOff: (req: Omit<TimeOffRequest, "id" | "created_at">) => Promise<TimeOffRequest | null>;
@@ -126,6 +133,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [resourceMappings, setResourceMappings] = useState<ResourceMapping[]>([]);
   const [dismissals, setDismissals] = useState<RForceDismissal[]>([]);
   const [flagResolutions, setFlagResolutions] = useState<FlagResolution[]>([]);
+  const [matchRejections, setMatchRejections] = useState<MatchRejection[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
@@ -136,7 +144,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const start = format(subDays(today, 30), "yyyy-MM-dd");
       const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-      const [c, a, r, t, av, links, rm, dism, flagRes, unsched] = await Promise.all([
+      const [c, a, r, t, av, links, rm, dism, flagRes, matchRej, unsched] = await Promise.all([
         fetchCrews(),
         fetchAppointments(start, end),
         fetchRForceOrders(),
@@ -146,6 +154,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         fetchResourceMappings(),
         fetchDismissals().catch(() => [] as RForceDismissal[]),
         fetchFlagResolutions().catch(() => [] as FlagResolution[]),
+        fetchMatchRejections().catch(() => [] as MatchRejection[]),
         fetchUnscheduledAppointments(),
       ]);
 
@@ -159,6 +168,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setResourceMappings(rm);
       setDismissals(dism);
       setFlagResolutions(flagRes);
+      setMatchRejections(matchRej);
       setUnscheduledAppointments(unsched);
       loadedRangeRef.current = { start, end };
     } catch (err) {
@@ -398,6 +408,26 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handleRejectMatch = useCallback(
+    async (appointmentId: string, workOrderNumber: string, reason?: string) => {
+      const result = await rejectMatchInDb(appointmentId, workOrderNumber, user?.id, reason);
+      if (result) {
+        setMatchRejections((prev) => [...prev, result]);
+      }
+    },
+    [user]
+  );
+
+  const handleUnrejectMatch = useCallback(
+    async (appointmentId: string, workOrderNumber: string) => {
+      await unrejectMatchInDb(appointmentId, workOrderNumber);
+      setMatchRejections((prev) =>
+        prev.filter((r) => !(r.appointment_id === appointmentId && r.work_order_number === workOrderNumber))
+      );
+    },
+    []
+  );
+
   return (
     <DataContext.Provider
       value={{
@@ -412,6 +442,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         resourceMappings,
         dismissals,
         flagResolutions,
+        matchRejections,
         loading,
         connected,
         createAppointment: handleCreate,
@@ -423,6 +454,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         dismissRForce: handleDismissRForce,
         resolveFlag: handleResolveFlag,
         unresolveFlag: handleUnresolveFlag,
+        rejectMatch: handleRejectMatch,
+        unrejectMatch: handleUnrejectMatch,
         refreshData: loadData,
         ensureDateRange,
         addTimeOff: handleAddTimeOff,

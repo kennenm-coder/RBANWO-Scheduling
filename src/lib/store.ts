@@ -14,6 +14,7 @@ import {
   ResourceMapping,
   RForceDismissal,
   FlagResolution,
+  MatchRejection,
   TimeBlock,
 } from "./types";
 import { timeBlockStartEnd } from "./calendar-utils";
@@ -794,5 +795,58 @@ export async function unresolveFlag(flagKey: string): Promise<void> {
     .from("sched_flag_resolutions")
     .delete()
     .eq("flag_key", flagKey);
+  if (error) throw error;
+}
+
+// ── Match Rejections ("not a match" memory) ──
+
+export async function fetchMatchRejections(): Promise<MatchRejection[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  try {
+    const { data } = await sb.from("sched_match_rejections").select("*");
+    return (data as MatchRejection[]) ?? [];
+  } catch {
+    // Table may not exist yet
+    return [];
+  }
+}
+
+export async function rejectMatch(
+  appointmentId: string,
+  workOrderNumber: string,
+  rejectedBy?: string | null,
+  reason?: string
+): Promise<MatchRejection | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_match_rejections")
+    .upsert(
+      {
+        appointment_id: appointmentId,
+        work_order_number: workOrderNumber,
+        rejected_by: rejectedBy || null,
+        reason: reason || null,
+      },
+      { onConflict: "appointment_id,work_order_number" }
+    )
+    .select()
+    .single();
+  if (error) throw error;
+  return data as MatchRejection;
+}
+
+export async function unrejectMatch(
+  appointmentId: string,
+  workOrderNumber: string
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("sched_match_rejections")
+    .delete()
+    .eq("appointment_id", appointmentId)
+    .eq("work_order_number", workOrderNumber);
   if (error) throw error;
 }

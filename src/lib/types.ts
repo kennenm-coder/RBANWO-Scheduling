@@ -158,6 +158,28 @@ export interface CsvImport {
   source: "power_automate" | "manual_upload";
   imported_by: string | null;
   imported_at: string;
+  content_hash: string | null;
+  order_count: number | null;
+  changed_count: number | null;
+  new_count: number | null;
+}
+
+export interface ImportSnapshot {
+  id: string;
+  import_id: string;
+  work_order_number: string;
+  snapshot: Record<string, unknown>;
+  change_summary: Record<string, { old: unknown; new: unknown }> | null;
+  created_at: string;
+}
+
+export interface MatchRejection {
+  id: string;
+  appointment_id: string;
+  work_order_number: string;
+  rejected_by: string | null;
+  rejected_at: string;
+  reason: string | null;
 }
 
 export type ReconciliationStatus =

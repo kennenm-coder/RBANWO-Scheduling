@@ -13,6 +13,7 @@ import {
   ResourceMapping,
   AppointmentLink,
   RForceDismissal,
+  MatchRejection,
   QueueItem,
   QueueItemCategory,
 } from "./types";
@@ -122,7 +123,8 @@ export function buildQueueItems(
   crews: Crew[],
   activeLinks: AppointmentLink[],
   dismissals: RForceDismissal[],
-  mappings: ResourceMapping[]
+  mappings: ResourceMapping[],
+  matchRejections: MatchRejection[] = []
 ): QueueItem[] {
   const items: QueueItem[] = [];
 
@@ -141,6 +143,11 @@ export function buildQueueItems(
   // Dismissed WO+date keys
   const dismissalKeys = new Set(
     dismissals.map((d) => `${d.work_order_number}|${d.rforce_date}`)
+  );
+
+  // Rejected match pairs (appointmentId|workOrderNumber)
+  const rejectedPairs = new Set(
+    matchRejections.map((r) => `${r.appointment_id}|${r.work_order_number}`)
   );
 
   // Run existing reconciliation against scheduled appointments only
@@ -164,7 +171,8 @@ export function buildQueueItems(
           scheduledAppointments,
           crews,
           mappings,
-          activeLinkedAppointmentIds
+          activeLinkedAppointmentIds,
+          rejectedPairs
         );
         if (matches.length > 0) {
           items.push(

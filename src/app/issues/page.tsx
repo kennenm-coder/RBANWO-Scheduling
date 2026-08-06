@@ -73,7 +73,8 @@ export default function IssuesPage() {
   const {
     appointments, crews, rforceOrders, timeOffRequests,
     unscheduledAppointments, activeLinks, resourceMappings,
-    dismissals, flagResolutions, resolveFlag, unresolveFlag,
+    dismissals, flagResolutions, matchRejections,
+    resolveFlag, unresolveFlag,
     approveRForce, dismissRForce, loading,
   } = useData();
   const router = useRouter();
@@ -112,10 +113,10 @@ export default function IssuesPage() {
   const approvalItems = useMemo(() => {
     const allItems = buildQueueItems(
       rforceOrders, appointments, unscheduledAppointments,
-      crews, activeLinks, dismissals, resourceMappings
+      crews, activeLinks, dismissals, resourceMappings, matchRejections
     );
     return allItems.filter((i) => i.category === "needs_confirmation" && i.rforceOrder);
-  }, [rforceOrders, appointments, unscheduledAppointments, crews, activeLinks, dismissals, resourceMappings]);
+  }, [rforceOrders, appointments, unscheduledAppointments, crews, activeLinks, dismissals, resourceMappings, matchRejections]);
 
   const approvalData = useMemo(() => {
     return approvalItems.map((item) => {

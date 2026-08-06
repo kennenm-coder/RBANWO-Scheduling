@@ -136,12 +136,17 @@ function extractHour(isoDatetime: string): number | null {
  * - Are not already linked to a different rForce order
  * - Have a work_order_number that is null OR matches this rForce order
  */
+/**
+ * @param rejectedPairs - Set of "appointmentId|workOrderNumber" keys for
+ *   matches the scheduler has explicitly rejected. These are excluded from results.
+ */
 export function findFuzzyMatches(
   rforceOrder: RForceOrder,
   appointments: Appointment[],
   crews: Crew[],
   mappings: ResourceMapping[],
-  activeLinkedAppointmentIds: Set<string>
+  activeLinkedAppointmentIds: Set<string>,
+  rejectedPairs?: Set<string>
 ): FuzzyMatchCandidate[] {
   const rfDate = rforceOrder.scheduled_start?.slice(0, 10);
   const rfName = rforceOrder.customer_name || "";
@@ -157,6 +162,8 @@ export function findFuzzyMatches(
     if (appt.status === "cancelled" || appt.status === "unscheduled") continue;
     // Skip if already linked to a different WO
     if (activeLinkedAppointmentIds.has(appt.id)) continue;
+    // Skip if scheduler rejected this specific match
+    if (rejectedPairs?.has(`${appt.id}|${rforceOrder.work_order_number}`)) continue;
     // Skip if appointment already has a different WO#
     if (
       appt.work_order_number &&

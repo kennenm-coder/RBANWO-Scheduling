@@ -116,6 +116,7 @@ export default function UnscheduledQueue() {
     activeLinks,
     dismissals,
     resourceMappings,
+    matchRejections,
     mergeRForce,
   } = useData();
 
@@ -136,9 +137,10 @@ export default function UnscheduledQueue() {
         crews,
         activeLinks,
         dismissals,
-        resourceMappings
+        resourceMappings,
+        matchRejections
       ),
-    [rforceOrders, appointments, unscheduledAppointments, crews, activeLinks, dismissals, resourceMappings]
+    [rforceOrders, appointments, unscheduledAppointments, crews, activeLinks, dismissals, resourceMappings, matchRejections]
   );
 
   // Dynamic filter options derived from data
