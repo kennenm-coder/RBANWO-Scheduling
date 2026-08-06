@@ -15,6 +15,7 @@ const CLOSED_WO_STATUSES = new Set([
 
 const CANCELLED_WO_STATUSES = new Set([
   "Canceled",
+  "Cancelled",
 ]);
 
 const SCHEDULED_WO_STATUSES = new Set([
