@@ -338,7 +338,7 @@ export default function CrewLaneWeekView({
             sectionJobCount += cellAppts.length;
             const dateStr = format(day, "yyyy-MM-dd");
             const dayRForce = rforceByDay.get(dateStr) || [];
-            sectionJobCount += dayRForce.filter((r) => r.crewId === crew.id && (r.displayMode === "approval" || (showRForce && (r.displayMode === "regular" || r.displayMode === "synced")))).length;
+            sectionJobCount += dayRForce.filter((r) => r.crewId === crew.id && (r.displayMode === "approval" || (showRForce && r.displayMode === "regular"))).length;
             if (isCrewOffOnDay(crew, day) && cellAppts.length > 0) {
               sectionConflictCount++;
             }
@@ -638,8 +638,9 @@ function MeasureTimeLaneCell({
 
   const approvalItems = cellDisplayItems.filter((d) => d.displayMode === "approval");
   const discrepancyItems = cellDisplayItems.filter((d) => d.displayMode === "discrepancy");
+  // Only show unlinked rForce tiles — synced items duplicate the app tile
   const visibleRForce = cellDisplayItems.filter((d) =>
-    d.displayMode === "synced" || d.displayMode === "regular"
+    d.displayMode === "regular"
   );
   const allRForceSorted = [...(showRForce ? visibleRForce : []), ...approvalItems].sort((a, b) => {
     const blockOrder = MEASURE_TIME_BLOCKS as string[];
@@ -909,8 +910,9 @@ function StandardCell({
 
   const approvalItems = cellDisplayItems.filter((d) => d.displayMode === "approval");
   const discrepancyItems = cellDisplayItems.filter((d) => d.displayMode === "discrepancy");
+  // Only show unlinked rForce tiles — synced items duplicate the app tile
   const visibleRForce = showRForce
-    ? cellDisplayItems.filter((d) => d.displayMode === "synced" || d.displayMode === "regular")
+    ? cellDisplayItems.filter((d) => d.displayMode === "regular")
     : [];
   const discrepancyByApptId = new Map<string, RForceDisplayItem>();
   for (const d of discrepancyItems) {
