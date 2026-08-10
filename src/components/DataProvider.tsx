@@ -161,8 +161,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
       // Auto-cancel appointments whose rForce order is cancelled — keeps
       // calendar slots clear without waiting for a manual reconciliation.
+      // Check both wo_status (appointment-level) and order_status (order-level).
+      const CANCELLED = new Set(["Canceled", "Cancelled"]);
       const cancelledWOs = new Set(
-        r.filter((rf) => rf.wo_status === "Canceled" || rf.wo_status === "Cancelled")
+        r.filter((rf) => CANCELLED.has(rf.wo_status || "") || CANCELLED.has(rf.order_status || ""))
           .map((rf) => rf.work_order_number)
       );
       cancelledWOsRef.current = cancelledWOs;

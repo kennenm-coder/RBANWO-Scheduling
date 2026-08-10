@@ -55,6 +55,7 @@ const CODE_ICON: Record<string, React.ReactNode> = {
   duplicate_link: <Link2 size={14} className="text-warning" />,
   unmapped_resource: <Users size={14} className="text-muted" />,
   source_record_missing: <AlertTriangle size={14} className="text-muted" />,
+  rforce_cancellation_mismatch: <X size={14} className="text-danger" />,
 };
 
 const SEVERITY_ICON: Record<string, React.ReactNode> = {

@@ -314,7 +314,11 @@ export function getRForceItemsForDay(
   for (const rf of rforceOrders) {
     if (!rf.scheduled_start) continue;
     if (linkedWOs.has(rf.work_order_number)) continue;
-    if (rf.wo_status === "Appt Complete / Closed" || rf.wo_status === "Canceled") continue;
+    // Skip completed/cancelled orders — check both wo_status and order_status
+    const woS = rf.wo_status || "";
+    const ordS = rf.order_status || "";
+    if (woS === "Appt Complete / Closed" || woS === "Canceled" || woS === "Cancelled"
+        || ordS === "Canceled" || ordS === "Cancelled") continue;
 
     const startDate = rf.scheduled_start.slice(0, 10);
     const endDate = rf.scheduled_end ? rf.scheduled_end.slice(0, 10) : startDate;
@@ -445,7 +449,11 @@ export function getRForceDisplayItems(
 
   for (const rf of rforceOrders) {
     if (!rf.scheduled_start) continue;
-    if (rf.wo_status === "Appt Complete / Closed" || rf.wo_status === "Canceled") continue;
+    // Skip completed/cancelled orders — check both wo_status and order_status
+    const woS = rf.wo_status || "";
+    const ordS = rf.order_status || "";
+    if (woS === "Appt Complete / Closed" || woS === "Canceled" || woS === "Cancelled"
+        || ordS === "Canceled" || ordS === "Cancelled") continue;
 
     const startDate = rf.scheduled_start.slice(0, 10);
     const endDate = rf.scheduled_end ? rf.scheduled_end.slice(0, 10) : startDate;

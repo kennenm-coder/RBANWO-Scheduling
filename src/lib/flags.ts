@@ -204,8 +204,31 @@ function detectExternalFlags(
     (a) => a.status !== "cancelled" && a.status !== "unscheduled"
   );
 
+  // ── rForce cancelled but app appointment still active ──
+  const CANCELLED_STATUSES = new Set(["Canceled", "Cancelled"]);
+  for (const rf of rforceOrders) {
+    if (!CANCELLED_STATUSES.has(rf.wo_status || "")) continue;
+    const linked = active.find(
+      (a) => a.work_order_number === rf.work_order_number
+    );
+    if (!linked) continue;
+    flags.push(
+      makeFlag("live_app", "rforce_cancellation_mismatch", "error",
+        `${rf.customer_name || rf.work_order_number}: rForce says cancelled but appointment is still active`,
+        "Cancel or remove this appointment — the rForce work order was cancelled.",
+        {
+          appointmentId: linked.id,
+          workOrderNumber: rf.work_order_number,
+          flagCode: "rforce_cancellation_mismatch",
+        },
+        { appointmentId: linked.id, crewId: linked.crew_id || undefined, date: linked.scheduled_date || undefined, workOrderNumber: rf.work_order_number })
+    );
+  }
+
+  // ── Data mismatches between linked pairs ──
   for (const rf of rforceOrders) {
     if (!rf.scheduled_start) continue;
+    if (CANCELLED_STATUSES.has(rf.wo_status || "")) continue; // already handled above
     const rfDate = rf.scheduled_start.slice(0, 10);
     const linked = active.find(
       (a) => a.work_order_number === rf.work_order_number
