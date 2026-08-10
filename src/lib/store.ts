@@ -211,18 +211,38 @@ export async function updateSyncFields(
 
 // ── rForce Orders (CSV import) ──
 
+// Only fetch columns the scheduler actually renders or matches on.
+// Dropping description, combined_retail_total, total_units, windows,
+// patio_doors, doors, contact_name, email, phones, sales_rep, order_owner
+// cuts each row roughly in half.
+const RFORCE_COLUMNS = [
+  "id", "order_number", "work_order_number", "status", "appointment_status",
+  "work_order_type", "customer_name", "address", "scheduled_start",
+  "scheduled_end", "product_count", "windows", "patio_doors", "doors",
+  "primary_resource", "tech_measure", "installer", "service_rep",
+  "order_alerts", "scheduler_notes", "account_name", "updated_at",
+].join(", ");
+
 export async function fetchRForceOrders(): Promise<RForceOrder[]> {
   const sb = getSupabase();
   if (!sb) return [];
+
+  // Only fetch work orders with a scheduled_start in the last 90 days or
+  // later — the scheduler never needs ancient completed history.
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 90);
+  const cutoffISO = cutoff.toISOString();
+
   const all: RForceOrder[] = [];
   let offset = 0;
   const BATCH = 1000;
   while (true) {
     const { data } = await sb
       .from("work_orders")
-      .select("*")
+      .select(RFORCE_COLUMNS)
       .neq("work_order_number", "")
       .not("work_order_number", "is", null)
+      .or(`scheduled_start.gte.${cutoffISO},scheduled_start.is.null`)
       .range(offset, offset + BATCH - 1);
     if (!data || data.length === 0) break;
     all.push(
@@ -235,25 +255,25 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
         work_order_type: row.work_order_type,
         customer_name: row.customer_name,
         address: row.address,
-        booking_date: row.booking_date,
+        booking_date: null,
         scheduled_start: row.scheduled_start,
         scheduled_end: row.scheduled_end,
-        description: row.description || row.service_description || null,
-        combined_retail_total: row.combined_retail_total ?? null,
+        description: null,
+        combined_retail_total: null,
         product_count: row.product_count ?? null,
-        total_units: row.total_units ?? null,
+        total_units: null,
         windows: row.windows ?? null,
         patio_doors: row.patio_doors ?? null,
         doors: row.doors ?? null,
-        order_owner: row.order_owner,
-        sales_rep: row.sales_rep,
+        order_owner: null,
+        sales_rep: null,
         primary_resource: row.primary_resource,
         tech_measure_name: row.tech_measure,
         installer: row.installer,
         service_rep: row.service_rep,
-        contact_name: row.contact_name,
-        email: row.email,
-        phones: row.phones,
+        contact_name: null,
+        email: null,
+        phones: null,
         order_alerts: row.order_alerts || null,
         scheduler_notes: row.scheduler_notes || null,
         account_name: row.account_name || null,
@@ -392,6 +412,13 @@ export interface AccountSuggestion {
 export async function fetchAccountSuggestions(): Promise<AccountSuggestion[]> {
   const sb = getSupabase();
   if (!sb) return [];
+
+  // Only look back 1 year for address suggestions — covers all repeat
+  // customers without scanning the entire historical work_orders table.
+  const cutoff = new Date();
+  cutoff.setFullYear(cutoff.getFullYear() - 1);
+  const cutoffISO = cutoff.toISOString();
+
   const all: AccountSuggestion[] = [];
   let offset = 0;
   const BATCH = 1000;
@@ -402,6 +429,7 @@ export async function fetchAccountSuggestions(): Promise<AccountSuggestion[]> {
       .select("address, account_name, customer_name")
       .not("address", "is", null)
       .neq("address", "")
+      .gte("updated_at", cutoffISO)
       .range(offset, offset + BATCH - 1);
     if (!data || data.length === 0) break;
     for (const row of data) {
