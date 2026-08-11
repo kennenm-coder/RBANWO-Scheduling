@@ -17,7 +17,6 @@ import {
   AppointmentLink,
   Crew,
   RForceOrder,
-  TimeBlock,
   TimeOffRequest,
   SchedulingFlag,
   FlagClass,
@@ -27,31 +26,14 @@ import {
   FlagDifferences,
 } from "./types";
 import { getTimeOffForDate } from "./store";
-
-// ── Helpers ──
-
-const TIME_BLOCK_HOUR: Record<TimeBlock, number> = {
-  "9-10": 9,
-  "10-12": 10,
-  "12-2": 12,
-  "2-4": 14,
-  "4-6": 16,
-  full_day: 8,
-};
-
-const WO_TYPE_MAP: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
-
-function extractHour(isoDatetime: string): number | null {
-  const timePart = isoDatetime.split("T")[1];
-  if (!timePart) return null;
-  const hour = parseInt(timePart.split(":")[0], 10);
-  return isNaN(hour) ? null : hour;
-}
+import {
+  TIME_BLOCK_HOUR,
+  normalizeWoType,
+  extractHour,
+  CANCELLED_STATUSES,
+  getRForceResource,
+  timeBlockMatchesHour,
+} from "./normalize";
 
 /** Build a stable fingerprint string for deduplication and resolution matching. */
 function buildFingerprintId(fp: FlagFingerprint): string {
@@ -205,9 +187,8 @@ function detectExternalFlags(
   );
 
   // ── rForce cancelled but app appointment still active ──
-  const CANCELLED_STATUSES = new Set(["Canceled", "Cancelled"]);
   for (const rf of rforceOrders) {
-    if (!CANCELLED_STATUSES.has(rf.wo_status || "")) continue;
+    if (!CANCELLED_STATUSES.has(rf.wo_status || "") && !CANCELLED_STATUSES.has(rf.order_status || "")) continue;
     const linked = active.find(
       (a) => a.work_order_number === rf.work_order_number
     );
@@ -228,14 +209,14 @@ function detectExternalFlags(
   // ── Data mismatches between linked pairs ──
   for (const rf of rforceOrders) {
     if (!rf.scheduled_start) continue;
-    if (CANCELLED_STATUSES.has(rf.wo_status || "")) continue; // already handled above
+    if (CANCELLED_STATUSES.has(rf.wo_status || "") || CANCELLED_STATUSES.has(rf.order_status || "")) continue; // already handled above
     const rfDate = rf.scheduled_start.slice(0, 10);
     const linked = active.find(
       (a) => a.work_order_number === rf.work_order_number
     );
     if (!linked || !linked.scheduled_date || !linked.crew_id) continue;
 
-    const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+    const rfResource = getRForceResource(rf);
     const linkedCrew = crews.find((c) => c.id === linked.crew_id);
     const linkedCrewName = linkedCrew?.name;
 
@@ -256,16 +237,15 @@ function detectExternalFlags(
       diffs.crew = { app: linkedCrewName || "unassigned", rforce: rfResource };
     }
 
-    // ── Time mismatch ──
+    // ── Time mismatch (using block-range tolerance) ──
     const rforceTime = rf.scheduled_start.slice(11, 16);
     const rforceHour = extractHour(rf.scheduled_start);
     const appStartTime = linked.start_time;
     const appTimeBlock = linked.time_block;
-    const appTimeNorm = appStartTime?.slice(0, 5);
-    const startTimeMismatch = !!(appTimeNorm && rforceTime && appTimeNorm !== rforceTime);
-    const expectedHour = appTimeBlock ? TIME_BLOCK_HOUR[appTimeBlock] : null;
-    const blockMismatch = rforceHour !== null && expectedHour !== null && rforceHour !== expectedHour;
-    const timeMismatch = startTimeMismatch || blockMismatch;
+    // Use block-range tolerance: e.g. 4:30 PM rForce falls within app's "4-6" block
+    const timeMismatch = rforceHour !== null && appTimeBlock
+      ? !timeBlockMatchesHour(appTimeBlock, rforceHour)
+      : false;
     if (timeMismatch) {
       diffs.time = {
         app: appStartTime || appTimeBlock || "none",
@@ -273,9 +253,9 @@ function detectExternalFlags(
       };
     }
 
-    // ── Type mismatch ──
-    const rfTypeMapped = rf.work_order_type ? WO_TYPE_MAP[rf.work_order_type] : undefined;
-    const typeMismatch = rfTypeMapped !== undefined && rfTypeMapped !== linked.appointment_type;
+    // ── Type mismatch (uses full normalizer including LSWP, HOA, Paint/Stain) ──
+    const rfTypeMapped = normalizeWoType(rf.work_order_type);
+    const typeMismatch = rfTypeMapped !== null && rfTypeMapped !== linked.appointment_type;
     if (typeMismatch) {
       diffs.type = { app: linked.appointment_type, rforce: rf.work_order_type || "unknown" };
     }

@@ -5,55 +5,18 @@ import {
   ReconciliationStatus,
   ReconciliationDifferences,
   Crew,
-  TimeBlock,
 } from "./types";
 import { buildSalesforceUrl } from "./salesforce";
-
-const CLOSED_WO_STATUSES = new Set([
-  "Appt Complete / Closed",
-]);
-
-const CANCELLED_WO_STATUSES = new Set([
-  "Canceled",
-  "Cancelled",
-]);
-
-const SCHEDULED_WO_STATUSES = new Set([
-  "Scheduled & Assigned",
-  "Scheduled",
-]);
-
-/** Map a TimeBlock to the expected rForce scheduled_start hour. */
-const TIME_BLOCK_HOUR: Record<TimeBlock, number> = {
-  "9-10": 9,
-  "10-12": 10,
-  "12-2": 12,
-  "2-4": 14,
-  "4-6": 16,
-  full_day: 8,
-};
-
-/** Map rForce work_order_type strings to our AppointmentType values. */
-const WO_TYPE_MAP: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  "Install": "install",
-  "Service": "service",
-  "JIP": "jip",
-};
-
-/** Case-insensitive first-name comparison. */
-function firstNamesMatch(a: string | undefined, b: string | undefined): boolean {
-  if (!a || !b) return true; // if either is missing, treat as non-comparable (match)
-  return a.split(" ")[0].toLowerCase() === b.split(" ")[0].toLowerCase();
-}
-
-/** Extract the hour from an ISO datetime string (e.g. "2024-06-01T14:00:00" -> 14). */
-function extractHour(isoDatetime: string): number | null {
-  const timePart = isoDatetime.split("T")[1];
-  if (!timePart) return null;
-  const hour = parseInt(timePart.split(":")[0], 10);
-  return isNaN(hour) ? null : hour;
-}
+import {
+  COMPLETED_STATUSES,
+  CANCELLED_STATUSES,
+  SCHEDULED_STATUSES,
+  normalizeWoType,
+  extractHour,
+  firstNamesMatch,
+  getRForceResource,
+  timeBlockMatchesHour,
+} from "./normalize";
 
 export function reconcile(
   rforceOrders: RForceOrder[],
@@ -79,9 +42,9 @@ export function reconcile(
     let status: ReconciliationStatus;
     let differences: ReconciliationDifferences | undefined;
 
-    if (CLOSED_WO_STATUSES.has(woStatus)) {
+    if (COMPLETED_STATUSES.has(woStatus)) {
       status = "completed";
-    } else if (CANCELLED_WO_STATUSES.has(woStatus)) {
+    } else if (CANCELLED_STATUSES.has(woStatus)) {
       status = "cancelled";
     } else if (appt) {
       if (!rf.scheduled_start) {
@@ -91,23 +54,21 @@ export function reconcile(
         const rforceDate = rf.scheduled_start.split("T")[0];
         const dateMismatch = rforceDate !== appt.scheduled_date;
 
-        // --- Time comparison ---
+        // --- Time comparison (block-range tolerance) ---
         const rforceHour = extractHour(rf.scheduled_start);
         const appTimeBlock = appt.time_block;
-        const expectedHour = appTimeBlock ? TIME_BLOCK_HOUR[appTimeBlock] : null;
-        const timeMismatch =
-          rforceHour !== null && expectedHour !== null && rforceHour !== expectedHour;
+        const timeMismatch = rforceHour !== null && appTimeBlock
+          ? !timeBlockMatchesHour(appTimeBlock, rforceHour)
+          : false;
 
         // --- Crew comparison ---
-        const rfResource =
-          rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+        const rfResource = getRForceResource(rf);
         const appCrewName = appt.crew_id ? crewMap.get(appt.crew_id) : undefined;
         const crewMismatch = !firstNamesMatch(rfResource ?? undefined, appCrewName);
 
-        // --- Type comparison ---
-        const rfTypeMapped = rf.work_order_type ? WO_TYPE_MAP[rf.work_order_type] : undefined;
-        const typeMismatch =
-          rfTypeMapped !== undefined && rfTypeMapped !== appt.appointment_type;
+        // --- Type comparison (full normalizer) ---
+        const rfTypeMapped = normalizeWoType(rf.work_order_type);
+        const typeMismatch = rfTypeMapped !== null && rfTypeMapped !== appt.appointment_type;
 
         const hasAnyMismatch = dateMismatch || timeMismatch || crewMismatch || typeMismatch;
 
@@ -144,14 +105,13 @@ export function reconcile(
           status = "discrepancy";
         }
       }
-    } else if (SCHEDULED_WO_STATUSES.has(woStatus)) {
+    } else if (SCHEDULED_STATUSES.has(woStatus)) {
       status = "scheduled_rforce_only";
     } else {
       status = "unscheduled";
     }
 
-    const assignedTo =
-      rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+    const assignedTo = getRForceResource(rf);
 
     results.push({
       orderNumber: rf.order_number,

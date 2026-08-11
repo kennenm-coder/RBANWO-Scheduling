@@ -11,8 +11,13 @@ import {
   ResourceMapping,
   FuzzyMatchCandidate,
   MatchConfidence,
-  TimeBlock,
 } from "./types";
+import {
+  normalizeWoType,
+  TIME_BLOCK_HOUR,
+  extractHour,
+  getRForceResource,
+} from "./normalize";
 
 // ── Scoring weights ──
 
@@ -28,22 +33,6 @@ const SCORE_TIME_NEAR = 5;
 
 const THRESHOLD_HIGH = 60;
 const THRESHOLD_MEDIUM = 40;
-
-const WO_TYPE_MAP: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
-
-const TIME_BLOCK_HOUR: Record<TimeBlock, number> = {
-  "9-10": 9,
-  "10-12": 10,
-  "12-2": 12,
-  "2-4": 14,
-  "4-6": 16,
-  full_day: 8,
-};
 
 // ── Helpers ──
 
@@ -95,11 +84,6 @@ function normalizeAddress(s: string): string {
   return normalize(s).replace(/\b(street|st|avenue|ave|drive|dr|road|rd|lane|ln|court|ct|boulevard|blvd)\b/g, "").replace(/\s+/g, " ").trim();
 }
 
-/** Get the rForce crew resource name. */
-function rforceResource(rf: RForceOrder): string | null {
-  return rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep || null;
-}
-
 /** Check if an rForce resource name matches a crew (case-insensitive first name). */
 function resourceMatchesCrew(
   resourceName: string,
@@ -116,13 +100,6 @@ function resourceMatchesCrew(
   const rfFirst = firstName(resourceName);
   const crewFirst = firstName(crew.name);
   return rfFirst.length >= 2 && crewFirst.length >= 2 && rfFirst === crewFirst;
-}
-
-function extractHour(isoDatetime: string): number | null {
-  const timePart = isoDatetime.split("T")[1];
-  if (!timePart) return null;
-  const hour = parseInt(timePart.split(":")[0], 10);
-  return isNaN(hour) ? null : hour;
 }
 
 // ── Main function ──
@@ -151,8 +128,8 @@ export function findFuzzyMatches(
   const rfDate = rforceOrder.scheduled_start?.slice(0, 10);
   const rfName = rforceOrder.customer_name || "";
   const rfAddress = rforceOrder.address || "";
-  const rfResource = rforceResource(rforceOrder);
-  const rfTypeMapped = rforceOrder.work_order_type ? WO_TYPE_MAP[rforceOrder.work_order_type] : null;
+  const rfResource = getRForceResource(rforceOrder);
+  const rfTypeMapped = normalizeWoType(rforceOrder.work_order_type);
   const rfHour = rforceOrder.scheduled_start ? extractHour(rforceOrder.scheduled_start) : null;
 
   const candidates: FuzzyMatchCandidate[] = [];

@@ -9,7 +9,7 @@
  *   Link:        Created with match_method = 'fuzzy'
  */
 
-import { Appointment, RForceOrder, AppointmentLink, AppointmentType } from "./types";
+import { Appointment, RForceOrder, AppointmentLink } from "./types";
 import {
   updateAppointment,
   updateSyncFields,
@@ -17,19 +17,13 @@ import {
   createAppointmentEvent,
 } from "./store";
 import { buildSalesforceUrl } from "./salesforce";
+import { normalizeWoType } from "./normalize";
 
 export interface MergeResult {
   appointment: Appointment;
   link: AppointmentLink | null;
   fieldsUpdated: string[];
 }
-
-const WO_TYPE_MAP: Record<string, AppointmentType> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
 
 export async function mergeRForceIntoAppointment(
   appointment: Appointment,
@@ -74,10 +68,8 @@ export async function mergeRForceIntoAppointment(
     fieldsUpdated.push("product_count");
   }
 
-  const mappedType = rforceOrder.work_order_type
-    ? WO_TYPE_MAP[rforceOrder.work_order_type]
-    : undefined;
-  if (mappedType && mappedType !== appointment.appointment_type) {
+  const mappedType = normalizeWoType(rforceOrder.work_order_type);
+  if (mappedType !== null && mappedType !== appointment.appointment_type) {
     updates.appointment_type = mappedType;
     fieldsUpdated.push("appointment_type");
   }

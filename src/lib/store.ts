@@ -19,6 +19,7 @@ import {
 } from "./types";
 import { timeBlockStartEnd } from "./calendar-utils";
 import { buildSalesforceUrl } from "./salesforce";
+import { normalizeWoType } from "./normalize";
 
 // ── Crews ──
 
@@ -695,13 +696,6 @@ export async function undismissRForceOrder(
 
 // ── Approve rForce Order (one-click create + link) ──
 
-const APPROVE_WO_TYPE_MAP: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
-
 export async function approveRForceOrder(
   rforceOrder: RForceOrder,
   crewId: string,
@@ -711,9 +705,7 @@ export async function approveRForceOrder(
   actorName?: string | null
 ): Promise<{ appointment: Appointment; link: AppointmentLink }> {
   const { start, end } = timeBlockStartEnd(tb);
-  const appointmentType = (rforceOrder.work_order_type
-    ? APPROVE_WO_TYPE_MAP[rforceOrder.work_order_type]
-    : "install") as Appointment["appointment_type"];
+  const appointmentType = (normalizeWoType(rforceOrder.work_order_type) || "install") as Appointment["appointment_type"];
 
   const sb = getSupabase();
   if (!sb) throw new Error("No database connection");
