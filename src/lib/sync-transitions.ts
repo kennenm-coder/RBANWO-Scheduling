@@ -4,8 +4,9 @@
  * Centralizes sync_state logic so individual handlers (drag, reschedule,
  * link, unlink, create) don't embed state-machine rules inline.
  *
- * All transitions are fire-and-forget — a failed sync update never blocks
- * the primary operation.
+ * All transitions are non-blocking — a failed sync update never blocks
+ * the primary operation, but failures are logged to console.warn so
+ * they're observable during development.
  */
 
 import type { Appointment, OriginalEntrySnapshot } from "./types";
@@ -59,8 +60,8 @@ export async function onSchedulerEditedLinkedAppointment(
       after_state: { sync_state: "waiting_for_import" },
       reason: "Scheduler edited a synced appointment",
     });
-  } catch {
-    // Non-critical — sync tracking, not data integrity
+  } catch (err) {
+    console.warn("[sync] Failed to transition to waiting_for_import:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -84,8 +85,8 @@ export async function onAppointmentLinked(
       after_state: { sync_state: "linked_pending_confirmation" },
       reason: "Appointment linked to rForce order",
     });
-  } catch {
-    // Non-critical
+  } catch (err) {
+    console.warn("[sync] Failed to transition to linked_pending_confirmation:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -109,7 +110,7 @@ export async function onAppointmentUnlinked(
       after_state: { sync_state: "manual_awaiting_rforce" },
       reason: "Appointment unlinked from rForce order",
     });
-  } catch {
-    // Non-critical
+  } catch (err) {
+    console.warn("[sync] Failed to transition to manual_awaiting_rforce:", err instanceof Error ? err.message : err);
   }
 }

@@ -152,9 +152,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         fetchAvailabilityRules(),
         fetchActiveLinks(),
         fetchResourceMappings(),
-        fetchDismissals().catch(() => [] as RForceDismissal[]),
-        fetchFlagResolutions().catch(() => [] as FlagResolution[]),
-        fetchMatchRejections().catch(() => [] as MatchRejection[]),
+        fetchDismissals(),
+        fetchFlagResolutions(),
+        fetchMatchRejections(),
         fetchUnscheduledAppointments(),
       ]);
 
@@ -366,7 +366,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         return [...prev, result.appointment];
       });
       if (result.link) {
-        setActiveLinks((prev) => [...prev, result.link]);
+        setActiveLinks((prev) => [...prev, result.link!]);
       }
       return result.appointment;
     },

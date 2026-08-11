@@ -109,8 +109,10 @@ export async function updateAppointment(
 ): Promise<Appointment | null> {
   const sb = getSupabase();
   if (!sb) return null;
-  // Strip fields managed by specific state-transition functions or that may not exist as DB columns yet
-  const { manual_override, override_source, time_block_end, merge_source_wo, origin, sync_state, original_entry_snapshot, last_reconciled_import_id, ...safeUpdates } = updates;
+  // Strip sync-model fields — these are managed exclusively by updateSyncFields()
+  // and sync-transitions.ts to prevent ad-hoc mutations from breaking the state machine.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { origin, sync_state, original_entry_snapshot, last_reconciled_import_id, ...safeUpdates } = updates;
   const { data, error } = await sb
     .from("sched_appointments")
     .update({
@@ -504,7 +506,11 @@ export async function createAppointmentEvent(
 ): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
-  await sb.from("sched_appointment_events").insert(event);
+  const { error } = await sb.from("sched_appointment_events").insert(event);
+  if (error) {
+    // Audit events are non-blocking — log but don't throw
+    console.warn("[audit] Failed to record appointment event:", error.message);
+  }
 }
 
 export async function fetchAppointmentEvents(
@@ -618,13 +624,8 @@ export async function deleteAvailabilityException(id: string): Promise<void> {
 export async function fetchDismissals(): Promise<RForceDismissal[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  try {
-    const { data } = await sb.from("sched_rforce_dismissals").select("*");
-    return (data as RForceDismissal[]) ?? [];
-  } catch {
-    // Table may not exist yet — return empty
-    return [];
-  }
+  const { data } = await sb.from("sched_rforce_dismissals").select("*");
+  return (data as RForceDismissal[]) ?? [];
 }
 
 export async function dismissRForceOrder(
@@ -675,7 +676,7 @@ export async function approveRForceOrder(
   scheduledDate: string,
   actorId?: string | null,
   actorName?: string | null
-): Promise<{ appointment: Appointment; link: AppointmentLink }> {
+): Promise<{ appointment: Appointment; link: AppointmentLink | null }> {
   const { start, end } = timeBlockStartEnd(tb);
   const appointmentType = (normalizeWoType(rforceOrder.work_order_type) || "install") as Appointment["appointment_type"];
 
@@ -726,25 +727,22 @@ export async function approveRForceOrder(
   let link: AppointmentLink | null = null;
   try {
     link = await linkAppointment(typedAppt.id, typedAppt.version, rforceOrder, "auto");
-  } catch {
-    // Link INSERT may fail due to RLS or ALREADY_LINKED — non-fatal
+  } catch (err) {
+    console.warn("[approve] Link creation failed — appointment exists without link:", err instanceof Error ? err.message : err);
   }
 
-  try {
-    await createAppointmentEvent({
-      appointment_id: typedAppt.id,
-      action: "created",
-      actor_id: actorId || null,
-      actor_name_snapshot: actorName || null,
-      before_state: null,
-      after_state: { work_order_number: rforceOrder.work_order_number, source: "rforce_approval" },
-      reason: "Approved from rForce import",
-    });
-  } catch {
-    // Event logging is non-critical
-  }
+  // Audit event (non-blocking — createAppointmentEvent logs its own warnings)
+  await createAppointmentEvent({
+    appointment_id: typedAppt.id,
+    action: "created",
+    actor_id: actorId || null,
+    actor_name_snapshot: actorName || null,
+    before_state: null,
+    after_state: { work_order_number: rforceOrder.work_order_number, source: "rforce_approval" },
+    reason: "Approved from rForce import",
+  });
 
-  return { appointment: typedAppt, link: link! };
+  return { appointment: typedAppt, link };
 }
 
 // ── Flag Resolutions ──
@@ -789,13 +787,8 @@ export async function unresolveFlag(flagKey: string): Promise<void> {
 export async function fetchMatchRejections(): Promise<MatchRejection[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  try {
-    const { data } = await sb.from("sched_match_rejections").select("*");
-    return (data as MatchRejection[]) ?? [];
-  } catch {
-    // Table may not exist yet
-    return [];
-  }
+  const { data } = await sb.from("sched_match_rejections").select("*");
+  return (data as MatchRejection[]) ?? [];
 }
 
 export async function rejectMatch(

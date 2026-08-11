@@ -116,11 +116,11 @@ export async function mergeRForceIntoAppointment(
       origin: "merged",
       sync_state: "in_sync",
     });
-  } catch {
-    // Sync field update is non-critical — merge data is already applied
+  } catch (err) {
+    console.warn("[merge] Sync field update failed:", err instanceof Error ? err.message : err);
   }
 
-  // ── Create link (may fail due to RLS — merge still succeeds) ──
+  // ── Create link ──
 
   let link: AppointmentLink | null = null;
   try {
@@ -130,33 +130,29 @@ export async function mergeRForceIntoAppointment(
       rforceOrder,
       "fuzzy"
     );
-  } catch {
-    // Link INSERT may fail due to RLS or ALREADY_LINKED — non-fatal
+  } catch (err) {
+    console.warn("[merge] Link creation failed — merge data applied but no link:", err instanceof Error ? err.message : err);
   }
 
-  // ── Audit event ──
+  // ── Audit event (non-blocking — createAppointmentEvent logs its own warnings) ──
 
-  try {
-    await createAppointmentEvent({
-      appointment_id: updated.id,
-      action: "merged",
-      actor_id: null,
-      actor_name_snapshot: null,
-      before_state: {
-        work_order_number: appointment.work_order_number,
-        customer_name: appointment.customer_name,
-        address: appointment.address,
-      },
-      after_state: {
-        work_order_number: rforceOrder.work_order_number,
-        merge_source: "fuzzy_match",
-        fields_updated: fieldsUpdated,
-      },
-      reason: `Merged from rForce order ${rforceOrder.work_order_number}`,
-    });
-  } catch {
-    // Audit is non-critical
-  }
+  await createAppointmentEvent({
+    appointment_id: updated.id,
+    action: "merged",
+    actor_id: null,
+    actor_name_snapshot: null,
+    before_state: {
+      work_order_number: appointment.work_order_number,
+      customer_name: appointment.customer_name,
+      address: appointment.address,
+    },
+    after_state: {
+      work_order_number: rforceOrder.work_order_number,
+      merge_source: "fuzzy_match",
+      fields_updated: fieldsUpdated,
+    },
+    reason: `Merged from rForce order ${rforceOrder.work_order_number}`,
+  });
 
   return { appointment: updated, link, fieldsUpdated };
 }
