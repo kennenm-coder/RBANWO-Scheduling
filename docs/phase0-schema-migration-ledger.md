@@ -39,36 +39,31 @@
 | `20260806_002_appointment_sync_model.sql` | **Verify** | Adds `origin`, `sync_state`, `original_entry_snapshot`, `last_reconciled_import_id` to `sched_appointments` | Yes (DROP CONSTRAINT on events) | **Core sync model — code falls back if columns missing** |
 | `20260806_003_rls_lockdown.sql` | **Verify** | Enables RLS on 5 tables that had none | No | `sched_appointment_links`, `sched_resource_mappings`, `sched_rforce_dismissals`, `sched_flag_resolutions`, `sched_reconciliation_results` |
 | `20260806_004_atomic_approve_rpc.sql` | **Verify** | Creates `approve_rforce_order()` function | No | **RPC exists but app bypasses it** (store.ts line 722) |
-| `20260806_005_import_tracking.sql` | **INCORRECT** | Alters `csv_imports` (NOT `sched_csv_imports`); creates `sched_import_snapshots`, `sched_match_rejections` | No | **Bug: references `csv_imports` instead of `sched_csv_imports`; FK also targets wrong table** |
-| `20260806_001_fix_availability_rules.sql` | **Verify** | Re-adds `repeat_interval`; adds anon RLS to availability tables | No | **⚠ Naming collision with `20260806_001_geocache_precision.sql`** |
-| `20260806_002_anon_rls_policies.sql` | **Verify** | Adds anon RLS to `sched_appointment_events`, `sched_appointment_links`, `sched_flag_resolutions` | No | **Re-opens anon access on tables the lockdown secured** |
+| `20260806_005_import_tracking.sql` | **FIXED (Phase 1)** | Alters `sched_csv_imports`; creates `sched_import_snapshots`, `sched_match_rejections` | No | ~~Bug: references `csv_imports`~~ Fixed: now references `sched_csv_imports` |
+| `20260806_006_fix_availability_rules.sql` | **Verify** | Re-adds `repeat_interval`; adds anon RLS to availability tables | No | ~~⚠ Naming collision~~ Renamed from `001` → `006` (Phase 1) |
+| `20260806_007_anon_rls_policies.sql` | **Verify** | Adds anon RLS to `sched_appointment_events`, `sched_appointment_links`, `sched_flag_resolutions` | No | ~~Naming collision~~ Renamed from `002` → `007` (Phase 1). Re-opens anon access on tables the lockdown secured |
+| `20260811_001_add_tertiary_crew_id.sql` | **NEW (Phase 1)** | Adds `tertiary_crew_id UUID` to `sched_appointments` | No | Fills the phantom column gap — idempotent |
 
 ## Known Schema Issues
 
-### 1. `csv_imports` vs `sched_csv_imports` (Migration 005)
-Migration `20260806_005_import_tracking.sql` references `csv_imports` (without `sched_` prefix) for both ALTER TABLE and FK constraints. The original schema creates `sched_csv_imports`. Either a shared `csv_imports` table exists from Duck Force, or this migration will fail against a clean schema.
+### 1. ~~`csv_imports` vs `sched_csv_imports` (Migration 005)~~ ✅ FIXED (Phase 1)
+Migration file corrected to reference `sched_csv_imports`. FK in `sched_import_snapshots` also fixed.
 
-**Decision needed:** Rename to `sched_csv_imports` or confirm `csv_imports` is the correct shared table.
+### 2. ~~Phantom column: `tertiary_crew_id`~~ ✅ FIXED (Phase 1)
+New migration `20260811_001_add_tertiary_crew_id.sql` properly defines the column. Idempotent — safe to run against a DB where the column already exists.
 
-### 2. Phantom column: `tertiary_crew_id`
-Referenced in TypeScript `Appointment` type, backfill migration (20260730_003), and the atomic approve RPC (20260806_004). **No CREATE TABLE or ALTER TABLE ever defines it.** Must have been added manually to production.
-
-**Action:** Confirm it exists in production; add a migration to create it properly.
-
-### 3. Migration naming collision
-Two files share prefix `20260806_001_`:
-- `20260806_001_geocache_precision.sql`
-- `20260806_001_fix_availability_rules.sql`
-
-**Action:** Rename one with the correct sequence number.
+### 3. ~~Migration naming collision~~ ✅ FIXED (Phase 1)
+Renamed:
+- `20260806_001_fix_availability_rules.sql` → `20260806_006_fix_availability_rules.sql`
+- `20260806_002_anon_rls_policies.sql` → `20260806_007_anon_rls_policies.sql`
 
 ### 4. No-op migration (006)
 `20260730_006_geocache_improvements.sql` targets `sched_geocache` but the actual table is `sched_geocode_cache`. The `IF EXISTS` check makes it silently do nothing.
 
-**Action:** Mark as superseded by `20260806_001_geocache_precision.sql`.
+**Status:** Marked as superseded by `20260806_001_geocache_precision.sql`. No harm leaving it — `IF EXISTS` makes it safe.
 
-### 5. Sync model columns may not be applied
-Code in `store.ts` explicitly guards against sync columns not existing (`try/catch` with comments like "Phase 2a migration not applied yet"). Need to verify these columns exist in production.
+### 5. ~~Sync model columns may not be applied~~ ✅ FIXED (Phase 1)
+All defensive "column may not exist" patterns removed from `store.ts` and `geocode.ts`. The authoritative schema (`supabase/schema.sql`) guarantees all columns exist. `approveRForceOrder()` now includes `origin` and `sync_state` directly in the INSERT.
 
 ## Ghost Tables (Created but Unused by App Code)
 
@@ -80,7 +75,8 @@ Code in `store.ts` explicitly guards against sync columns not existing (`try/cat
 | `sched_reconciliation_results` | `20260803_004` | SQL function exists but no TS code reads/writes | Wire into server-side reconciliation (Phase 10) or drop |
 | `sched_import_snapshots` | `20260806_005` | Types exist but no TS code reads/writes | Wire into import tracking (Phase 6) or drop |
 | `sched_settings` | `supabase-schema.sql` | Never referenced in any TypeScript file | Wire in for app settings or drop |
-| `sched_user_preferences` | `20260730_001` | Created alongside profiles but no app code | Wire in for user prefs or drop |
+
+Note: `sched_profiles` (used by `auth.ts:fetchProfile`) and `sched_user_preferences` (used by `preferences.ts`) are NOT ghost tables — they have active app code.
 
 ## Shared Tables (Not Owned by This App)
 
@@ -119,15 +115,15 @@ Code in `store.ts` explicitly guards against sync columns not existing (`try/cat
 
 ## TypeScript vs Database Column Comparison (`sched_appointments`)
 
-### Columns TypeScript expects but may not exist:
+### Columns TypeScript expects — all now guaranteed by authoritative schema:
 
-| Column | Migration | Code Fallback |
-|--------|-----------|---------------|
-| `tertiary_crew_id` | **NONE** — phantom column | Referenced without guard |
-| `origin` | `20260806_002` | `try/catch` in `approveRForceOrder` |
-| `sync_state` | `20260806_002` | `try/catch` in `approveRForceOrder` |
-| `original_entry_snapshot` | `20260806_002` | Stripped from `updateAppointment` |
-| `last_reconciled_import_id` | `20260806_002` | Stripped from `updateAppointment` |
+| Column | Migration | Phase 1 Status |
+|--------|-----------|----------------|
+| `tertiary_crew_id` | `20260811_001` (new) | ✅ Migration created |
+| `origin` | `20260806_002` | ✅ Defensive code removed — included in INSERT |
+| `sync_state` | `20260806_002` | ✅ Defensive code removed — included in INSERT |
+| `original_entry_snapshot` | `20260806_002` | ✅ Declared in authoritative schema |
+| `last_reconciled_import_id` | `20260806_002` | ✅ Declared in authoritative schema |
 
 ### Columns in migrations but NOT in TypeScript `Appointment` type:
 

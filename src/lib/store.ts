@@ -566,9 +566,8 @@ export async function upsertAvailabilityRule(
   const sb = getSupabase();
   if (!sb) return null;
 
-  // Strip repeat_interval on first attempt — column may not exist yet
-  const { repeat_interval, ...coreFields } = rule as Record<string, unknown>;
-  const payload = { ...coreFields, updated_at: new Date().toISOString() };
+  // repeat_interval column is guaranteed by the authoritative schema
+  const payload = { ...rule, updated_at: new Date().toISOString() };
 
   const { data, error } = await sb
     .from("sched_availability_rules")
@@ -576,34 +575,7 @@ export async function upsertAvailabilityRule(
     .select()
     .single();
 
-  if (error) {
-    // If the error is about a missing column, try with repeat_interval included
-    // (migration may have been applied since the initial attempt)
-    if (error.message?.includes("repeat_interval") && repeat_interval != null) {
-      const retryPayload = { ...payload, repeat_interval };
-      const { data: d2, error: e2 } = await sb
-        .from("sched_availability_rules")
-        .upsert(retryPayload)
-        .select()
-        .single();
-      if (e2) throw new Error(e2.message);
-      return d2 as AvailabilityRule | null;
-    }
-    throw new Error(error.message);
-  }
-
-  // If repeat_interval column exists, update it separately (non-fatal)
-  if (repeat_interval != null && repeat_interval !== 1 && data) {
-    try {
-      await sb
-        .from("sched_availability_rules")
-        .update({ repeat_interval })
-        .eq("id", (data as AvailabilityRule).id);
-    } catch {
-      // Column may not exist yet — safe to skip
-    }
-  }
-
+  if (error) throw new Error(error.message);
   return data as AvailabilityRule | null;
 }
 
@@ -710,8 +682,8 @@ export async function approveRForceOrder(
   const sb = getSupabase();
   if (!sb) throw new Error("No database connection");
 
-  // Direct INSERT — skip the RPC (it references origin/sync_state columns
-  // that don't exist in the live DB yet).
+  // Direct INSERT with sync model fields (origin, sync_state).
+  // These columns are guaranteed by the authoritative schema.
   const { data: appt, error } = await sb
     .from("sched_appointments")
     .insert({
@@ -734,6 +706,8 @@ export async function approveRForceOrder(
       product_count: rforceOrder.product_count ?? null,
       salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
       scheduled_by: actorId || null,
+      origin: "rforce_approved",
+      sync_state: "linked_pending_confirmation",
     })
     .select()
     .single();
@@ -748,16 +722,6 @@ export async function approveRForceOrder(
     throw new Error("Insert returned no data — check RLS policies on sched_appointments");
   }
   const typedAppt = appt as Appointment;
-
-  // Try to set sync fields (non-fatal — columns may not exist yet)
-  try {
-    await updateSyncFields(typedAppt.id, {
-      origin: "rforce_approved",
-      sync_state: "linked_pending_confirmation",
-    });
-  } catch {
-    // Phase 2a migration not applied yet — safe to skip
-  }
 
   let link: AppointmentLink | null = null;
   try {
@@ -788,13 +752,8 @@ export async function approveRForceOrder(
 export async function fetchFlagResolutions(): Promise<FlagResolution[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  try {
-    const { data } = await sb.from("sched_flag_resolutions").select("*");
-    return (data as FlagResolution[]) ?? [];
-  } catch {
-    // Table may not exist yet — return empty
-    return [];
-  }
+  const { data } = await sb.from("sched_flag_resolutions").select("*");
+  return (data as FlagResolution[]) ?? [];
 }
 
 export async function resolveFlag(

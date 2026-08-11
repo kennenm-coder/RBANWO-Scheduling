@@ -27,7 +27,6 @@ import {
 } from "./types";
 import { getTimeOffForDate } from "./store";
 import {
-  TIME_BLOCK_HOUR,
   normalizeWoType,
   extractHour,
   CANCELLED_STATUSES,
