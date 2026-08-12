@@ -18,7 +18,7 @@
 -- Shared tables (work_orders, time_off_requests) belong to Duck Force and
 -- are read-only from this app's perspective.
 --
--- Last updated: 2026-08-11  (Phase 1 — authoritative schema consolidation)
+-- Last updated: 2026-08-12  (Phases 6/8/9/12 — import boundary, RLS gaps, import snapshots)
 -- ============================================================================
 
 
@@ -385,6 +385,23 @@ CREATE TABLE sched_user_preferences (
 );
 
 
+-- ── 1.15  sched_import_snapshots ──
+-- Per-order data snapshot at each CSV import. Enables change-detection.
+-- Wired up by Phase 6 (import-boundary.ts).
+
+CREATE TABLE sched_import_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  import_id UUID NOT NULL REFERENCES sched_csv_imports(id) ON DELETE CASCADE,
+  work_order_number TEXT NOT NULL,
+  snapshot JSONB NOT NULL,
+  change_summary JSONB,               -- null if first seen; {field: {old, new}}
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_import_snapshots_wo ON sched_import_snapshots(work_order_number);
+CREATE INDEX idx_import_snapshots_import ON sched_import_snapshots(import_id);
+
+
 -- ╔══════════════════════════════════════════════════════════════════════════╗
 -- ║  SECTION 2: GHOST TABLES (created by migrations, not used by app)      ║
 -- ╠══════════════════════════════════════════════════════════════════════════╣
@@ -400,7 +417,6 @@ CREATE TABLE sched_user_preferences (
 -- ║    sched_flags                — flags computed client-side in flags.ts  ║
 -- ║    sched_appointment_resources — app uses inline crew_id columns       ║
 -- ║    sched_reconciliation_results — reconciliation is client-side        ║
--- ║    sched_import_snapshots     — import change detection never wired    ║
 -- ║    sched_settings             — no settings UI exists                  ║
 -- ╚══════════════════════════════════════════════════════════════════════════╝
 
@@ -487,13 +503,26 @@ CREATE POLICY "Authenticated can manage exceptions"
 CREATE POLICY "Anon can manage availability exceptions"
   ON sched_availability_exceptions FOR ALL TO anon USING (true) WITH CHECK (true);
 
--- Resource mappings: authenticated full access
+-- Resource mappings: authenticated + anon full access
 ALTER TABLE sched_resource_mappings ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Authenticated can manage mappings"
   ON sched_resource_mappings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Anon can manage resource mappings"
+  ON sched_resource_mappings FOR ALL TO anon USING (true) WITH CHECK (true);
 
--- Dismissals: no RLS enabled (oversight — Phase 13 will fix)
--- ALTER TABLE sched_rforce_dismissals ENABLE ROW LEVEL SECURITY;
+-- Dismissals: authenticated + anon full access
+ALTER TABLE sched_rforce_dismissals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Authenticated can manage dismissals"
+  ON sched_rforce_dismissals FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Anon can manage dismissals"
+  ON sched_rforce_dismissals FOR ALL TO anon USING (true) WITH CHECK (true);
+
+-- Import snapshots: authenticated + anon full access
+ALTER TABLE sched_import_snapshots ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Authenticated can manage snapshots"
+  ON sched_import_snapshots FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Anon can manage import snapshots"
+  ON sched_import_snapshots FOR ALL TO anon USING (true) WITH CHECK (true);
 
 -- Flag resolutions: authenticated + anon full access
 ALTER TABLE sched_flag_resolutions ENABLE ROW LEVEL SECURITY;
@@ -502,12 +531,14 @@ CREATE POLICY "Authenticated can manage resolutions"
 CREATE POLICY "Anon can manage flag resolutions"
   ON sched_flag_resolutions FOR ALL TO anon USING (true) WITH CHECK (true);
 
--- Match rejections: authenticated full access
+-- Match rejections: authenticated + anon full access
 ALTER TABLE sched_match_rejections ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Authenticated can read rejections"
   ON sched_match_rejections FOR SELECT TO authenticated USING (true);
 CREATE POLICY "Authenticated can manage rejections"
   ON sched_match_rejections FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Anon can manage match rejections"
+  ON sched_match_rejections FOR ALL TO anon USING (true) WITH CHECK (true);
 
 -- Geocode cache: no RLS (no sensitive data, internal use only)
 
