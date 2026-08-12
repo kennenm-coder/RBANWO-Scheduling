@@ -144,7 +144,7 @@ export default function CrewBlockView({
 
   if (filterType === "all" || filterType === "tech_measure") {
     if (measureCrews.length > 0)
-      sections.push({ title: "MEASURES", crews: measureCrews, isService: false });
+      sections.push({ title: "MEASURES", crews: measureCrews, isService: true });
   }
   if (filterType === "all" || filterType === "install") {
     if (installCrews.length > 0)
@@ -156,10 +156,7 @@ export default function CrewBlockView({
   }
   if (filterType === "all" || filterType === "service") {
     if (serviceCrews.length > 0)
-      // Service appointments are all full_day, so one row per crew like installs.
-      // If hourly time_blocks are used in the future, set isService: true to
-      // enable per-block sub-rows.
-      sections.push({ title: "SERVICE", crews: serviceCrews, isService: false });
+      sections.push({ title: "SERVICE", crews: serviceCrews, isService: true });
   }
 
   return (
