@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { Appointment, Crew } from "@/lib/types";
 import { typeLabel } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
-import { MapPin, Unlink, AlertTriangle, CheckCircle } from "lucide-react";
+import { useData } from "./DataProvider";
+import { MapPin, Unlink, AlertTriangle, CheckCircle, Undo2 } from "lucide-react";
 
 interface Props {
   appointment: Appointment;
@@ -30,7 +32,23 @@ export default function AppointmentCard({
   showRForce,
   onClick,
 }: Props) {
+  const { unscheduleAppointment } = useData();
+  const [unscheduling, setUnscheduling] = useState(false);
   const bgColor = crew?.color || "#1a73e8";
+
+  const handleUnschedule = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (unscheduling) return;
+    if (!confirm(`Unschedule ${appointment.customer_name}? It will return to the queue.`)) return;
+    setUnscheduling(true);
+    try {
+      await unscheduleAppointment(appointment.id, appointment.version, "Unscheduled from calendar");
+    } catch {
+      alert("Failed to unschedule. The appointment may have been modified.");
+    } finally {
+      setUnscheduling(false);
+    }
+  };
   const city = parseCity(appointment.address);
 
   const helpers: string[] = [];
@@ -46,16 +64,26 @@ export default function AppointmentCard({
   return (
     <div
       onClick={onClick}
-      className="rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-white text-xs leading-tight overflow-hidden"
+      className="group/card relative rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-white text-xs leading-tight overflow-hidden"
       style={{ backgroundColor: bgColor }}
     >
+      {/* Unschedule button — visible on hover */}
+      <button
+        onClick={handleUnschedule}
+        disabled={unscheduling}
+        className="absolute top-1 right-1 p-1 rounded-full bg-black/30 hover:bg-red-600 text-white opacity-0 group-hover/card:opacity-100 transition-opacity z-10"
+        title="Unschedule — return to queue"
+        aria-label="Unschedule appointment"
+      >
+        <Undo2 size={12} className={unscheduling ? "animate-spin" : ""} />
+      </button>
       {orderAlerts && (
         <div className="flex items-start gap-1 bg-yellow-400/30 text-yellow-100 rounded px-1.5 py-0.5 mb-1 text-[10px] leading-snug">
           <AlertTriangle size={10} className="shrink-0 mt-0.5" />
           <span className="line-clamp-2">{orderAlerts}</span>
         </div>
       )}
-      <div className="font-semibold truncate flex items-center gap-1">
+      <div className="font-semibold truncate flex items-center gap-1 pr-5">
         {appointment.customer_name}
         {hasDiscrepancy && (
           <AlertTriangle size={10} className="shrink-0 text-yellow-200" />

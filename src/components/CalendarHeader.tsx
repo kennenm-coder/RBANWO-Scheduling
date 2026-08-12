@@ -278,6 +278,14 @@ export default function CalendarHeader({
           >
             Week
           </button>
+          <button
+            onClick={() => onViewChange("block")}
+            className={`px-2.5 py-1 text-[11px] font-semibold transition-colors ${viewMode === "block" ? "bg-primary text-white" : "hover:bg-surface text-muted"}`}
+            aria-label="Block view"
+            title="Block view (B)"
+          >
+            Block
+          </button>
         </div>
         <div className="w-px h-4 bg-border mx-0.5" />
         <button
