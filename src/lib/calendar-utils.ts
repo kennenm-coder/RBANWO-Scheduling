@@ -116,7 +116,10 @@ export function getAppointmentsForCrewAndDay(
   date: Date
 ): Appointment[] {
   return getAppointmentsForDay(appointments, date).filter(
-    (a) => a.crew_id === crewId || a.secondary_crew_id === crewId
+    (a) =>
+      a.crew_id === crewId ||
+      a.secondary_crew_id === crewId ||
+      a.tertiary_crew_id === crewId
   );
 }
 

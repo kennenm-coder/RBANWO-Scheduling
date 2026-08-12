@@ -161,7 +161,8 @@ export async function manualCorrectGeocode(address: string, lat: number, lng: nu
   const sb = getSupabase();
   if (!sb) return;
   const hash = addressHash(address);
-  const { error } = await sb.from("sched_geocode_cache").upsert({
+  // All columns guaranteed by the authoritative schema
+  await sb.from("sched_geocode_cache").upsert({
     address_hash: hash,
     address_original: address,
     lat,
@@ -173,16 +174,6 @@ export async function manualCorrectGeocode(address: string, lat: number, lng: nu
     source: "manual",
     updated_at: new Date().toISOString(),
   });
-  if (error) {
-    await sb.from("sched_geocode_cache").upsert({
-      address_hash: hash,
-      address_original: address,
-      lat,
-      lng,
-      geocoded_at: new Date().toISOString(),
-      source: "manual",
-    });
-  }
 }
 
 export { extractState, isResultInState, STATE_BOUNDS };

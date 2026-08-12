@@ -124,7 +124,7 @@ export function getBlockedTimeBlocks(
   const dayAppts = appointments.filter(
     (a) =>
       a.status !== "cancelled" &&
-      (a.crew_id === crewId || a.secondary_crew_id === crewId) &&
+      (a.crew_id === crewId || a.secondary_crew_id === crewId || a.tertiary_crew_id === crewId) &&
       a.scheduled_date === dateStr
   );
 
