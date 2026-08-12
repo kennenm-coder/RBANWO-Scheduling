@@ -26,7 +26,7 @@ function getSavedView(): ViewMode {
 }
 
 export default function CalendarPage() {
-  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions } = useData();
+  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions } = useData();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [filterType, setFilterType] = useState<AppointmentType | "all">("all");
@@ -37,7 +37,7 @@ export default function CalendarPage() {
   const [showRForce, setShowRForce] = useState(false);
 
   const flagCount = useMemo(() => {
-    const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks);
+    const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions);
     const resolvedKeys = new Set(flagResolutions.map((r) => r.flag_key));
     // Apply resolutions to get correct states, then count only actionable
     const withState = allFlags.map((f) => {
@@ -46,7 +46,7 @@ export default function CalendarPage() {
       return f;
     });
     return withState.filter((f) => f.state === "open" && f.severity !== "info").length;
-  }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions]);
+  }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions]);
 
   const initializedRef = useRef(false);
 

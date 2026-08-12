@@ -7,6 +7,7 @@ import {
 } from "./flags";
 import type {
   Appointment,
+  AvailabilityRule,
   Crew,
   RForceOrder,
   TimeOffRequest,
@@ -183,6 +184,87 @@ describe("detectFlags", () => {
       const appt = makeAppointment({ crew_id: null, status: "unscheduled" });
       const flags = detectFlags([appt], [makeCrew()], [], [], []);
       expect(flags.filter((f) => f.code === "missing_crew")).toHaveLength(0);
+    });
+
+    it("flags invalid resource type (measure tech on install)", () => {
+      const appt = makeAppointment({ appointment_type: "install" });
+      const crew = makeCrew({ crew_type: "measure_tech" });
+      const flags = detectFlags([appt], [crew], [], [], []);
+      const invalid = flags.filter((f) => f.code === "invalid_resource_type");
+      expect(invalid).toHaveLength(1);
+      expect(invalid[0].severity).toBe("warning");
+    });
+
+    it("does not flag valid resource type", () => {
+      const appt = makeAppointment({ appointment_type: "install" });
+      const crew = makeCrew({ crew_type: "install_in_house" });
+      const flags = detectFlags([appt], [crew], [], [], []);
+      expect(flags.filter((f) => f.code === "invalid_resource_type")).toHaveLength(0);
+    });
+
+    it("respects additional_types for eligibility", () => {
+      const appt = makeAppointment({ appointment_type: "tech_measure" });
+      const crew = makeCrew({ crew_type: "install_in_house", additional_types: ["measure_tech"] });
+      const flags = detectFlags([appt], [crew], [], [], []);
+      expect(flags.filter((f) => f.code === "invalid_resource_type")).toHaveLength(0);
+    });
+
+    it("flags missing time block", () => {
+      const appt = makeAppointment({ time_block: null });
+      const flags = detectFlags([appt], [makeCrew()], [], [], []);
+      const missing = flags.filter((f) => f.code === "missing_time");
+      expect(missing).toHaveLength(1);
+      expect(missing[0].severity).toBe("warning");
+    });
+
+    it("flags multi-day double booking", () => {
+      const appt1 = makeAppointment({
+        id: "appt-1", time_block: "full_day",
+        scheduled_date: "2026-08-06", duration_days: 3,
+      });
+      const appt2 = makeAppointment({
+        id: "appt-2", time_block: "full_day",
+        scheduled_date: "2026-08-08", duration_days: 1,
+      });
+      const flags = detectFlags([appt1, appt2], [makeCrew()], [], [], []);
+      const doubles = flags.filter((f) => f.code === "double_booking");
+      expect(doubles).toHaveLength(1);
+      expect(doubles[0].message).toContain("multi-day overlap");
+    });
+
+    it("flags duplicate work order number", () => {
+      const appt1 = makeAppointment({ id: "appt-1", work_order_number: "WO-100" });
+      const appt2 = makeAppointment({ id: "appt-2", work_order_number: "WO-100", time_block: "10-12" });
+      const flags = detectFlags([appt1, appt2], [makeCrew()], [], [], []);
+      const dupes = flags.filter((f) => f.code === "duplicate_app_appointment");
+      expect(dupes).toHaveLength(1);
+    });
+
+    it("flags availability conflict (full day PTO)", () => {
+      const appt = makeAppointment({ scheduled_date: "2026-08-06" });
+      const crew = makeCrew();
+      const rule: AvailabilityRule = {
+        id: "rule-1",
+        crew_id: "crew-1",
+        kind: "pto",
+        department: null,
+        start_time: null,
+        end_time: null,
+        weekdays: [],
+        repeat_interval: 1,
+        effective_start: "2026-08-06",
+        effective_end: "2026-08-06",
+        reason: "Vacation",
+        is_active: true,
+        created_by: null,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      };
+      const flags = detectFlags([appt], [crew], [], [], [], [rule], []);
+      const conflicts = flags.filter((f) => f.code === "availability_conflict");
+      expect(conflicts).toHaveLength(1);
+      expect(conflicts[0].severity).toBe("error");
+      expect(conflicts[0].message).toContain("Vacation");
     });
   });
 

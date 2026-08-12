@@ -121,7 +121,8 @@ export function checkSchedulingConflicts(
       if (overlapBlock) {
         // Determine the conflict type
         let reason: SchedulingConflict["reason"] = "same_block";
-        if (existing.scheduled_date !== startDate && existing.duration_days > 1) {
+        if (existing.duration_days > 1 || durationDays > 1) {
+          // Either the existing or new appointment spans multiple days
           reason = "multi_day_overlap";
         } else if (existing.time_block_end || timeBlockEnd) {
           reason = "multi_block_overlap";

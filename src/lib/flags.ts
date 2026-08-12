@@ -15,8 +15,11 @@
 import {
   Appointment,
   AppointmentLink,
+  AvailabilityRule,
+  AvailabilityException,
   Crew,
   RForceOrder,
+  ResourceMapping,
   TimeOffRequest,
   SchedulingFlag,
   FlagClass,
@@ -34,6 +37,8 @@ import {
   timeBlockMatchesHour,
 } from "./normalize";
 import { checkSchedulingConflicts } from "./scheduling-validation";
+import { getCrewAvailability } from "./availability";
+import { parseISO } from "date-fns";
 
 /** Build a stable fingerprint string for deduplication and resolution matching. */
 function buildFingerprintId(fp: FlagFingerprint): string {
@@ -81,7 +86,9 @@ function makeFlag(
 function detectLiveAppFlags(
   appointments: Appointment[],
   crews: Crew[],
-  timeOffRequests: TimeOffRequest[]
+  timeOffRequests: TimeOffRequest[],
+  availabilityRules?: AvailabilityRule[],
+  availabilityExceptions?: AvailabilityException[]
 ): SchedulingFlag[] {
   const flags: SchedulingFlag[] = [];
   const active = appointments.filter(
@@ -214,6 +221,60 @@ function detectLiveAppFlags(
           { appointmentId: appt.id, date: appt.scheduled_date })
       );
     }
+
+    // ── Availability conflict (crew scheduled during PTO/block rule) ──
+    if (availabilityRules && availabilityRules.length > 0 && appt.time_block) {
+      const date = parseISO(appt.scheduled_date);
+      const dayAvail = getCrewAvailability(
+        appt.crew_id,
+        date,
+        availabilityRules,
+        availabilityExceptions || []
+      );
+      if (!dayAvail.available) {
+        flags.push(
+          makeFlag("live_app", "availability_conflict", "error",
+            `${crewName} is ${dayAvail.reason || "unavailable"} on ${appt.scheduled_date} but is scheduled for ${appt.customer_name}`,
+            "Move the appointment to a different date or crew.",
+            { appointmentId: appt.id, flagCode: "availability_conflict" },
+            { appointmentId: appt.id, crewId: appt.crew_id, date: appt.scheduled_date })
+        );
+      } else if (dayAvail.unavailableBlocks.has(appt.time_block)) {
+        flags.push(
+          makeFlag("live_app", "availability_conflict", "warning",
+            `${crewName} is unavailable during ${appt.time_block} on ${appt.scheduled_date} but is scheduled for ${appt.customer_name}`,
+            "Move the appointment to an available time block.",
+            {
+              appointmentId: appt.id, flagCode: "availability_conflict",
+              affectedField: "time_block", appValue: appt.time_block,
+            },
+            { appointmentId: appt.id, crewId: appt.crew_id, date: appt.scheduled_date })
+        );
+      }
+    }
+  }
+
+  // ── Duplicate app appointments (same WO# on multiple active appointments) ──
+  const woToAppts = new Map<string, Appointment[]>();
+  for (const appt of active) {
+    if (!appt.work_order_number) continue;
+    const existing = woToAppts.get(appt.work_order_number) || [];
+    existing.push(appt);
+    woToAppts.set(appt.work_order_number, existing);
+  }
+  for (const [wo, appts] of woToAppts) {
+    if (appts.length <= 1) continue;
+    // Flag only the first one (to avoid N duplicate flags)
+    flags.push(
+      makeFlag("live_app", "duplicate_app_appointment", "warning",
+        `Work order ${wo} appears on ${appts.length} active appointments`,
+        "Cancel or merge the duplicate appointments.",
+        {
+          appointmentId: appts[0].id, flagCode: "duplicate_app_appointment",
+          workOrderNumber: wo,
+        },
+        { appointmentId: appts[0].id, workOrderNumber: wo })
+    );
   }
 
   return flags;
@@ -460,9 +521,12 @@ export function detectFlags(
   crews: Crew[],
   rforceOrders: RForceOrder[],
   timeOffRequests: TimeOffRequest[],
-  activeLinks?: AppointmentLink[]
+  activeLinks?: AppointmentLink[],
+  availabilityRules?: AvailabilityRule[],
+  availabilityExceptions?: AvailabilityException[],
+  _resourceMappings?: ResourceMapping[]
 ): SchedulingFlag[] {
-  const liveFlags = detectLiveAppFlags(appointments, crews, timeOffRequests);
+  const liveFlags = detectLiveAppFlags(appointments, crews, timeOffRequests, availabilityRules, availabilityExceptions);
   const externalFlags = detectExternalFlags(appointments, crews, rforceOrders);
   const workflowFlags = activeLinks
     ? detectWorkflowFlags(appointments, activeLinks)

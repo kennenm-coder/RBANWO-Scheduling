@@ -64,12 +64,12 @@ const CLASS_LABELS: Record<FlagClass, string> = {
 };
 
 export default function IssueCenter({ onClose, onNavigate }: Props) {
-  const { appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, resolveFlag, unresolveFlag } = useData();
+  const { appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions, resolveFlag, unresolveFlag } = useData();
   const [showWaiting, setShowWaiting] = useState(true);
 
   const rawFlags = useMemo(
-    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks),
-    [appointments, crews, rforceOrders, timeOffRequests, activeLinks]
+    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions),
+    [appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions]
   );
 
   const resolvedKeys = useMemo(() => {
