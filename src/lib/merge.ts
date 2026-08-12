@@ -24,6 +24,7 @@ import {
 } from "./store";
 import { buildSalesforceUrl } from "./salesforce";
 import { normalizeWoType } from "./normalize";
+import { learnResourceMapping } from "./resource-learning";
 
 export interface MergeResult {
   appointment: Appointment;
@@ -190,6 +191,12 @@ export async function mergeRForceIntoAppointment(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     warnings.push(`Audit event not recorded: ${msg}`);
+  }
+
+  // ── Step 5: Learn resource mapping (fire-and-forget) ──
+  // The appointment's crew_id is the scheduler-confirmed crew for this rForce order.
+  if (updated.crew_id) {
+    learnResourceMapping(rforceOrder, updated.crew_id);
   }
 
   return { appointment: updated, link, fieldsUpdated, warnings };

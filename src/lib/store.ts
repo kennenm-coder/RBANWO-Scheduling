@@ -20,6 +20,7 @@ import {
 import { timeBlockStartEnd } from "./calendar-utils";
 import { buildSalesforceUrl } from "./salesforce";
 import { normalizeWoType } from "./normalize";
+import { learnResourceMapping } from "./resource-learning";
 
 // ── Crews ──
 
@@ -756,6 +757,9 @@ export async function approveRForceOrder(
     const msg = err instanceof Error ? err.message : String(err);
     warnings.push(`Audit event not recorded: ${msg}`);
   }
+
+  // Step 4: Learn resource mapping (fire-and-forget)
+  learnResourceMapping(rforceOrder, crewId);
 
   return { appointment: typedAppt, link, warnings };
 }
