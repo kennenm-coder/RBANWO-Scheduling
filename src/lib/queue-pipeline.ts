@@ -17,7 +17,7 @@ import {
   QueueItem,
   QueueItemCategory,
 } from "./types";
-import { findFuzzyMatches } from "./fuzzy-match";
+import { buildFuzzyMatchIndex, findFuzzyMatchesIndexed } from "./fuzzy-match";
 import { reconcile } from "./reconcile";
 import { normalizeWoType } from "./wo-type-colors";
 import { typeLabel } from "./calendar-utils";
@@ -153,6 +153,12 @@ export function buildQueueItems(
   // Run existing reconciliation against scheduled appointments only
   const reconResults = reconcile(rforceOrders, scheduledAppointments, crews);
 
+  // Build fuzzy match index ONCE, reused for all scheduled_rforce_only results.
+  // This pre-computes normalized names/addresses/crew lookups so each match
+  // call skips O(M) normalization work — down from O(N×M) to O(N×M') where
+  // M' is only the comparison + scoring loop.
+  const fuzzyIndex = buildFuzzyMatchIndex(scheduledAppointments, crews, activeLinkedAppointmentIds);
+
   for (const r of reconResults) {
     const rf = rfByWo.get(r.workOrderNumber);
 
@@ -166,12 +172,10 @@ export function buildQueueItems(
       case "scheduled_rforce_only": {
         if (!rf) break;
         // Check for fuzzy match → merge suggested vs needs confirmation
-        const matches = findFuzzyMatches(
+        const matches = findFuzzyMatchesIndexed(
           rf,
-          scheduledAppointments,
-          crews,
+          fuzzyIndex,
           mappings,
-          activeLinkedAppointmentIds,
           rejectedPairs
         );
         if (matches.length > 0) {
