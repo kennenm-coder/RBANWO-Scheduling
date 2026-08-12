@@ -233,8 +233,8 @@ export default function CrewBlockView({
       {/* Edit modal */}
       {editingAppt && (
         <ScheduleModal
-          mode="edit"
-          appointment={editingAppt}
+          date={editingAppt.scheduled_date ? new Date(editingAppt.scheduled_date + "T00:00:00") : new Date()}
+          editingAppointment={editingAppt}
           onClose={() => setEditingAppt(null)}
         />
       )}
@@ -242,8 +242,9 @@ export default function CrewBlockView({
       {/* Reschedule modal */}
       {reschedulingAppt && (
         <ScheduleModal
-          mode="reschedule"
-          appointment={reschedulingAppt}
+          date={reschedulingAppt.scheduled_date ? new Date(reschedulingAppt.scheduled_date + "T00:00:00") : new Date()}
+          editingAppointment={reschedulingAppt}
+          rescheduleMode
           onClose={() => setReschedulingAppt(null)}
         />
       )}
