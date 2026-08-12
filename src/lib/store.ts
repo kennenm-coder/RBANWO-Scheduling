@@ -1,4 +1,4 @@
-import { getSupabase } from "./supabase";
+import { getSupabase, requireSupabase } from "./supabase";
 import {
   Appointment,
   AppointmentOrigin,
@@ -36,8 +36,7 @@ export async function fetchCrews(): Promise<Crew[]> {
 export async function upsertCrew(
   crew: Partial<Crew> & { name: string; crew_type: string }
 ): Promise<Crew | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_crews")
     .upsert({ ...crew, updated_at: new Date().toISOString() })
@@ -86,8 +85,7 @@ export async function fetchAppointments(
 export async function createAppointment(
   appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>
 ): Promise<Appointment | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_appointments")
     .insert(appt)
@@ -107,8 +105,7 @@ export async function updateAppointment(
   version: number,
   updates: Partial<Appointment>
 ): Promise<Appointment | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   // Strip sync-model fields — these are managed exclusively by updateSyncFields()
   // and sync-transitions.ts to prevent ad-hoc mutations from breaking the state machine.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -153,8 +150,7 @@ export async function unscheduleAppointment(
   version: number,
   reason?: string
 ): Promise<Appointment | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_appointments")
     .update({
@@ -193,7 +189,12 @@ export async function fetchUnscheduledAppointments(): Promise<Appointment[]> {
 
 // ── Sync State Transitions ──
 
-/** Controlled update of sync-model fields. Bypasses the ad-hoc strip in updateAppointment. */
+/**
+ * Controlled update of sync-model fields. Bypasses the ad-hoc strip in updateAppointment.
+ * Uses optimistic concurrency when a version is provided — throws VERSION_CONFLICT if
+ * another mutation raced ahead. When version is omitted, updates unconditionally
+ * (used by background sync where we accept last-writer-wins).
+ */
 export async function updateSyncFields(
   id: string,
   fields: {
@@ -201,15 +202,30 @@ export async function updateSyncFields(
     sync_state?: SyncState;
     original_entry_snapshot?: OriginalEntrySnapshot | null;
     last_reconciled_import_id?: string | null;
-  }
+  },
+  version?: number
 ): Promise<void> {
-  const sb = getSupabase();
-  if (!sb) return;
-  const { error } = await sb
+  const sb = requireSupabase();
+  const updatePayload: Record<string, unknown> = {
+    ...fields,
+    updated_at: new Date().toISOString(),
+  };
+  if (version !== undefined) {
+    updatePayload.version = version + 1;
+  }
+  let query = sb
     .from("sched_appointments")
-    .update({ ...fields, updated_at: new Date().toISOString() })
+    .update(updatePayload)
     .eq("id", id);
+  if (version !== undefined) {
+    query = query.eq("version", version);
+  }
+  const { error, count } = await query;
   if (error) throw error;
+  // When using version check, count=0 means the row was already modified
+  if (version !== undefined && count === 0) {
+    throw new Error("VERSION_CONFLICT");
+  }
 }
 
 // ── rForce Orders (CSV import) ──
@@ -346,8 +362,7 @@ export async function unlinkAppointment(
   linkId: string,
   reason: string
 ): Promise<void> {
-  const sb = getSupabase();
-  if (!sb) return;
+  const sb = requireSupabase();
   const { error } = await sb
     .from("sched_appointment_links")
     .update({
@@ -375,8 +390,7 @@ export async function upsertResourceMapping(
   rawName: string,
   crewId: string
 ): Promise<ResourceMapping | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_resource_mappings")
     .upsert(
@@ -554,8 +568,7 @@ export async function upsertAvailabilityRule(
     effective_start: string;
   }
 ): Promise<AvailabilityRule | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
 
   // repeat_interval column is guaranteed by the authoritative schema
   const payload = { ...rule, updated_at: new Date().toISOString() };
@@ -583,8 +596,7 @@ export async function deleteAvailabilityRule(id: string): Promise<void> {
 export async function upsertAvailabilityException(
   exc: Omit<AvailabilityException, "id" | "created_at">
 ): Promise<AvailabilityException | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_availability_exceptions")
     .upsert(exc)
@@ -619,8 +631,7 @@ export async function dismissRForceOrder(
   rforceStartTime?: string,
   reason?: string
 ): Promise<RForceDismissal | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_rforce_dismissals")
     .upsert(
@@ -743,8 +754,7 @@ export async function resolveFlag(
   flagKey: string,
   notes?: string
 ): Promise<FlagResolution | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_flag_resolutions")
     .upsert(
@@ -782,8 +792,7 @@ export async function rejectMatch(
   rejectedBy?: string | null,
   reason?: string
 ): Promise<MatchRejection | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_match_rejections")
     .upsert(
