@@ -830,7 +830,7 @@ function CrewSection({
                       </div>
                       {/* App layer (bottom) */}
                       <div
-                        className={`relative min-h-[44px] cursor-pointer transition-colors ${dragOverCrewId === crew.id ? "bg-primary/10 ring-2 ring-primary ring-inset" : ""}`}
+                        className={`relative min-h-[44px] cursor-pointer transition-colors ${dragOverCrewId === crew.id ? "bg-primary/15 outline outline-2 outline-dashed outline-primary" : ""}`}
                         onClick={() => onCellClick(crew.id, "full_day")}
                         onDragOver={handleRowDragOver}
                         onDragLeave={handleRowDragLeave}
@@ -906,7 +906,7 @@ function CrewSection({
                   ) : (
                     /* Single-layer layout (rForce off or no rForce content) */
                     <div
-                      className={`flex-1 relative min-h-[90px] cursor-pointer transition-colors ${dragOverCrewId === crew.id ? "bg-primary/10 ring-2 ring-primary ring-inset" : ""}`}
+                      className={`flex-1 relative min-h-[90px] cursor-pointer transition-colors ${dragOverCrewId === crew.id ? "bg-primary/15 outline outline-2 outline-dashed outline-primary" : ""}`}
                       onClick={() => onCellClick(crew.id, "full_day")}
                       onDragOver={handleRowDragOver}
                       onDragLeave={handleRowDragLeave}

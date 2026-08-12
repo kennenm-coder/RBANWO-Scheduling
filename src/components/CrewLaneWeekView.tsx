@@ -690,7 +690,7 @@ function MeasureTimeLaneCell({
           : off
             ? (timeOffColor ? "" : "bg-time-off-light/60")
             : ""
-      } ${cellDragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+      } ${cellDragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
       style={off && !hasConflict && timeOffColor ? offStyle : hasConflict && timeOffColor ? { backgroundColor: `${timeOffColor}20` } : undefined}
       onDragOver={handleCellDragOver}
       onDragLeave={handleCellDragLeave}
@@ -755,7 +755,7 @@ function MeasureTimeLaneCell({
             return (
               <div
                 key={block}
-                className={`flex items-stretch min-h-[18px] border-b border-border/20 last:border-b-0 ${isDropTarget ? "ring-2 ring-primary ring-inset bg-primary/5" : ""}`}
+                className={`flex items-stretch min-h-[18px] border-b border-border/20 last:border-b-0 ${isDropTarget ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
                 onDragOver={handleBlockDragOver}
                 onDragLeave={handleBlockDragLeave}
                 onDrop={handleBlockDrop}
@@ -966,7 +966,7 @@ function StandardCell({
   if (off && !hasContent) {
     return (
       <td
-        className={`p-0.5 border-b border-border border-l border-l-border/30 align-top ${timeOffColor ? "" : "bg-time-off-light/40"} ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+        className={`p-0.5 border-b border-border border-l border-l-border/30 align-top ${timeOffColor ? "" : "bg-time-off-light/40"} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
         style={timeOffColor ? offStyle : undefined}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -985,7 +985,7 @@ function StandardCell({
   if (crewUnavailable && !hasContent) {
     return (
       <td
-        className={`p-0.5 border-b border-border border-l border-l-border/30 align-top bg-muted/5 ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+        className={`p-0.5 border-b border-border border-l border-l-border/30 align-top bg-muted/5 ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1005,7 +1005,7 @@ function StandardCell({
           : off
             ? (timeOffColor ? "" : "bg-time-off-light/40")
             : ""
-      } ${dragOver ? "ring-2 ring-primary ring-inset" : ""}`}
+      } ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
       style={
         hasConflict && timeOffColor
           ? { backgroundColor: `${timeOffColor}20` }
