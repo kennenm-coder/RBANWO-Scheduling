@@ -356,14 +356,6 @@ import {
   CANCELLED_STATUSES,
 } from "./normalize";
 
-/** @deprecated Import from "@/lib/normalize" instead. */
-export const WO_TYPE_MAP: Record<string, AppointmentType> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
-
 function compareLinkedPair(
   appt: Appointment,
   rf: RForceOrder,

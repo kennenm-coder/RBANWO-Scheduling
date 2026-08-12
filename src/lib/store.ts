@@ -290,21 +290,6 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
   return all;
 }
 
-/** @deprecated Use linkAppointment() which writes to sched_appointment_links */
-export async function linkAppointmentToRForce(
-  appointmentId: string,
-  version: number,
-  rforceOrder: RForceOrder
-): Promise<Appointment | null> {
-  return updateAppointment(appointmentId, version, {
-    work_order_number: rforceOrder.work_order_number,
-    order_number: rforceOrder.order_number,
-    salesforce_url: rforceOrder.work_order_number
-      ? `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${rforceOrder.work_order_number}`
-      : null,
-  });
-}
-
 // ── Appointment Links ──
 
 export async function fetchActiveLinks(): Promise<AppointmentLink[]> {
