@@ -344,10 +344,7 @@ export function getRForceItemsForDay(
   return items;
 }
 
-// Re-export from centralized normalize module for backward compatibility
-export { normalizeWoType as _normalizeWoType } from "./normalize";
 import {
-  TIME_BLOCK_HOUR as _TIME_BLOCK_HOUR,
   normalizeWoType,
   getRForceResource,
   timeBlockMatchesHour,

@@ -19,7 +19,7 @@ import {
 } from "./types";
 import { buildFuzzyMatchIndex, findFuzzyMatchesIndexed } from "./fuzzy-match";
 import { reconcile } from "./reconcile";
-import { normalizeWoType } from "./wo-type-colors";
+import { normalizeWoTypeOrUnknown } from "./normalize";
 import { typeLabel } from "./calendar-utils";
 
 // ── Address parsing ──
@@ -71,7 +71,7 @@ function enrichItem(
 ): QueueItem {
   const rawType = rf?.work_order_type || (appt ? typeLabel(appt.appointment_type) : undefined);
   const normalizedWoType = rf
-    ? normalizeWoType(rf.work_order_type)
+    ? normalizeWoTypeOrUnknown(rf.work_order_type)
     : appt
       ? appt.appointment_type
       : "unknown";

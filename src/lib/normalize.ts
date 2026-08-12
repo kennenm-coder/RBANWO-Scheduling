@@ -33,13 +33,25 @@ const RAW_WO_TYPE_TO_CANONICAL: Record<string, AppointmentType> = {
   "Stain": "paint_stain",
 };
 
+/** Case-insensitive lookup map built at module load time. */
+const RAW_WO_TYPE_LOWER = new Map<string, AppointmentType>(
+  Object.entries(RAW_WO_TYPE_TO_CANONICAL).map(([k, v]) => [k.toLowerCase(), v])
+);
+
 /**
  * Normalize a raw rForce work_order_type string to a canonical AppointmentType.
  * Returns `null` for unrecognized or missing values.
+ * Lookup order: exact → trimmed → case-insensitive.
  */
 export function normalizeWoType(raw: string | null | undefined): AppointmentType | null {
   if (!raw) return null;
-  return RAW_WO_TYPE_TO_CANONICAL[raw] ?? RAW_WO_TYPE_TO_CANONICAL[raw.trim()] ?? null;
+  const trimmed = raw.trim();
+  return (
+    RAW_WO_TYPE_TO_CANONICAL[raw] ??
+    RAW_WO_TYPE_TO_CANONICAL[trimmed] ??
+    RAW_WO_TYPE_LOWER.get(trimmed.toLowerCase()) ??
+    null
+  );
 }
 
 /**

@@ -47,6 +47,19 @@ describe("normalizeWoType", () => {
     expect(normalizeWoType(" Install ")).toBe("install");
     expect(normalizeWoType("  Tech Measure  ")).toBe("tech_measure");
   });
+
+  it("handles case-insensitive values", () => {
+    expect(normalizeWoType("install")).toBe("install");
+    expect(normalizeWoType("INSTALL")).toBe("install");
+    expect(normalizeWoType("tech measure")).toBe("tech_measure");
+    expect(normalizeWoType("TECH MEASURE")).toBe("tech_measure");
+    expect(normalizeWoType("jip")).toBe("jip");
+    expect(normalizeWoType("lswp")).toBe("lswp");
+    expect(normalizeWoType("hoa")).toBe("hoa");
+    expect(normalizeWoType("paint/stain")).toBe("paint_stain");
+    expect(normalizeWoType("SERVICE")).toBe("service");
+    expect(normalizeWoType("job site visit")).toBe("jip");
+  });
 });
 
 describe("normalizeWoTypeOrUnknown", () => {
