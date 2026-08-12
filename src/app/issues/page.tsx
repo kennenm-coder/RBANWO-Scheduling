@@ -70,6 +70,29 @@ const CLASS_LABELS: Record<FlagClass, string> = {
   workflow: "Data integrity",
 };
 
+// ── Human-readable labels for flag codes ──
+const FLAG_CODE_LABELS: Record<string, string> = {
+  double_booking: "Double Booking",
+  time_off_conflict: "Time Off Conflict",
+  missing_crew: "Missing Crew",
+  missing_scheduled_date: "Missing Date",
+  missing_time: "Missing Time",
+  missing_address: "Missing Address",
+  invalid_resource_type: "Invalid Crew Type",
+  availability_conflict: "Availability Conflict",
+  duplicate_app_appointment: "Duplicate WO#",
+  date_mismatch: "Date Mismatch",
+  time_mismatch: "Time Mismatch",
+  resource_mismatch: "Crew Mismatch",
+  type_mismatch: "Type Mismatch",
+  rforce_cancellation_mismatch: "rForce Cancelled",
+  manual_override_active: "Manual Override",
+  unlinked_appointment: "Unlinked",
+  duplicate_link: "Duplicate Link",
+  unmapped_resource: "Unmapped Resource",
+  source_record_missing: "Source Missing",
+};
+
 export default function IssuesPage() {
   const {
     appointments, crews, rforceOrders, timeOffRequests,
@@ -89,6 +112,8 @@ export default function IssuesPage() {
   const [errorMap, setErrorMap] = useState<Map<string, string>>(new Map());
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; errors: number } | null>(null);
+  const [codeFilter, setCodeFilter] = useState<string>("all");
+  const [expandedFlagId, setExpandedFlagId] = useState<string | null>(null);
 
   // Detect all flags
   const rawFlags = useMemo(

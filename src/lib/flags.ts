@@ -177,14 +177,22 @@ function detectLiveAppFlags(
 
     // ── Invalid resource type (crew type doesn't match appointment type) ──
     if (crew) {
+      // Which crew types can handle each appointment type.
+      // "management" is eligible for everything (managers cover any role).
+      // Cross-eligibility reflects real-world scheduling patterns:
+      //   - JIP crews also handle service
+      //   - Service crews also handle installs
+      //   - Install crews also handle service
+      const MANAGEMENT = "management";
       const ELIGIBLE: Record<string, string[]> = {
-        tech_measure: ["measure_tech"],
-        install: ["install_in_house", "install_sub", "jip"],
-        service: ["svc"],
-        jip: ["jip"],
-        lswp: ["install_in_house", "install_sub"],
-        hoa: ["install_in_house", "install_sub"],
-        paint_stain: ["install_in_house", "install_sub"],
+        tech_measure: ["measure_tech", MANAGEMENT],
+        install: ["install_in_house", "install_sub", "jip", "svc", MANAGEMENT],
+        service: ["svc", "jip", "install_in_house", "install_sub", MANAGEMENT],
+        jip: ["jip", MANAGEMENT],
+        lswp: ["install_in_house", "install_sub", MANAGEMENT],
+        hoa: ["install_in_house", "install_sub", MANAGEMENT],
+        paint_stain: ["install_in_house", "install_sub", MANAGEMENT],
+        job_site_visit: ["jip", MANAGEMENT],
       };
       const eligible = ELIGIBLE[appt.appointment_type] || [];
       const allCrewTypes = [crew.crew_type, ...(crew.additional_types || [])];

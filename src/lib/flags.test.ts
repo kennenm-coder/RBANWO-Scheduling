@@ -208,6 +208,30 @@ describe("detectFlags", () => {
       expect(flags.filter((f) => f.code === "invalid_resource_type")).toHaveLength(0);
     });
 
+    it("management crews are eligible for any appointment type", () => {
+      const types = ["install", "service", "tech_measure", "jip"] as const;
+      for (const apptType of types) {
+        const appt = makeAppointment({ appointment_type: apptType });
+        const crew = makeCrew({ crew_type: "management" });
+        const flags = detectFlags([appt], [crew], [], [], []);
+        expect(flags.filter((f) => f.code === "invalid_resource_type")).toHaveLength(0);
+      }
+    });
+
+    it("jip crews can handle service appointments", () => {
+      const appt = makeAppointment({ appointment_type: "service" });
+      const crew = makeCrew({ crew_type: "jip" });
+      const flags = detectFlags([appt], [crew], [], [], []);
+      expect(flags.filter((f) => f.code === "invalid_resource_type")).toHaveLength(0);
+    });
+
+    it("svc crews can handle install appointments", () => {
+      const appt = makeAppointment({ appointment_type: "install" });
+      const crew = makeCrew({ crew_type: "svc" });
+      const flags = detectFlags([appt], [crew], [], [], []);
+      expect(flags.filter((f) => f.code === "invalid_resource_type")).toHaveLength(0);
+    });
+
     it("flags missing time block", () => {
       const appt = makeAppointment({ time_block: null });
       const flags = detectFlags([appt], [makeCrew()], [], [], []);
