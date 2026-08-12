@@ -11,7 +11,7 @@ import {
   MEASURE_TIME_BLOCKS,
   INSTALL_TIME_BLOCKS,
 } from "./calendar-utils";
-import { Appointment, TimeBlock } from "./types";
+import { Appointment } from "./types";
 import { parseISO } from "date-fns";
 
 /** Create a local-timezone Date from YYYY-MM-DD (avoids UTC midnight → previous day issue) */

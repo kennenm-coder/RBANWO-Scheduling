@@ -1,5 +1,5 @@
 import { Crew, CrewType, AppointmentType, Appointment, TimeBlock } from "./types";
-import { timeBlockStartEnd, MEASURE_TIME_BLOCKS, getSpannedBlocks } from "./calendar-utils";
+import { MEASURE_TIME_BLOCKS, getSpannedBlocks } from "./calendar-utils";
 import { addDays, parseISO } from "date-fns";
 
 export function crewHasType(crew: Crew, ...types: CrewType[]): boolean {

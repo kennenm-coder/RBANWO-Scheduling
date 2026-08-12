@@ -7,7 +7,7 @@ import {
   getBlockedTimeBlocks,
   getAvailableTimeBlocks,
 } from "./crew-utils";
-import { Crew, Appointment, TimeBlock } from "./types";
+import { Crew, Appointment } from "./types";
 
 function makeCrew(overrides: Partial<Crew> = {}): Crew {
   return {

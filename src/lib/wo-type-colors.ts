@@ -3,8 +3,6 @@
  * These colors apply ONLY to the queue — calendar cards continue using crew colors.
  */
 
-import { AppointmentType } from "./types";
-
 export interface WoTypeColor {
   label: string;
   /** Tailwind border-left color class */

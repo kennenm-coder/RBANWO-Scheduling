@@ -265,7 +265,7 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
       .range(offset, offset + BATCH - 1);
     if (!data || data.length === 0) break;
     all.push(
-      ...(data as any[]).map((row) => ({
+      ...(data as unknown as Record<string, unknown>[]).map((row) => ({
         id: row.id,
         order_number: row.order_number,
         work_order_number: row.work_order_number,

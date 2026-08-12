@@ -10,7 +10,6 @@ import type {
   AvailabilityRule,
   Crew,
   RForceOrder,
-  TimeOffRequest,
   AppointmentLink,
   SchedulingFlag,
 } from "./types";
