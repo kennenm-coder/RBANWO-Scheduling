@@ -75,6 +75,7 @@ export default function IssuesPage() {
     appointments, crews, rforceOrders, timeOffRequests,
     unscheduledAppointments, activeLinks, resourceMappings,
     dismissals, flagResolutions, matchRejections,
+    availabilityRules, availabilityExceptions,
     resolveFlag, unresolveFlag,
     approveRForce, dismissRForce, loading,
   } = useData();
@@ -91,8 +92,8 @@ export default function IssuesPage() {
 
   // Detect all flags
   const rawFlags = useMemo(
-    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks),
-    [appointments, crews, rforceOrders, timeOffRequests, activeLinks]
+    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions),
+    [appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions]
   );
 
   // Apply resolutions → set state to waiting_for_import where appropriate

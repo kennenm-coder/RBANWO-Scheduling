@@ -11,8 +11,13 @@ import {
   ResourceMapping,
   FuzzyMatchCandidate,
   MatchConfidence,
-  TimeBlock,
 } from "./types";
+import {
+  normalizeWoType,
+  TIME_BLOCK_HOUR,
+  extractHour,
+  getRForceResource,
+} from "./normalize";
 
 // ── Scoring weights ──
 
@@ -28,22 +33,6 @@ const SCORE_TIME_NEAR = 5;
 
 const THRESHOLD_HIGH = 60;
 const THRESHOLD_MEDIUM = 40;
-
-const WO_TYPE_MAP: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
-
-const TIME_BLOCK_HOUR: Record<TimeBlock, number> = {
-  "9-10": 9,
-  "10-12": 10,
-  "12-2": 12,
-  "2-4": 14,
-  "4-6": 16,
-  full_day: 8,
-};
 
 // ── Helpers ──
 
@@ -95,11 +84,6 @@ function normalizeAddress(s: string): string {
   return normalize(s).replace(/\b(street|st|avenue|ave|drive|dr|road|rd|lane|ln|court|ct|boulevard|blvd)\b/g, "").replace(/\s+/g, " ").trim();
 }
 
-/** Get the rForce crew resource name. */
-function rforceResource(rf: RForceOrder): string | null {
-  return rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep || null;
-}
-
 /** Check if an rForce resource name matches a crew (case-insensitive first name). */
 function resourceMatchesCrew(
   resourceName: string,
@@ -118,11 +102,69 @@ function resourceMatchesCrew(
   return rfFirst.length >= 2 && crewFirst.length >= 2 && rfFirst === crewFirst;
 }
 
-function extractHour(isoDatetime: string): number | null {
-  const timePart = isoDatetime.split("T")[1];
-  if (!timePart) return null;
-  const hour = parseInt(timePart.split(":")[0], 10);
-  return isNaN(hour) ? null : hour;
+// ── Pre-computed appointment index for batch fuzzy matching ──
+
+export interface FuzzyMatchIndex {
+  /** Appointments eligible for matching (not cancelled, not linked, has schedule data) */
+  eligible: Appointment[];
+  /** Pre-computed normalized customer names keyed by appointment id */
+  normalizedNames: Map<string, string>;
+  /** Pre-computed first names keyed by appointment id */
+  firstNames: Map<string, string>;
+  /** Pre-computed last names keyed by appointment id */
+  lastNames: Map<string, string>;
+  /** Pre-computed normalized addresses keyed by appointment id (first 15 chars) */
+  addressPrefixes: Map<string, string>;
+  /** Crews keyed by id */
+  crewMap: Map<string, Crew>;
+  /** Appointments indexed by date for fast ±1 day lookup */
+  byDate: Map<string, Appointment[]>;
+}
+
+/**
+ * Build a reusable index for fuzzy matching. Call once per queue rebuild,
+ * then pass to findFuzzyMatchesIndexed for each rForce order.
+ * This avoids re-normalizing the same names/addresses N×M times.
+ */
+export function buildFuzzyMatchIndex(
+  appointments: Appointment[],
+  crews: Crew[],
+  activeLinkedAppointmentIds: Set<string>
+): FuzzyMatchIndex {
+  const eligible: Appointment[] = [];
+  const normalizedNames = new Map<string, string>();
+  const firstNames = new Map<string, string>();
+  const lastNames = new Map<string, string>();
+  const addressPrefixes = new Map<string, string>();
+  const byDate = new Map<string, Appointment[]>();
+
+  for (const appt of appointments) {
+    if (appt.status === "cancelled" || appt.status === "unscheduled") continue;
+    if (activeLinkedAppointmentIds.has(appt.id)) continue;
+    if (!appt.scheduled_date || !appt.crew_id) continue;
+
+    eligible.push(appt);
+
+    // Pre-compute name variants
+    if (appt.customer_name) {
+      normalizedNames.set(appt.id, normalize(appt.customer_name));
+      firstNames.set(appt.id, firstName(appt.customer_name));
+      lastNames.set(appt.id, lastName(appt.customer_name));
+    }
+
+    // Pre-compute address prefix
+    if (appt.address) {
+      addressPrefixes.set(appt.id, normalizeAddress(appt.address).slice(0, 15));
+    }
+
+    // Index by date (and adjacent dates for ±1 day lookup)
+    const existing = byDate.get(appt.scheduled_date) || [];
+    existing.push(appt);
+    byDate.set(appt.scheduled_date, existing);
+  }
+
+  const crewMap = new Map(crews.map((c) => [c.id, c]));
+  return { eligible, normalizedNames, firstNames, lastNames, addressPrefixes, crewMap, byDate };
 }
 
 // ── Main function ──
@@ -135,8 +177,7 @@ function extractHour(isoDatetime: string): number | null {
  * - Are not cancelled or unscheduled
  * - Are not already linked to a different rForce order
  * - Have a work_order_number that is null OR matches this rForce order
- */
-/**
+ *
  * @param rejectedPairs - Set of "appointmentId|workOrderNumber" keys for
  *   matches the scheduler has explicitly rejected. These are excluded from results.
  */
@@ -148,50 +189,71 @@ export function findFuzzyMatches(
   activeLinkedAppointmentIds: Set<string>,
   rejectedPairs?: Set<string>
 ): FuzzyMatchCandidate[] {
+  // Build a one-off index (use buildFuzzyMatchIndex + findFuzzyMatchesIndexed for batch)
+  const index = buildFuzzyMatchIndex(appointments, crews, activeLinkedAppointmentIds);
+  return findFuzzyMatchesIndexed(rforceOrder, index, mappings, rejectedPairs);
+}
+
+/**
+ * Indexed version — uses a pre-built FuzzyMatchIndex for batch operations.
+ * Call buildFuzzyMatchIndex once, then call this for each rForce order.
+ */
+export function findFuzzyMatchesIndexed(
+  rforceOrder: RForceOrder,
+  index: FuzzyMatchIndex,
+  mappings: ResourceMapping[],
+  rejectedPairs?: Set<string>
+): FuzzyMatchCandidate[] {
   const rfDate = rforceOrder.scheduled_start?.slice(0, 10);
   const rfName = rforceOrder.customer_name || "";
   const rfAddress = rforceOrder.address || "";
-  const rfResource = rforceResource(rforceOrder);
-  const rfTypeMapped = rforceOrder.work_order_type ? WO_TYPE_MAP[rforceOrder.work_order_type] : null;
+  const rfResource = getRForceResource(rforceOrder);
+  const rfTypeMapped = normalizeWoType(rforceOrder.work_order_type);
   const rfHour = rforceOrder.scheduled_start ? extractHour(rforceOrder.scheduled_start) : null;
+
+  // Pre-compute rForce name variants once per call (not per appointment)
+  const nRfName = rfName ? normalize(rfName) : "";
+  const rfFirst = rfName ? firstName(rfName) : "";
+  const rfLast = rfName ? lastName(rfName) : "";
+  const nRfAddr = rfAddress ? normalizeAddress(rfAddress).slice(0, 15) : "";
 
   const candidates: FuzzyMatchCandidate[] = [];
 
-  for (const appt of appointments) {
-    // Skip cancelled/unscheduled
-    if (appt.status === "cancelled" || appt.status === "unscheduled") continue;
-    // Skip if already linked to a different WO
-    if (activeLinkedAppointmentIds.has(appt.id)) continue;
-    // Skip if scheduler rejected this specific match
-    if (rejectedPairs?.has(`${appt.id}|${rforceOrder.work_order_number}`)) continue;
+  for (const appt of index.eligible) {
     // Skip if appointment already has a different WO#
     if (
       appt.work_order_number &&
       appt.work_order_number !== rforceOrder.work_order_number
     ) continue;
-    // Skip if no scheduling data
-    if (!appt.scheduled_date || !appt.crew_id) continue;
+    // Skip if scheduler rejected this specific match
+    if (rejectedPairs?.has(`${appt.id}|${rforceOrder.work_order_number}`)) continue;
 
     let score = 0;
     const reasons: string[] = [];
 
-    // ── Customer name ──
-    if (rfName && appt.customer_name) {
-      const nRf = normalize(rfName);
-      const nApp = normalize(appt.customer_name);
-
-      if (nRf === nApp) {
-        score += SCORE_NAME_EXACT;
-        reasons.push("Same customer name");
-      } else if (lastName(rfName) === lastName(appt.customer_name) && lastName(rfName).length >= 3) {
-        score += SCORE_NAME_FIRST;
-        reasons.push("Same last name");
-      } else if (firstName(rfName) === firstName(appt.customer_name) && firstName(rfName).length >= 2) {
-        score += SCORE_NAME_FIRST;
-        reasons.push("Same first name");
-      } else if (levenshtein(nRf, nApp) <= 2) {
-        score += SCORE_NAME_FUZZY;
-        reasons.push("Similar name");
+    // ── Customer name (using pre-computed values) ──
+    if (nRfName) {
+      const nApp = index.normalizedNames.get(appt.id);
+      if (nApp) {
+        if (nRfName === nApp) {
+          score += SCORE_NAME_EXACT;
+          reasons.push("Same customer name");
+        } else {
+          const appLast = index.lastNames.get(appt.id) || "";
+          if (rfLast === appLast && rfLast.length >= 3) {
+            score += SCORE_NAME_FIRST;
+            reasons.push("Same last name");
+          } else {
+            const appFirst = index.firstNames.get(appt.id) || "";
+            if (rfFirst === appFirst && rfFirst.length >= 2) {
+              score += SCORE_NAME_FIRST;
+              reasons.push("Same first name");
+            } else if (levenshtein(nRfName, nApp) <= 2) {
+              score += SCORE_NAME_FUZZY;
+              reasons.push("Similar name");
+            }
+          }
+        }
       }
     }
 
@@ -207,21 +269,29 @@ export function findFuzzyMatches(
       }
     }
 
-    // ── Crew ──
+    // ── Early exit: if no name or date score, can't reach threshold ──
+    // Max remaining = crew(20) + address(15) + type(10) + time(5) = 50
+    // But we need at least THRESHOLD_MEDIUM (40). Without name or date,
+    // max is 50 which can only reach medium if ALL other signals match.
+    // Skip Levenshtein-heavy work for clearly-unrelated appointments.
+    if (score === 0 && rfDate && appt.scheduled_date) {
+      const diff = dateDiffDays(rfDate, appt.scheduled_date);
+      if (diff > 1) continue; // No date proximity, no name match — skip
+    }
+
+    // ── Crew (using pre-indexed crew map) ──
     if (rfResource && appt.crew_id) {
-      const crew = crews.find((c) => c.id === appt.crew_id);
+      const crew = index.crewMap.get(appt.crew_id);
       if (crew && resourceMatchesCrew(rfResource, crew, mappings)) {
         score += SCORE_CREW_MATCH;
         reasons.push("Same crew");
       }
     }
 
-    // ── Address ──
-    if (rfAddress && appt.address) {
-      const nRfAddr = normalizeAddress(rfAddress);
-      const nAppAddr = normalizeAddress(appt.address);
-      // Compare first 15 chars (street number + start of street name)
-      if (nRfAddr.slice(0, 15) === nAppAddr.slice(0, 15) && nRfAddr.length >= 5) {
+    // ── Address (using pre-computed prefix) ──
+    if (nRfAddr) {
+      const appPrefix = index.addressPrefixes.get(appt.id);
+      if (appPrefix && nRfAddr === appPrefix && nRfAddr.length >= 5) {
         score += SCORE_ADDRESS_MATCH;
         reasons.push("Same address");
       }

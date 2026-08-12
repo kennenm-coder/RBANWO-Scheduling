@@ -15,9 +15,11 @@
 import {
   Appointment,
   AppointmentLink,
+  AvailabilityRule,
+  AvailabilityException,
   Crew,
   RForceOrder,
-  TimeBlock,
+  ResourceMapping,
   TimeOffRequest,
   SchedulingFlag,
   FlagClass,
@@ -27,31 +29,16 @@ import {
   FlagDifferences,
 } from "./types";
 import { getTimeOffForDate } from "./store";
-
-// ── Helpers ──
-
-const TIME_BLOCK_HOUR: Record<TimeBlock, number> = {
-  "9-10": 9,
-  "10-12": 10,
-  "12-2": 12,
-  "2-4": 14,
-  "4-6": 16,
-  full_day: 8,
-};
-
-const WO_TYPE_MAP: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
-
-function extractHour(isoDatetime: string): number | null {
-  const timePart = isoDatetime.split("T")[1];
-  if (!timePart) return null;
-  const hour = parseInt(timePart.split(":")[0], 10);
-  return isNaN(hour) ? null : hour;
-}
+import {
+  normalizeWoType,
+  extractHour,
+  CANCELLED_STATUSES,
+  getRForceResource,
+  timeBlockMatchesHour,
+} from "./normalize";
+import { checkSchedulingConflicts } from "./scheduling-validation";
+import { getCrewAvailability } from "./availability";
+import { parseISO } from "date-fns";
 
 /** Build a stable fingerprint string for deduplication and resolution matching. */
 function buildFingerprintId(fp: FlagFingerprint): string {
@@ -99,7 +86,9 @@ function makeFlag(
 function detectLiveAppFlags(
   appointments: Appointment[],
   crews: Crew[],
-  timeOffRequests: TimeOffRequest[]
+  timeOffRequests: TimeOffRequest[],
+  availabilityRules?: AvailabilityRule[],
+  availabilityExceptions?: AvailabilityException[]
 ): SchedulingFlag[] {
   const flags: SchedulingFlag[] = [];
   const active = appointments.filter(
@@ -152,29 +141,74 @@ function detectLiveAppFlags(
       );
     }
 
-    // ── Double booking ──
-    if (appt.time_block) {
-      const sameBlock = active.filter(
-        (a) =>
-          a.id !== appt.id &&
-          a.crew_id === appt.crew_id &&
-          a.scheduled_date === appt.scheduled_date &&
-          a.time_block === appt.time_block
+    // ── Double booking (covers multi-day, multi-block, and full-day conflicts) ──
+    if (appt.time_block && appt.scheduled_date) {
+      const conflicts = checkSchedulingConflicts(
+        appt.crew_id,
+        appt.scheduled_date,
+        appt.duration_days,
+        appt.time_block,
+        appt.time_block_end,
+        active,
+        appt.id
       );
-      // Only flag once per pair (lower id flags it)
-      if (sameBlock.length > 0 && appt.id < sameBlock[0].id) {
+      for (const conflict of conflicts) {
+        // Only flag once per pair: the appointment with the lower ID reports it
+        if (appt.id > conflict.conflictingAppointmentId) continue;
+
+        const reasonLabel = conflict.reason === "multi_day_overlap"
+          ? "multi-day overlap" : conflict.reason === "multi_block_overlap"
+          ? "multi-block overlap" : conflict.reason === "full_day_conflict"
+          ? "full-day conflict" : `${conflict.conflictBlock} block`;
+
         flags.push(
           makeFlag("live_app", "double_booking", "error",
-            `${crewName} is double-booked on ${appt.scheduled_date} in the ${appt.time_block} block`,
+            `${crewName} is double-booked on ${conflict.conflictDate} (${reasonLabel}) — conflicts with ${conflict.customerName}`,
             "Move or cancel one of the conflicting appointments.",
             {
               appointmentId: appt.id, flagCode: "double_booking",
               affectedField: "time_block",
-              appValue: `${appt.crew_id}|${appt.scheduled_date}|${appt.time_block}`,
+              appValue: `${appt.crew_id}|${conflict.conflictDate}|${conflict.conflictBlock}`,
             },
+            { appointmentId: appt.id, crewId: appt.crew_id, date: conflict.conflictDate })
+        );
+      }
+    }
+
+    // ── Invalid resource type (crew type doesn't match appointment type) ──
+    if (crew) {
+      const ELIGIBLE: Record<string, string[]> = {
+        tech_measure: ["measure_tech"],
+        install: ["install_in_house", "install_sub", "jip"],
+        service: ["svc"],
+        jip: ["jip"],
+        lswp: ["install_in_house", "install_sub"],
+        hoa: ["install_in_house", "install_sub"],
+        paint_stain: ["install_in_house", "install_sub"],
+      };
+      const eligible = ELIGIBLE[appt.appointment_type] || [];
+      const allCrewTypes = [crew.crew_type, ...(crew.additional_types || [])];
+      const isEligible = eligible.length === 0 || eligible.some((t) => allCrewTypes.includes(t as typeof allCrewTypes[number]));
+      if (!isEligible) {
+        flags.push(
+          makeFlag("live_app", "invalid_resource_type", "warning",
+            `${crewName} (${crew.crew_type}) is not eligible for ${appt.appointment_type} appointments`,
+            "Reassign to an eligible crew.",
+            { appointmentId: appt.id, flagCode: "invalid_resource_type", affectedField: "crew_type", appValue: crew.crew_type },
             { appointmentId: appt.id, crewId: appt.crew_id, date: appt.scheduled_date })
         );
       }
+    }
+
+    // ── Missing time block (scheduled but no time block) ──
+    if (!appt.time_block) {
+      flags.push(
+        makeFlag("live_app", "missing_time", "warning",
+          `${appt.customer_name} on ${appt.scheduled_date}: no time block assigned`,
+          "Set a time block for this appointment.",
+          { appointmentId: appt.id, flagCode: "missing_time" },
+          { appointmentId: appt.id, date: appt.scheduled_date })
+      );
     }
 
     // ── Missing address ──
@@ -187,6 +221,60 @@ function detectLiveAppFlags(
           { appointmentId: appt.id, date: appt.scheduled_date })
       );
     }
+
+    // ── Availability conflict (crew scheduled during PTO/block rule) ──
+    if (availabilityRules && availabilityRules.length > 0 && appt.time_block) {
+      const date = parseISO(appt.scheduled_date);
+      const dayAvail = getCrewAvailability(
+        appt.crew_id,
+        date,
+        availabilityRules,
+        availabilityExceptions || []
+      );
+      if (!dayAvail.available) {
+        flags.push(
+          makeFlag("live_app", "availability_conflict", "error",
+            `${crewName} is ${dayAvail.reason || "unavailable"} on ${appt.scheduled_date} but is scheduled for ${appt.customer_name}`,
+            "Move the appointment to a different date or crew.",
+            { appointmentId: appt.id, flagCode: "availability_conflict" },
+            { appointmentId: appt.id, crewId: appt.crew_id, date: appt.scheduled_date })
+        );
+      } else if (dayAvail.unavailableBlocks.has(appt.time_block)) {
+        flags.push(
+          makeFlag("live_app", "availability_conflict", "warning",
+            `${crewName} is unavailable during ${appt.time_block} on ${appt.scheduled_date} but is scheduled for ${appt.customer_name}`,
+            "Move the appointment to an available time block.",
+            {
+              appointmentId: appt.id, flagCode: "availability_conflict",
+              affectedField: "time_block", appValue: appt.time_block,
+            },
+            { appointmentId: appt.id, crewId: appt.crew_id, date: appt.scheduled_date })
+        );
+      }
+    }
+  }
+
+  // ── Duplicate app appointments (same WO# on multiple active appointments) ──
+  const woToAppts = new Map<string, Appointment[]>();
+  for (const appt of active) {
+    if (!appt.work_order_number) continue;
+    const existing = woToAppts.get(appt.work_order_number) || [];
+    existing.push(appt);
+    woToAppts.set(appt.work_order_number, existing);
+  }
+  for (const [wo, appts] of woToAppts) {
+    if (appts.length <= 1) continue;
+    // Flag only the first one (to avoid N duplicate flags)
+    flags.push(
+      makeFlag("live_app", "duplicate_app_appointment", "warning",
+        `Work order ${wo} appears on ${appts.length} active appointments`,
+        "Cancel or merge the duplicate appointments.",
+        {
+          appointmentId: appts[0].id, flagCode: "duplicate_app_appointment",
+          workOrderNumber: wo,
+        },
+        { appointmentId: appts[0].id, workOrderNumber: wo })
+    );
   }
 
   return flags;
@@ -205,9 +293,8 @@ function detectExternalFlags(
   );
 
   // ── rForce cancelled but app appointment still active ──
-  const CANCELLED_STATUSES = new Set(["Canceled", "Cancelled"]);
   for (const rf of rforceOrders) {
-    if (!CANCELLED_STATUSES.has(rf.wo_status || "")) continue;
+    if (!CANCELLED_STATUSES.has(rf.wo_status || "") && !CANCELLED_STATUSES.has(rf.order_status || "")) continue;
     const linked = active.find(
       (a) => a.work_order_number === rf.work_order_number
     );
@@ -228,14 +315,14 @@ function detectExternalFlags(
   // ── Data mismatches between linked pairs ──
   for (const rf of rforceOrders) {
     if (!rf.scheduled_start) continue;
-    if (CANCELLED_STATUSES.has(rf.wo_status || "")) continue; // already handled above
+    if (CANCELLED_STATUSES.has(rf.wo_status || "") || CANCELLED_STATUSES.has(rf.order_status || "")) continue; // already handled above
     const rfDate = rf.scheduled_start.slice(0, 10);
     const linked = active.find(
       (a) => a.work_order_number === rf.work_order_number
     );
     if (!linked || !linked.scheduled_date || !linked.crew_id) continue;
 
-    const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+    const rfResource = getRForceResource(rf);
     const linkedCrew = crews.find((c) => c.id === linked.crew_id);
     const linkedCrewName = linkedCrew?.name;
 
@@ -256,16 +343,15 @@ function detectExternalFlags(
       diffs.crew = { app: linkedCrewName || "unassigned", rforce: rfResource };
     }
 
-    // ── Time mismatch ──
+    // ── Time mismatch (using block-range tolerance) ──
     const rforceTime = rf.scheduled_start.slice(11, 16);
     const rforceHour = extractHour(rf.scheduled_start);
     const appStartTime = linked.start_time;
     const appTimeBlock = linked.time_block;
-    const appTimeNorm = appStartTime?.slice(0, 5);
-    const startTimeMismatch = !!(appTimeNorm && rforceTime && appTimeNorm !== rforceTime);
-    const expectedHour = appTimeBlock ? TIME_BLOCK_HOUR[appTimeBlock] : null;
-    const blockMismatch = rforceHour !== null && expectedHour !== null && rforceHour !== expectedHour;
-    const timeMismatch = startTimeMismatch || blockMismatch;
+    // Use block-range tolerance: e.g. 4:30 PM rForce falls within app's "4-6" block
+    const timeMismatch = rforceHour !== null && appTimeBlock
+      ? !timeBlockMatchesHour(appTimeBlock, rforceHour)
+      : false;
     if (timeMismatch) {
       diffs.time = {
         app: appStartTime || appTimeBlock || "none",
@@ -273,9 +359,9 @@ function detectExternalFlags(
       };
     }
 
-    // ── Type mismatch ──
-    const rfTypeMapped = rf.work_order_type ? WO_TYPE_MAP[rf.work_order_type] : undefined;
-    const typeMismatch = rfTypeMapped !== undefined && rfTypeMapped !== linked.appointment_type;
+    // ── Type mismatch (uses full normalizer including LSWP, HOA, Paint/Stain) ──
+    const rfTypeMapped = normalizeWoType(rf.work_order_type);
+    const typeMismatch = rfTypeMapped !== null && rfTypeMapped !== linked.appointment_type;
     if (typeMismatch) {
       diffs.type = { app: linked.appointment_type, rforce: rf.work_order_type || "unknown" };
     }
@@ -435,9 +521,12 @@ export function detectFlags(
   crews: Crew[],
   rforceOrders: RForceOrder[],
   timeOffRequests: TimeOffRequest[],
-  activeLinks?: AppointmentLink[]
+  activeLinks?: AppointmentLink[],
+  availabilityRules?: AvailabilityRule[],
+  availabilityExceptions?: AvailabilityException[],
+  _resourceMappings?: ResourceMapping[]
 ): SchedulingFlag[] {
-  const liveFlags = detectLiveAppFlags(appointments, crews, timeOffRequests);
+  const liveFlags = detectLiveAppFlags(appointments, crews, timeOffRequests, availabilityRules, availabilityExceptions);
   const externalFlags = detectExternalFlags(appointments, crews, rforceOrders);
   const workflowFlags = activeLinks
     ? detectWorkflowFlags(appointments, activeLinks)

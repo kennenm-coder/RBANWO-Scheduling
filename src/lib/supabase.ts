@@ -8,6 +8,7 @@ const SUPA_KEY =
   "sb_publishable_HQigRx1Q8I6OpPffXMxRZQ_iqegVCka";
 
 let _client: SupabaseClient | null = null;
+let _warnedOnce = false;
 
 export function getSupabase(): SupabaseClient | null {
   if (_client) return _client;
@@ -15,6 +16,21 @@ export function getSupabase(): SupabaseClient | null {
     _client = createClient(SUPA_URL, SUPA_KEY);
     return _client;
   } catch {
+    if (!_warnedOnce) {
+      console.warn("[supabase] Failed to create client — all store operations will return empty results");
+      _warnedOnce = true;
+    }
     return null;
   }
+}
+
+/**
+ * Like getSupabase() but throws instead of returning null.
+ * Use for write operations where a missing DB connection is a real error,
+ * not a graceful degradation scenario.
+ */
+export function requireSupabase(): SupabaseClient {
+  const sb = getSupabase();
+  if (!sb) throw new Error("No database connection");
+  return sb;
 }

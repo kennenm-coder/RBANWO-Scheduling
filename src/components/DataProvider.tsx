@@ -137,7 +137,6 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
-  const cancelledWOsRef = useRef<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     try {
@@ -153,40 +152,21 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         fetchAvailabilityRules(),
         fetchActiveLinks(),
         fetchResourceMappings(),
-        fetchDismissals().catch(() => [] as RForceDismissal[]),
-        fetchFlagResolutions().catch(() => [] as FlagResolution[]),
-        fetchMatchRejections().catch(() => [] as MatchRejection[]),
+        fetchDismissals(),
+        fetchFlagResolutions(),
+        fetchMatchRejections(),
         fetchUnscheduledAppointments(),
       ]);
 
-      // Auto-cancel appointments whose rForce order is cancelled — keeps
-      // calendar slots clear without waiting for a manual reconciliation.
-      // Check both wo_status (appointment-level) and order_status (order-level).
-      const CANCELLED = new Set(["Canceled", "Cancelled"]);
-      const cancelledWOs = new Set(
-        r.filter((rf) => CANCELLED.has(rf.wo_status || "") || CANCELLED.has(rf.order_status || ""))
-          .map((rf) => rf.work_order_number)
-      );
-      cancelledWOsRef.current = cancelledWOs;
-      const needsAutoCancel = a.filter(
-        (appt) =>
-          appt.work_order_number &&
-          cancelledWOs.has(appt.work_order_number) &&
-          appt.status === "scheduled"
-      );
-      if (needsAutoCancel.length > 0) {
-        // Fire-and-forget DB updates — non-fatal if some fail
-        for (const appt of needsAutoCancel) {
-          cancelApptInDb(appt.id, appt.version, "Auto-cancelled: rForce order cancelled").catch(() => {});
-        }
-      }
-      // Remove cancelled-WO appointments from local state immediately
-      const visibleAppts = cancelledWOs.size > 0
-        ? a.filter((appt) => !(appt.work_order_number && cancelledWOs.has(appt.work_order_number) && appt.status === "scheduled"))
-        : a;
+      // REMOVED: Auto-cancel on page load.
+      // Previously, opening the app would fire-and-forget cancel any appointment
+      // whose rForce order had a cancelled status. This violated the principle
+      // that rForce must not directly mutate the calendar. Cancellation mismatches
+      // are now surfaced as rforce_cancellation_mismatch flags in the Issue Center,
+      // requiring an authorized scheduler to confirm cancellation manually.
 
       setCrews(c);
-      setAppointments(visibleAppts);
+      setAppointments(a);
       setRforceOrders(r);
       setTimeOffRequests(t);
       setAvailabilityRules(av.rules);
@@ -216,12 +196,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         const newEnd = format(addDays(date, 180), "yyyy-MM-dd");
         loadedRangeRef.current = { start: newStart, end: newEnd };
         fetchAppointments(newStart, newEnd).then((a) => {
-          // Same cancelled-WO filter as loadData
-          const cancelled = cancelledWOsRef.current;
-          const filtered = cancelled.size > 0
-            ? a.filter((appt) => !(appt.work_order_number && cancelled.has(appt.work_order_number) && appt.status === "scheduled"))
-            : a;
-          setAppointments(filtered);
+          setAppointments(a);
         });
       }
     },
@@ -391,7 +366,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         return [...prev, result.appointment];
       });
       if (result.link) {
-        setActiveLinks((prev) => [...prev, result.link]);
+        setActiveLinks((prev) => [...prev, result.link!]);
       }
       return result.appointment;
     },

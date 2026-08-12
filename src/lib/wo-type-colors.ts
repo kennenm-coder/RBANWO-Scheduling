@@ -3,8 +3,6 @@
  * These colors apply ONLY to the queue — calendar cards continue using crew colors.
  */
 
-import { AppointmentType } from "./types";
-
 export interface WoTypeColor {
   label: string;
   /** Tailwind border-left color class */
@@ -76,27 +74,17 @@ export const WO_TYPE_COLORS: Record<string, WoTypeColor> = {
   },
 };
 
+import { normalizeWoTypeOrUnknown } from "./normalize";
+
 /**
  * Normalize raw rForce work_order_type strings into our AppointmentType values.
  * Returns the AppointmentType key or "unknown" for unrecognized values.
+ *
+ * Delegates to the centralized normalize module. This re-export maintains
+ * backward compatibility for existing imports.
  */
-const RAW_TO_NORMALIZED: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  "Install": "install",
-  "Service": "service",
-  "JIP": "jip",
-  "Job Site Visit": "jip",
-  "Job Site Visit/JIP": "jip",
-  "LSWP": "lswp",
-  "HOA": "hoa",
-  "Paint/Stain": "paint_stain",
-  "Paint": "paint_stain",
-  "Stain": "paint_stain",
-};
-
 export function normalizeWoType(raw: string | null | undefined): string {
-  if (!raw) return "unknown";
-  return RAW_TO_NORMALIZED[raw] || RAW_TO_NORMALIZED[raw.trim()] || "unknown";
+  return normalizeWoTypeOrUnknown(raw);
 }
 
 export function getWoTypeColor(normalizedType: string): WoTypeColor {

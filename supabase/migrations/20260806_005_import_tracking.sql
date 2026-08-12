@@ -4,22 +4,23 @@
 -- 2. Import order snapshots for change detection
 -- 3. Match rejections ("not a match" memory)
 
--- ── 1. Enhance csv_imports with fingerprinting ──
+-- ── 1. Enhance sched_csv_imports with fingerprinting ──
 -- Add a content hash so we can detect duplicate/re-imports
+-- BUG FIX: Previously referenced 'csv_imports' (missing sched_ prefix).
 
-ALTER TABLE csv_imports
+ALTER TABLE sched_csv_imports
   ADD COLUMN IF NOT EXISTS content_hash text;
 
-ALTER TABLE csv_imports
+ALTER TABLE sched_csv_imports
   ADD COLUMN IF NOT EXISTS order_count integer;
 
-ALTER TABLE csv_imports
+ALTER TABLE sched_csv_imports
   ADD COLUMN IF NOT EXISTS changed_count integer;
 
-ALTER TABLE csv_imports
+ALTER TABLE sched_csv_imports
   ADD COLUMN IF NOT EXISTS new_count integer;
 
-COMMENT ON COLUMN csv_imports.content_hash IS
+COMMENT ON COLUMN sched_csv_imports.content_hash IS
   'SHA-256 hash of the import file content for duplicate detection';
 
 -- ── 2. Import order snapshots ──
@@ -28,7 +29,7 @@ COMMENT ON COLUMN csv_imports.content_hash IS
 
 CREATE TABLE IF NOT EXISTS sched_import_snapshots (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  import_id uuid NOT NULL REFERENCES csv_imports(id) ON DELETE CASCADE,
+  import_id uuid NOT NULL REFERENCES sched_csv_imports(id) ON DELETE CASCADE,
   work_order_number text NOT NULL,
   snapshot jsonb NOT NULL,
   change_summary jsonb,  -- null if first seen; otherwise {field: {old, new}}

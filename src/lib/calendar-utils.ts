@@ -116,7 +116,10 @@ export function getAppointmentsForCrewAndDay(
   date: Date
 ): Appointment[] {
   return getAppointmentsForDay(appointments, date).filter(
-    (a) => a.crew_id === crewId || a.secondary_crew_id === crewId
+    (a) =>
+      a.crew_id === crewId ||
+      a.secondary_crew_id === crewId ||
+      a.tertiary_crew_id === crewId
   );
 }
 
@@ -317,8 +320,8 @@ export function getRForceItemsForDay(
     // Skip completed/cancelled orders — check both wo_status and order_status
     const woS = rf.wo_status || "";
     const ordS = rf.order_status || "";
-    if (woS === "Appt Complete / Closed" || woS === "Canceled" || woS === "Cancelled"
-        || ordS === "Canceled" || ordS === "Cancelled") continue;
+    if (COMPLETED_STATUSES.has(woS) || CANCELLED_STATUSES.has(woS)
+        || CANCELLED_STATUSES.has(ordS)) continue;
 
     const startDate = rf.scheduled_start.slice(0, 10);
     const endDate = rf.scheduled_end ? rf.scheduled_end.slice(0, 10) : startDate;
@@ -341,21 +344,14 @@ export function getRForceItemsForDay(
   return items;
 }
 
-export const WO_TYPE_MAP: Record<string, AppointmentType> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
-
-const TIME_BLOCK_HOUR: Record<TimeBlock, number> = {
-  "9-10": 9,
-  "10-12": 10,
-  "12-2": 12,
-  "2-4": 14,
-  "4-6": 16,
-  full_day: 8,
-};
+import {
+  normalizeWoType,
+  getRForceResource,
+  timeBlockMatchesHour,
+  extractHour,
+  COMPLETED_STATUSES,
+  CANCELLED_STATUSES,
+} from "./normalize";
 
 function compareLinkedPair(
   appt: Appointment,
@@ -374,8 +370,7 @@ function compareLinkedPair(
     }
   }
 
-  const rfResource =
-    rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+  const rfResource = getRForceResource(rf);
   if (rfResource) {
     const appCrew = crews.find((c) => c.id === appt.crew_id);
     const matched = matchCrewByName(rfResource, crews, mappings);
@@ -391,16 +386,15 @@ function compareLinkedPair(
   }
 
   if (rf.scheduled_start && appt.time_block) {
-    const rfHour = parseInt(rf.scheduled_start.slice(11, 13), 10);
-    const expectedHour = TIME_BLOCK_HOUR[appt.time_block];
-    if (!isNaN(rfHour) && expectedHour !== undefined && rfHour !== expectedHour) {
+    const rfHour = extractHour(rf.scheduled_start);
+    if (rfHour !== null && !timeBlockMatchesHour(appt.time_block, rfHour)) {
       diffs.time = { app: appt.time_block, rforce: `hour ${rfHour}` };
       hasDiff = true;
     }
   }
 
-  const rfTypeMapped = rf.work_order_type ? WO_TYPE_MAP[rf.work_order_type] : undefined;
-  if (rfTypeMapped && rfTypeMapped !== appt.appointment_type) {
+  const rfTypeMapped = normalizeWoType(rf.work_order_type);
+  if (rfTypeMapped !== null && rfTypeMapped !== appt.appointment_type) {
     diffs.type = { app: appt.appointment_type, rforce: rf.work_order_type || "unknown" };
     hasDiff = true;
   }
@@ -452,8 +446,8 @@ export function getRForceDisplayItems(
     // Skip completed/cancelled orders — check both wo_status and order_status
     const woS = rf.wo_status || "";
     const ordS = rf.order_status || "";
-    if (woS === "Appt Complete / Closed" || woS === "Canceled" || woS === "Cancelled"
-        || ordS === "Canceled" || ordS === "Cancelled") continue;
+    if (COMPLETED_STATUSES.has(woS) || CANCELLED_STATUSES.has(woS)
+        || CANCELLED_STATUSES.has(ordS)) continue;
 
     const startDate = rf.scheduled_start.slice(0, 10);
     const endDate = rf.scheduled_end ? rf.scheduled_end.slice(0, 10) : startDate;

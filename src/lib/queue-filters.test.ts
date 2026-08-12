@@ -4,7 +4,6 @@ import {
   sortQueueItems,
   getActiveFilters,
   DEFAULT_FILTERS,
-  type QueueFilterState,
 } from "./queue-filters";
 import type { QueueItem, QueueItemCategory } from "./types";
 

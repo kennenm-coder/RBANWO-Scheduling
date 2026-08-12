@@ -28,7 +28,7 @@ export function subscribeToAppointments(
         const event = payload.eventType as "INSERT" | "UPDATE" | "DELETE";
         const record =
           event === "DELETE"
-            ? ((payload as any).old_record as Appointment)
+            ? ((payload as Record<string, unknown>).old_record as Appointment)
             : (payload.new as Appointment);
         if (record) {
           onChange(event, record);

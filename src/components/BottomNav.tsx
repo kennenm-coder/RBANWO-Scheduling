@@ -18,7 +18,7 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { crews, appointments, rforceOrders, timeOffRequests, activeLinks, flagResolutions } = useData();
+  const { crews, appointments, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions } = useData();
 
   const unmatchedCount = useMemo(
     () => findUnmatchedNames(crews, rforceOrders, timeOffRequests).length,
@@ -26,7 +26,7 @@ export default function BottomNav() {
   );
 
   const flagCount = useMemo(() => {
-    const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks);
+    const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions);
     const resolvedKeys = new Set(flagResolutions.map((r) => r.flag_key));
     // Count only actionable flags (open state, not info severity)
     const withState = allFlags.map((f) => {
@@ -35,7 +35,7 @@ export default function BottomNav() {
       return f;
     });
     return withState.filter((f) => f.state === "open" && f.severity !== "info").length;
-  }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions]);
+  }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions]);
 
   return (
     <nav className="sticky bottom-0 z-40 bg-background border-t border-border safe-area-bottom">

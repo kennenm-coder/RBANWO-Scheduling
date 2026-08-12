@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { captureOriginalEntry } from "./sync-transitions";
-import type { Appointment } from "./types";
-
 describe("captureOriginalEntry", () => {
   it("captures all fields from the appointment data", () => {
     const snapshot = captureOriginalEntry({

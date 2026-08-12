@@ -1,4 +1,4 @@
-import { getSupabase } from "./supabase";
+import { getSupabase, requireSupabase } from "./supabase";
 import {
   Appointment,
   AppointmentOrigin,
@@ -19,6 +19,9 @@ import {
 } from "./types";
 import { timeBlockStartEnd } from "./calendar-utils";
 import { buildSalesforceUrl } from "./salesforce";
+import { normalizeWoType } from "./normalize";
+import { learnResourceMapping } from "./resource-learning";
+import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
 
 // ── Crews ──
 
@@ -35,8 +38,7 @@ export async function fetchCrews(): Promise<Crew[]> {
 export async function upsertCrew(
   crew: Partial<Crew> & { name: string; crew_type: string }
 ): Promise<Crew | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_crews")
     .upsert({ ...crew, updated_at: new Date().toISOString() })
@@ -83,10 +85,26 @@ export async function fetchAppointments(
 }
 
 export async function createAppointment(
-  appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>
+  appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>,
+  existingAppointments?: Appointment[]
 ): Promise<Appointment | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  // Pre-write conflict check — catches multi-day, multi-block, full-day, and secondary/tertiary crew conflicts
+  // that the DB's partial unique index cannot detect.
+  if (existingAppointments && appt.crew_id && appt.scheduled_date && appt.time_block) {
+    const conflicts = checkSchedulingConflicts(
+      appt.crew_id,
+      appt.scheduled_date,
+      appt.duration_days ?? 1,
+      appt.time_block,
+      appt.time_block_end ?? null,
+      existingAppointments,
+    );
+    if (conflicts.length > 0) {
+      throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
+    }
+  }
+
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_appointments")
     .insert(appt)
@@ -104,12 +122,44 @@ export async function createAppointment(
 export async function updateAppointment(
   id: string,
   version: number,
-  updates: Partial<Appointment>
+  updates: Partial<Appointment>,
+  existingAppointments?: Appointment[]
 ): Promise<Appointment | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
-  // Strip fields managed by specific state-transition functions or that may not exist as DB columns yet
-  const { manual_override, override_source, time_block_end, merge_source_wo, origin, sync_state, original_entry_snapshot, last_reconciled_import_id, ...safeUpdates } = updates;
+  // Pre-write conflict check when scheduling fields are changing.
+  // Only runs when the caller provides existing appointments AND the update touches scheduling fields.
+  if (existingAppointments && (updates.crew_id || updates.scheduled_date || updates.time_block)) {
+    // Merge updates with current appointment to get the full picture.
+    // Find the current appointment in the provided list so we can fill in unchanged fields.
+    const current = existingAppointments.find((a) => a.id === id);
+    if (current) {
+      const crewId = updates.crew_id ?? current.crew_id;
+      const scheduledDate = updates.scheduled_date ?? current.scheduled_date;
+      const timeBlock = updates.time_block ?? current.time_block;
+      const durationDays = updates.duration_days ?? current.duration_days;
+      const timeBlockEnd = updates.time_block_end ?? current.time_block_end;
+
+      if (crewId && scheduledDate && timeBlock) {
+        const conflicts = checkSchedulingConflicts(
+          crewId,
+          scheduledDate,
+          durationDays ?? 1,
+          timeBlock,
+          timeBlockEnd ?? null,
+          existingAppointments,
+          id, // exclude self
+        );
+        if (conflicts.length > 0) {
+          throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
+        }
+      }
+    }
+  }
+
+  const sb = requireSupabase();
+  // Strip sync-model fields — these are managed exclusively by updateSyncFields()
+  // and sync-transitions.ts to prevent ad-hoc mutations from breaking the state machine.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { origin, sync_state, original_entry_snapshot, last_reconciled_import_id, ...safeUpdates } = updates;
   const { data, error } = await sb
     .from("sched_appointments")
     .update({
@@ -150,8 +200,7 @@ export async function unscheduleAppointment(
   version: number,
   reason?: string
 ): Promise<Appointment | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_appointments")
     .update({
@@ -190,7 +239,12 @@ export async function fetchUnscheduledAppointments(): Promise<Appointment[]> {
 
 // ── Sync State Transitions ──
 
-/** Controlled update of sync-model fields. Bypasses the ad-hoc strip in updateAppointment. */
+/**
+ * Controlled update of sync-model fields. Bypasses the ad-hoc strip in updateAppointment.
+ * Uses optimistic concurrency when a version is provided — throws VERSION_CONFLICT if
+ * another mutation raced ahead. When version is omitted, updates unconditionally
+ * (used by background sync where we accept last-writer-wins).
+ */
 export async function updateSyncFields(
   id: string,
   fields: {
@@ -198,15 +252,30 @@ export async function updateSyncFields(
     sync_state?: SyncState;
     original_entry_snapshot?: OriginalEntrySnapshot | null;
     last_reconciled_import_id?: string | null;
-  }
+  },
+  version?: number
 ): Promise<void> {
-  const sb = getSupabase();
-  if (!sb) return;
-  const { error } = await sb
+  const sb = requireSupabase();
+  const updatePayload: Record<string, unknown> = {
+    ...fields,
+    updated_at: new Date().toISOString(),
+  };
+  if (version !== undefined) {
+    updatePayload.version = version + 1;
+  }
+  let query = sb
     .from("sched_appointments")
-    .update({ ...fields, updated_at: new Date().toISOString() })
+    .update(updatePayload)
     .eq("id", id);
+  if (version !== undefined) {
+    query = query.eq("version", version);
+  }
+  const { error, count } = await query;
   if (error) throw error;
+  // When using version check, count=0 means the row was already modified
+  if (version !== undefined && count === 0) {
+    throw new Error("VERSION_CONFLICT");
+  }
 }
 
 // ── rForce Orders (CSV import) ──
@@ -246,7 +315,7 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
       .range(offset, offset + BATCH - 1);
     if (!data || data.length === 0) break;
     all.push(
-      ...(data as any[]).map((row) => ({
+      ...(data as unknown as Record<string, unknown>[]).map((row) => ({
         id: row.id,
         order_number: row.order_number,
         work_order_number: row.work_order_number,
@@ -285,21 +354,6 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
     offset += BATCH;
   }
   return all;
-}
-
-/** @deprecated Use linkAppointment() which writes to sched_appointment_links */
-export async function linkAppointmentToRForce(
-  appointmentId: string,
-  version: number,
-  rforceOrder: RForceOrder
-): Promise<Appointment | null> {
-  return updateAppointment(appointmentId, version, {
-    work_order_number: rforceOrder.work_order_number,
-    order_number: rforceOrder.order_number,
-    salesforce_url: rforceOrder.work_order_number
-      ? `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${rforceOrder.work_order_number}`
-      : null,
-  });
 }
 
 // ── Appointment Links ──
@@ -358,8 +412,7 @@ export async function unlinkAppointment(
   linkId: string,
   reason: string
 ): Promise<void> {
-  const sb = getSupabase();
-  if (!sb) return;
+  const sb = requireSupabase();
   const { error } = await sb
     .from("sched_appointment_links")
     .update({
@@ -387,8 +440,7 @@ export async function upsertResourceMapping(
   rawName: string,
   crewId: string
 ): Promise<ResourceMapping | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_resource_mappings")
     .upsert(
@@ -503,7 +555,11 @@ export async function createAppointmentEvent(
 ): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
-  await sb.from("sched_appointment_events").insert(event);
+  const { error } = await sb.from("sched_appointment_events").insert(event);
+  if (error) {
+    // Audit events are non-blocking — log but don't throw
+    console.warn("[audit] Failed to record appointment event:", error.message);
+  }
 }
 
 export async function fetchAppointmentEvents(
@@ -562,12 +618,10 @@ export async function upsertAvailabilityRule(
     effective_start: string;
   }
 ): Promise<AvailabilityRule | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
 
-  // Strip repeat_interval on first attempt — column may not exist yet
-  const { repeat_interval, ...coreFields } = rule as Record<string, unknown>;
-  const payload = { ...coreFields, updated_at: new Date().toISOString() };
+  // repeat_interval column is guaranteed by the authoritative schema
+  const payload = { ...rule, updated_at: new Date().toISOString() };
 
   const { data, error } = await sb
     .from("sched_availability_rules")
@@ -575,34 +629,7 @@ export async function upsertAvailabilityRule(
     .select()
     .single();
 
-  if (error) {
-    // If the error is about a missing column, try with repeat_interval included
-    // (migration may have been applied since the initial attempt)
-    if (error.message?.includes("repeat_interval") && repeat_interval != null) {
-      const retryPayload = { ...payload, repeat_interval };
-      const { data: d2, error: e2 } = await sb
-        .from("sched_availability_rules")
-        .upsert(retryPayload)
-        .select()
-        .single();
-      if (e2) throw new Error(e2.message);
-      return d2 as AvailabilityRule | null;
-    }
-    throw new Error(error.message);
-  }
-
-  // If repeat_interval column exists, update it separately (non-fatal)
-  if (repeat_interval != null && repeat_interval !== 1 && data) {
-    try {
-      await sb
-        .from("sched_availability_rules")
-        .update({ repeat_interval })
-        .eq("id", (data as AvailabilityRule).id);
-    } catch {
-      // Column may not exist yet — safe to skip
-    }
-  }
-
+  if (error) throw new Error(error.message);
   return data as AvailabilityRule | null;
 }
 
@@ -619,8 +646,7 @@ export async function deleteAvailabilityRule(id: string): Promise<void> {
 export async function upsertAvailabilityException(
   exc: Omit<AvailabilityException, "id" | "created_at">
 ): Promise<AvailabilityException | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_availability_exceptions")
     .upsert(exc)
@@ -645,13 +671,8 @@ export async function deleteAvailabilityException(id: string): Promise<void> {
 export async function fetchDismissals(): Promise<RForceDismissal[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  try {
-    const { data } = await sb.from("sched_rforce_dismissals").select("*");
-    return (data as RForceDismissal[]) ?? [];
-  } catch {
-    // Table may not exist yet — return empty
-    return [];
-  }
+  const { data } = await sb.from("sched_rforce_dismissals").select("*");
+  return (data as RForceDismissal[]) ?? [];
 }
 
 export async function dismissRForceOrder(
@@ -660,8 +681,7 @@ export async function dismissRForceOrder(
   rforceStartTime?: string,
   reason?: string
 ): Promise<RForceDismissal | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_rforce_dismissals")
     .upsert(
@@ -694,13 +714,14 @@ export async function undismissRForceOrder(
 }
 
 // ── Approve rForce Order (one-click create + link) ──
-
-const APPROVE_WO_TYPE_MAP: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
+//
+// Operation order (crash-recovery safe):
+//   1. INSERT appointment (critical — if this fails, throw)
+//   2. CREATE link        (non-critical — idempotent, ALREADY_LINKED is OK)
+//   3. AUDIT event        (non-critical — fire-and-forget)
+//
+// The appointment's work_order_number field records intent, so a missing link
+// can be detected and repaired by Phase 16 remediation.
 
 export async function approveRForceOrder(
   rforceOrder: RForceOrder,
@@ -708,18 +729,31 @@ export async function approveRForceOrder(
   tb: TimeBlock,
   scheduledDate: string,
   actorId?: string | null,
-  actorName?: string | null
-): Promise<{ appointment: Appointment; link: AppointmentLink }> {
+  actorName?: string | null,
+  existingAppointments?: Appointment[]
+): Promise<{ appointment: Appointment; link: AppointmentLink | null; warnings: string[] }> {
+  const warnings: string[] = [];
   const { start, end } = timeBlockStartEnd(tb);
-  const appointmentType = (rforceOrder.work_order_type
-    ? APPROVE_WO_TYPE_MAP[rforceOrder.work_order_type]
-    : "install") as Appointment["appointment_type"];
+  const appointmentType = (normalizeWoType(rforceOrder.work_order_type) || "install") as Appointment["appointment_type"];
 
-  const sb = getSupabase();
-  if (!sb) throw new Error("No database connection");
+  // Pre-write conflict check — block the approval if it would double-book
+  if (existingAppointments) {
+    const conflicts = checkSchedulingConflicts(
+      crewId,
+      scheduledDate,
+      1, // rForce approvals are always single-day
+      tb,
+      null,
+      existingAppointments,
+    );
+    if (conflicts.length > 0) {
+      throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
+    }
+  }
 
-  // Direct INSERT — skip the RPC (it references origin/sync_state columns
-  // that don't exist in the live DB yet).
+  const sb = requireSupabase();
+
+  // Step 1: INSERT appointment (critical — throw on failure)
   const { data: appt, error } = await sb
     .from("sched_appointments")
     .insert({
@@ -742,6 +776,8 @@ export async function approveRForceOrder(
       product_count: rforceOrder.product_count ?? null,
       salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
       scheduled_by: actorId || null,
+      origin: "rforce_approved",
+      sync_state: "linked_pending_confirmation",
     })
     .select()
     .single();
@@ -757,23 +793,21 @@ export async function approveRForceOrder(
   }
   const typedAppt = appt as Appointment;
 
-  // Try to set sync fields (non-fatal — columns may not exist yet)
-  try {
-    await updateSyncFields(typedAppt.id, {
-      origin: "rforce_approved",
-      sync_state: "linked_pending_confirmation",
-    });
-  } catch {
-    // Phase 2a migration not applied yet — safe to skip
-  }
-
+  // Step 2: Create link (non-critical — ALREADY_LINKED is idempotent)
   let link: AppointmentLink | null = null;
   try {
     link = await linkAppointment(typedAppt.id, typedAppt.version, rforceOrder, "auto");
-  } catch {
-    // Link INSERT may fail due to RLS or ALREADY_LINKED — non-fatal
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "ALREADY_LINKED") {
+      warnings.push("Link already existed (idempotent)");
+    } else {
+      console.warn("[approve] Link creation failed — appointment exists without link:", msg);
+      warnings.push(`Link not created: ${msg}`);
+    }
   }
 
+  // Step 3: Audit event (fire-and-forget — never blocks approval)
   try {
     await createAppointmentEvent({
       appointment_id: typedAppt.id,
@@ -784,11 +818,15 @@ export async function approveRForceOrder(
       after_state: { work_order_number: rforceOrder.work_order_number, source: "rforce_approval" },
       reason: "Approved from rForce import",
     });
-  } catch {
-    // Event logging is non-critical
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warnings.push(`Audit event not recorded: ${msg}`);
   }
 
-  return { appointment: typedAppt, link: link! };
+  // Step 4: Learn resource mapping (fire-and-forget)
+  learnResourceMapping(rforceOrder, crewId);
+
+  return { appointment: typedAppt, link, warnings };
 }
 
 // ── Flag Resolutions ──
@@ -796,21 +834,15 @@ export async function approveRForceOrder(
 export async function fetchFlagResolutions(): Promise<FlagResolution[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  try {
-    const { data } = await sb.from("sched_flag_resolutions").select("*");
-    return (data as FlagResolution[]) ?? [];
-  } catch {
-    // Table may not exist yet — return empty
-    return [];
-  }
+  const { data } = await sb.from("sched_flag_resolutions").select("*");
+  return (data as FlagResolution[]) ?? [];
 }
 
 export async function resolveFlag(
   flagKey: string,
   notes?: string
 ): Promise<FlagResolution | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_flag_resolutions")
     .upsert(
@@ -838,13 +870,8 @@ export async function unresolveFlag(flagKey: string): Promise<void> {
 export async function fetchMatchRejections(): Promise<MatchRejection[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  try {
-    const { data } = await sb.from("sched_match_rejections").select("*");
-    return (data as MatchRejection[]) ?? [];
-  } catch {
-    // Table may not exist yet
-    return [];
-  }
+  const { data } = await sb.from("sched_match_rejections").select("*");
+  return (data as MatchRejection[]) ?? [];
 }
 
 export async function rejectMatch(
@@ -853,8 +880,7 @@ export async function rejectMatch(
   rejectedBy?: string | null,
   reason?: string
 ): Promise<MatchRejection | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
+  const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_match_rejections")
     .upsert(

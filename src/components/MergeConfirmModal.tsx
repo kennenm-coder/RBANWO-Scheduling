@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Appointment, RForceOrder, FuzzyMatchCandidate } from "@/lib/types";
+import { normalizeWoType } from "@/lib/normalize";
 import { X, GitMerge, ArrowRight, Loader2 } from "lucide-react";
 
 interface Props {
@@ -12,13 +13,6 @@ interface Props {
   onReject: () => void;
   onClose: () => void;
 }
-
-const WO_TYPE_MAP: Record<string, string> = {
-  "Tech Measure": "tech_measure",
-  Install: "install",
-  Service: "service",
-  JIP: "jip",
-};
 
 /**
  * Shows a preview of what will change when merging an rForce order
@@ -82,10 +76,8 @@ export default function MergeConfirmModal({
     });
   }
 
-  const mappedType = rforceOrder.work_order_type
-    ? WO_TYPE_MAP[rforceOrder.work_order_type]
-    : undefined;
-  if (mappedType && mappedType !== appointment.appointment_type) {
+  const mappedType = normalizeWoType(rforceOrder.work_order_type);
+  if (mappedType !== null && mappedType !== appointment.appointment_type) {
     changes.push({
       field: "appointment_type",
       label: "Type",

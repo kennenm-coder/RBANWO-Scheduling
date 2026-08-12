@@ -17,24 +17,12 @@ export async function getCachedGeocode(address: string): Promise<GeoResult | nul
   const sb = getSupabase();
   if (!sb) return null;
   const hash = addressHash(address);
-  // Try with precision columns first; fall back to basic if migration not yet applied
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let data: any[] | null = null;
-  const full = await sb
+  // Precision and manual_override columns are guaranteed by the authoritative schema
+  const { data } = await sb
     .from("sched_geocode_cache")
     .select("lat, lng, precision, manual_override")
     .eq("address_hash", hash)
     .limit(1);
-  data = full.data;
-  if (!data) {
-    // Columns may not exist yet — fall back to basic select
-    const fallback = await sb
-      .from("sched_geocode_cache")
-      .select("lat, lng")
-      .eq("address_hash", hash)
-      .limit(1);
-    data = fallback.data;
-  }
   const row = data?.[0];
   if (row?.lat != null && row?.lng != null) {
     return {
@@ -57,8 +45,8 @@ export async function saveGeocode(
   const sb = getSupabase();
   if (!sb) return;
   const hash = addressHash(address);
-  // Try with precision columns; fall back to basic if migration not applied yet
-  const { error } = await sb.from("sched_geocode_cache").upsert({
+  // All columns guaranteed by the authoritative schema
+  await sb.from("sched_geocode_cache").upsert({
     address_hash: hash,
     address_original: address,
     lat,
@@ -69,17 +57,6 @@ export async function saveGeocode(
     source: provider,
     updated_at: new Date().toISOString(),
   });
-  if (error) {
-    // Columns may not exist — try basic upsert
-    await sb.from("sched_geocode_cache").upsert({
-      address_hash: hash,
-      address_original: address,
-      lat,
-      lng,
-      geocoded_at: new Date().toISOString(),
-      source: provider,
-    });
-  }
 }
 
 async function deleteCachedGeocode(address: string): Promise<void> {
@@ -184,7 +161,8 @@ export async function manualCorrectGeocode(address: string, lat: number, lng: nu
   const sb = getSupabase();
   if (!sb) return;
   const hash = addressHash(address);
-  const { error } = await sb.from("sched_geocode_cache").upsert({
+  // All columns guaranteed by the authoritative schema
+  await sb.from("sched_geocode_cache").upsert({
     address_hash: hash,
     address_original: address,
     lat,
@@ -196,16 +174,6 @@ export async function manualCorrectGeocode(address: string, lat: number, lng: nu
     source: "manual",
     updated_at: new Date().toISOString(),
   });
-  if (error) {
-    await sb.from("sched_geocode_cache").upsert({
-      address_hash: hash,
-      address_original: address,
-      lat,
-      lng,
-      geocoded_at: new Date().toISOString(),
-      source: "manual",
-    });
-  }
 }
 
 export { extractState, isResultInState, STATE_BOUNDS };
@@ -220,21 +188,11 @@ async function bulkCacheLookup(addresses: string[]): Promise<Map<string, GeoResu
   const BATCH = 200;
   for (let i = 0; i < hashes.length; i += BATCH) {
     const batch = hashes.slice(i, i + BATCH);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let data: any[] | null = null;
-    const full = await sb
+    // All columns guaranteed by the authoritative schema
+    const { data } = await sb
       .from("sched_geocode_cache")
       .select("address_hash, lat, lng, precision, manual_override")
       .in("address_hash", batch);
-    data = full.data;
-    if (!data) {
-      // Columns may not exist yet — fall back
-      const fallback = await sb
-        .from("sched_geocode_cache")
-        .select("address_hash, lat, lng")
-        .in("address_hash", batch);
-      data = fallback.data;
-    }
     if (data) {
       for (const row of data) {
         if (row.lat != null && row.lng != null) {

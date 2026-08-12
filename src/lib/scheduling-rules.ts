@@ -1,5 +1,5 @@
-import { Appointment, AppointmentType, Crew, TimeOffRequest } from "./types";
-import { parseISO, differenceInWeeks, addDays } from "date-fns";
+import { Appointment, Crew, TimeOffRequest } from "./types";
+import { parseISO, differenceInWeeks } from "date-fns";
 import { getTimeOffForDate } from "./store";
 
 interface ValidationResult {
