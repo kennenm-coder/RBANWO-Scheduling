@@ -664,6 +664,14 @@ export async function undismissRForceOrder(
 }
 
 // ── Approve rForce Order (one-click create + link) ──
+//
+// Operation order (crash-recovery safe):
+//   1. INSERT appointment (critical — if this fails, throw)
+//   2. CREATE link        (non-critical — idempotent, ALREADY_LINKED is OK)
+//   3. AUDIT event        (non-critical — fire-and-forget)
+//
+// The appointment's work_order_number field records intent, so a missing link
+// can be detected and repaired by Phase 16 remediation.
 
 export async function approveRForceOrder(
   rforceOrder: RForceOrder,
@@ -672,15 +680,14 @@ export async function approveRForceOrder(
   scheduledDate: string,
   actorId?: string | null,
   actorName?: string | null
-): Promise<{ appointment: Appointment; link: AppointmentLink | null }> {
+): Promise<{ appointment: Appointment; link: AppointmentLink | null; warnings: string[] }> {
+  const warnings: string[] = [];
   const { start, end } = timeBlockStartEnd(tb);
   const appointmentType = (normalizeWoType(rforceOrder.work_order_type) || "install") as Appointment["appointment_type"];
 
-  const sb = getSupabase();
-  if (!sb) throw new Error("No database connection");
+  const sb = requireSupabase();
 
-  // Direct INSERT with sync model fields (origin, sync_state).
-  // These columns are guaranteed by the authoritative schema.
+  // Step 1: INSERT appointment (critical — throw on failure)
   const { data: appt, error } = await sb
     .from("sched_appointments")
     .insert({
@@ -720,25 +727,37 @@ export async function approveRForceOrder(
   }
   const typedAppt = appt as Appointment;
 
+  // Step 2: Create link (non-critical — ALREADY_LINKED is idempotent)
   let link: AppointmentLink | null = null;
   try {
     link = await linkAppointment(typedAppt.id, typedAppt.version, rforceOrder, "auto");
   } catch (err) {
-    console.warn("[approve] Link creation failed — appointment exists without link:", err instanceof Error ? err.message : err);
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "ALREADY_LINKED") {
+      warnings.push("Link already existed (idempotent)");
+    } else {
+      console.warn("[approve] Link creation failed — appointment exists without link:", msg);
+      warnings.push(`Link not created: ${msg}`);
+    }
   }
 
-  // Audit event (non-blocking — createAppointmentEvent logs its own warnings)
-  await createAppointmentEvent({
-    appointment_id: typedAppt.id,
-    action: "created",
-    actor_id: actorId || null,
-    actor_name_snapshot: actorName || null,
-    before_state: null,
-    after_state: { work_order_number: rforceOrder.work_order_number, source: "rforce_approval" },
-    reason: "Approved from rForce import",
-  });
+  // Step 3: Audit event (fire-and-forget — never blocks approval)
+  try {
+    await createAppointmentEvent({
+      appointment_id: typedAppt.id,
+      action: "created",
+      actor_id: actorId || null,
+      actor_name_snapshot: actorName || null,
+      before_state: null,
+      after_state: { work_order_number: rforceOrder.work_order_number, source: "rforce_approval" },
+      reason: "Approved from rForce import",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warnings.push(`Audit event not recorded: ${msg}`);
+  }
 
-  return { appointment: typedAppt, link };
+  return { appointment: typedAppt, link, warnings };
 }
 
 // ── Flag Resolutions ──
