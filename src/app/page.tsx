@@ -10,6 +10,7 @@ import WeekSummary from "@/components/WeekSummary";
 import FilterPanel from "@/components/FilterPanel";
 import CrewLaneDayView from "@/components/CrewLaneDayView";
 import CrewLaneWeekView from "@/components/CrewLaneWeekView";
+import CrewBlockView from "@/components/CrewBlockView";
 import UnscheduledQueue from "@/components/UnscheduledQueue";
 import { ViewMode, AppointmentType } from "@/lib/types";
 import IssueCenter from "@/components/IssueCenter";
@@ -59,7 +60,7 @@ export default function CalendarPage() {
     if (dateParam) {
       try { setCurrentDate(parseISO(dateParam)); } catch {}
     }
-    if (viewParam === "day" || viewParam === "week") {
+    if (viewParam === "day" || viewParam === "week" || viewParam === "block") {
       setViewMode(viewParam);
       localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
     }
@@ -78,7 +79,7 @@ export default function CalendarPage() {
     if (dateParam) {
       try { setCurrentDate(parseISO(dateParam)); } catch {}
     }
-    if (viewParam === "day" || viewParam === "week") {
+    if (viewParam === "day" || viewParam === "week" || viewParam === "block") {
       setViewMode(viewParam);
       localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
     } else if (!searchParams.get("view")) {
@@ -120,7 +121,7 @@ export default function CalendarPage() {
           ? direction === "next"
             ? addDays(prev, 1)
             : subDays(prev, 1)
-          : direction === "next"
+          : direction === "next"  // week and block both navigate by week
             ? addWeeks(prev, 1)
             : subWeeks(prev, 1)
       );
@@ -147,6 +148,9 @@ export default function CalendarPage() {
           break;
         case "w":
           if (!e.metaKey && !e.ctrlKey) handleViewChange("week");
+          break;
+        case "b":
+          if (!e.metaKey && !e.ctrlKey) handleViewChange("block");
           break;
         case "q":
           if (!e.metaKey && !e.ctrlKey) setQueueOpen((prev) => !prev);
@@ -258,6 +262,15 @@ export default function CalendarPage() {
         >
           {viewMode === "day" ? (
             <CrewLaneDayView date={currentDate} filterType={filterType} showRForce={showRForce} />
+          ) : viewMode === "block" ? (
+            <CrewBlockView
+              currentDate={currentDate}
+              filterType={filterType}
+              onDayClick={(date) => {
+                setCurrentDate(date);
+                handleViewChange("day");
+              }}
+            />
           ) : (
             <CrewLaneWeekView
               currentDate={currentDate}

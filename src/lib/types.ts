@@ -250,7 +250,7 @@ export interface AppointmentEvent {
   created_at: string;
 }
 
-export type ViewMode = "day" | "week";
+export type ViewMode = "day" | "week" | "block";
 
 export interface TimeOffRequest {
   id: string;
