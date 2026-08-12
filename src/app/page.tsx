@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { addDays, subDays, startOfWeek, addWeeks, subWeeks, parseISO, format } from "date-fns";
+import { useSearchParams } from "next/navigation";
 import { useSwipe } from "@/hooks/useSwipe";
 import { useData } from "@/components/DataProvider";
 import CalendarHeader from "@/components/CalendarHeader";
@@ -27,6 +28,7 @@ function getSavedView(): ViewMode {
 
 export default function CalendarPage() {
   const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions } = useData();
+  const searchParams = useSearchParams();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("week");
   const [filterType, setFilterType] = useState<AppointmentType | "all">("all");
@@ -50,6 +52,24 @@ export default function CalendarPage() {
 
   const initializedRef = useRef(false);
 
+  // Read date/view from query params (reactive — updates on router.push)
+  useEffect(() => {
+    const dateParam = searchParams.get("date");
+    const viewParam = searchParams.get("view") as ViewMode | null;
+    if (dateParam) {
+      try { setCurrentDate(parseISO(dateParam)); } catch {}
+    }
+    if (viewParam === "day" || viewParam === "week") {
+      setViewMode(viewParam);
+      localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
+    }
+    // Clean query params from the URL after reading
+    if (dateParam || viewParam) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, [searchParams]);
+
+  // One-time init: read hash (bookmarks) and localStorage
   useEffect(() => {
     const hash = window.location.hash.slice(1);
     const params = new URLSearchParams(hash);
@@ -61,7 +81,7 @@ export default function CalendarPage() {
     if (viewParam === "day" || viewParam === "week") {
       setViewMode(viewParam);
       localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
-    } else {
+    } else if (!searchParams.get("view")) {
       setViewMode(getSavedView());
     }
     const savedRForce = localStorage.getItem(RFORCE_STORAGE_KEY);

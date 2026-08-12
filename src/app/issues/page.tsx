@@ -430,12 +430,7 @@ export default function IssuesPage() {
                     <div className="flex gap-1.5 shrink-0">
                       {existingAppt ? (
                         <button
-                          onClick={() => {
-                            const d = new Date(dateStr);
-                            const weekStart = new Date(d);
-                            weekStart.setDate(d.getDate() - d.getDay());
-                            router.push(`/?week=${weekStart.toISOString().slice(0, 10)}`);
-                          }}
+                          onClick={() => router.push(`/?date=${dateStr}&view=day`)}
                           className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium transition-colors"
                         >
                           <Eye size={12} />
@@ -488,7 +483,7 @@ export default function IssuesPage() {
                 <FlagRow
                   key={flag.id}
                   flag={flag}
-                  onNavigate={(date) => router.push(`/#date=${date}&view=day`)}
+                  onNavigate={(date) => router.push(`/?date=${date}&view=day`)}
                 />
               ))}
             </div>
@@ -511,7 +506,7 @@ export default function IssuesPage() {
                 <FlagRow
                   key={flag.id}
                   flag={flag}
-                  onNavigate={(date) => router.push(`/#date=${date}&view=day`)}
+                  onNavigate={(date) => router.push(`/?date=${date}&view=day`)}
                   onAcknowledge={() => resolveFlag(flag.id, "Marked as updated in rForce")}
                 />
               ))}
@@ -536,7 +531,7 @@ export default function IssuesPage() {
                   key={flag.id}
                   flag={flag}
                   isWaiting
-                  onNavigate={(date) => router.push(`/#date=${date}&view=day`)}
+                  onNavigate={(date) => router.push(`/?date=${date}&view=day`)}
                   onUndoAcknowledge={() => unresolveFlag(flag.id)}
                 />
               ))}
