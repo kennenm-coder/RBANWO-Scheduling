@@ -140,7 +140,7 @@ describe("buildMergeUpdates", () => {
     });
     const rf = makeRF({ description: "Window replacement" });
 
-    const { updates, fieldsUpdated } = buildMergeUpdates(appt, rf);
+    const { fieldsUpdated } = buildMergeUpdates(appt, rf);
 
     // notes should NOT be in updates since it already contains the rForce note
     expect(fieldsUpdated).not.toContain("notes");
