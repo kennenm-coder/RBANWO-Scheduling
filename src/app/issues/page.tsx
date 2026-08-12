@@ -8,7 +8,7 @@ import { buildQueueItems } from "@/lib/queue-pipeline";
 import { matchCrewByName, timeToBlock } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { openSalesforce } from "@/lib/salesforce";
-import { QueueItem, RForceOrder, TimeBlock, FlagClass } from "@/lib/types";
+import { QueueItem, RForceOrder, TimeBlock, FlagClass, Appointment } from "@/lib/types";
 import {
   AlertTriangle,
   AlertCircle,
@@ -148,7 +148,22 @@ export default function IssuesPage() {
     return allItems.filter((i) => i.category === "needs_confirmation" && i.rforceOrder);
   }, [rforceOrders, appointments, unscheduledAppointments, crews, activeLinks, dismissals, resourceMappings, matchRejections]);
 
+  // Index existing appointments by crew+date+timeBlock for conflict detection.
+  // This prevents showing an "Approve" button for WOs where the crew is already
+  // booked — the DB would reject the insert anyway (unique idx_no_double_book).
+  const crewDateIndex = useMemo(() => {
+    const idx = new Map<string, Appointment>();
+    for (const appt of appointments) {
+      if (appt.status === "cancelled" || appt.status === "unscheduled") continue;
+      if (!appt.crew_id || !appt.scheduled_date || !appt.time_block) continue;
+      const key = `${appt.crew_id}|${appt.scheduled_date}|${appt.time_block}`;
+      idx.set(key, appt);
+    }
+    return idx;
+  }, [appointments]);
+
   const approvalData = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
     return approvalItems.map((item) => {
       const rf = item.rforceOrder!;
       const resourceName = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
@@ -157,20 +172,35 @@ export default function IssuesPage() {
       const isMeasure = crew?.crew_type === "measure_tech";
       const timeBlock: TimeBlock = isMeasure ? timeToBlock(hour) : "full_day";
       const dateStr = rf.scheduled_start?.slice(0, 10) || "";
-      const canApprove = !!crew && !!dateStr;
+      const isPast = dateStr < today;
+
+      // Check if the crew already has an appointment on this date+timeBlock
+      let existingAppt: Appointment | undefined;
+      if (crew && dateStr) {
+        existingAppt = crewDateIndex.get(`${crew.id}|${dateStr}|${timeBlock}`);
+      }
+
+      const canApprove = !!crew && !!dateStr && !existingAppt && !isPast;
       const reason = !resourceName
         ? "No resource assigned in rForce"
         : !crew
           ? `No crew matches "${resourceName}"`
           : !dateStr
             ? "No scheduled date"
-            : undefined;
-      return { item, rf, crew, timeBlock, dateStr, canApprove, reason };
+            : existingAppt
+              ? `Crew already scheduled (${existingAppt.customer_name})`
+              : isPast
+                ? "Date is in the past"
+                : undefined;
+      return { item, rf, crew, timeBlock, dateStr, canApprove, reason, existingAppt, isPast };
     });
-  }, [approvalItems, crews, resourceMappings]);
+  }, [approvalItems, crews, resourceMappings, crewDateIndex]);
 
   // Counts for the approve-all button
   const approvableCount = approvalData.filter((d) => d.canApprove).length;
+  const alreadyBookedCount = approvalData.filter((d) => d.existingAppt).length;
+  const pastCount = approvalData.filter((d) => d.isPast && !d.existingAppt).length;
+  const needsCrewCount = approvalData.length - approvableCount - alreadyBookedCount - pastCount;
 
   function friendlyError(err: unknown): string {
     const msg = err instanceof Error ? err.message : String(err);
@@ -309,8 +339,14 @@ export default function IssuesPage() {
               </button>
               <span className="text-xs text-muted">
                 {approvableCount} ready
-                {approvalData.length - approvableCount > 0 && (
-                  <> · <span className="text-warning">{approvalData.length - approvableCount} need crew match</span></>
+                {alreadyBookedCount > 0 && (
+                  <> · <span className="text-blue-500">{alreadyBookedCount} already scheduled</span></>
+                )}
+                {pastCount > 0 && (
+                  <> · <span className="text-muted">{pastCount} past dates</span></>
+                )}
+                {needsCrewCount > 0 && (
+                  <> · <span className="text-warning">{needsCrewCount} need crew match</span></>
                 )}
               </span>
               {bulkProgress && (
@@ -322,7 +358,7 @@ export default function IssuesPage() {
             </div>
 
             <div className="space-y-1.5">
-              {approvalData.map(({ item, rf, crew, timeBlock, dateStr, canApprove, reason }) => {
+              {approvalData.map(({ item, rf, crew, timeBlock, dateStr, canApprove, reason, existingAppt, isPast }) => {
                 const city = parseCity(rf.address || "");
                 const isProcessing = processingIds.has(rf.work_order_number);
                 const error = errorMap.get(rf.work_order_number);
@@ -332,6 +368,8 @@ export default function IssuesPage() {
                     className={`w-full p-3 rounded-lg border-2 border-dashed flex items-center gap-3 ${
                       error
                         ? "border-red-400/50 dark:border-red-500/30 bg-red-50/50 dark:bg-red-900/10"
+                        : existingAppt
+                          ? "border-blue-300/50 dark:border-blue-500/30 bg-blue-50/50 dark:bg-blue-900/10 opacity-70"
                         : canApprove
                           ? "border-orange-400/50 dark:border-orange-500/30 bg-orange-50/50 dark:bg-orange-900/10"
                           : "border-gray-300/50 dark:border-gray-600/30 bg-gray-50/50 dark:bg-gray-800/20 opacity-60"
@@ -341,7 +379,13 @@ export default function IssuesPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm truncate">{rf.customer_name || "Unknown"}</span>
-                        <span className="text-[9px] font-medium bg-amber-200 dark:bg-amber-800 px-1.5 py-0.5 rounded text-amber-800 dark:text-amber-200 shrink-0">NEW</span>
+                        {existingAppt ? (
+                          <span className="text-[9px] font-medium bg-blue-200 dark:bg-blue-800 px-1.5 py-0.5 rounded text-blue-800 dark:text-blue-200 shrink-0">ALREADY SCHEDULED</span>
+                        ) : isPast ? (
+                          <span className="text-[9px] font-medium bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded text-gray-600 dark:text-gray-300 shrink-0">PAST</span>
+                        ) : (
+                          <span className="text-[9px] font-medium bg-amber-200 dark:bg-amber-800 px-1.5 py-0.5 rounded text-amber-800 dark:text-amber-200 shrink-0">NEW</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-muted mt-0.5">
                         {city && <span className="flex items-center gap-0.5"><MapPin size={10} className="shrink-0" />{city}</span>}
@@ -354,6 +398,13 @@ export default function IssuesPage() {
                         <span>{dateStr || "No date"}</span>
                         {timeBlock !== "full_day" && <><span>·</span><span>{timeBlock}</span></>}
                       </div>
+                      {/* Already-scheduled info */}
+                      {existingAppt && (
+                        <div className="flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 mt-1">
+                          <Calendar size={10} className="shrink-0" />
+                          <span>Crew has: {existingAppt.customer_name} on {dateStr}</span>
+                        </div>
+                      )}
                       {/* Error feedback */}
                       {error && (
                         <div className="flex items-center gap-1 text-[11px] text-danger mt-1">
@@ -361,8 +412,15 @@ export default function IssuesPage() {
                           <span>{error}</span>
                         </div>
                       )}
-                      {/* Why can't approve */}
-                      {!canApprove && reason && !error && (
+                      {/* Past date info */}
+                      {isPast && !existingAppt && (
+                        <div className="flex items-center gap-1 text-[11px] text-muted mt-1">
+                          <Clock size={10} className="shrink-0" />
+                          <span>Date is in the past — dismiss or review</span>
+                        </div>
+                      )}
+                      {/* Why can't approve (non-booked, non-past reasons) */}
+                      {!canApprove && !existingAppt && !isPast && reason && !error && (
                         <div className="flex items-center gap-1 text-[11px] text-warning mt-1">
                           <AlertTriangle size={10} className="shrink-0" />
                           <span>{reason}</span>
@@ -370,19 +428,34 @@ export default function IssuesPage() {
                       )}
                     </div>
                     <div className="flex gap-1.5 shrink-0">
-                      <button
-                        onClick={() => canApprove && handleApprove(rf, crew!.id, timeBlock, dateStr)}
-                        disabled={isProcessing || !canApprove || bulkRunning}
-                        className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                          canApprove
-                            ? "bg-green-500 hover:bg-green-600 text-white disabled:opacity-50"
-                            : "bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
-                        }`}
-                        title={reason || "Approve"}
-                      >
-                        {isProcessing ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                        Approve
-                      </button>
+                      {existingAppt ? (
+                        <button
+                          onClick={() => {
+                            const d = new Date(dateStr);
+                            const weekStart = new Date(d);
+                            weekStart.setDate(d.getDate() - d.getDay());
+                            router.push(`/?week=${weekStart.toISOString().slice(0, 10)}`);
+                          }}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium transition-colors"
+                        >
+                          <Eye size={12} />
+                          View Day
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => canApprove && handleApprove(rf, crew!.id, timeBlock, dateStr)}
+                          disabled={isProcessing || !canApprove || bulkRunning}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                            canApprove
+                              ? "bg-green-500 hover:bg-green-600 text-white disabled:opacity-50"
+                              : "bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
+                          }`}
+                          title={reason || "Approve"}
+                        >
+                          {isProcessing ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                          Approve
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDismiss(rf, dateStr)}
                         disabled={isProcessing || bulkRunning}
