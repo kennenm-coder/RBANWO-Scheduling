@@ -220,4 +220,41 @@ describe("ImportResult contract", () => {
     expect(result.importId).toBe("");
     expect(result.orderCount).toBe(0);
   });
+
+  it("total failure returns parse_error with empty importId (retryable)", () => {
+    // When ALL rows fail, the import record is deleted and hash cleared,
+    // so the same file can be retried. importId="" signals this.
+    const result = {
+      importId: "",
+      status: "parse_error" as const,
+      orderCount: 5,
+      changedCount: 0,
+      newCount: 0,
+      message: "All 5 work orders failed to save. The import has been rolled back so you can retry.",
+    };
+
+    expect(result.importId).toBe("");
+    expect(result.status).toBe("parse_error");
+    expect(result.orderCount).toBe(5);
+    expect(result.message).toContain("rolled back");
+    expect(result.message).toContain("retry");
+  });
+
+  it("partial failure returns success with retry hint in message", () => {
+    // When SOME rows fail, the import record stays but hash is cleared,
+    // so the same file can be retried to pick up failures.
+    const result = {
+      importId: "import-123",
+      status: "success" as const,
+      orderCount: 10,
+      changedCount: 3,
+      newCount: 2,
+      message: "Imported 5 of 10 work orders (2 new, 3 updated). 5 failed: WO-001, WO-002, WO-003, WO-004, WO-005. You can retry the same file to pick up failures.",
+    };
+
+    expect(result.importId).toBeTruthy(); // kept for auditing
+    expect(result.status).toBe("success"); // partial success
+    expect(result.message).toContain("retry");
+    expect(result.message).toContain("failed");
+  });
 });

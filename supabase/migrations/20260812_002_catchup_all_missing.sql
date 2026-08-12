@@ -441,8 +441,58 @@ END $$;
 -- ╚════════════════════════════════════════════════════════════════════════════╝
 
 -- Required by import-boundary.ts: .upsert(..., { onConflict: "work_order_number" })
-CREATE UNIQUE INDEX IF NOT EXISTS uq_work_orders_wo_number
-  ON work_orders (work_order_number);
+--
+-- If duplicate work_order_numbers exist, the CREATE UNIQUE INDEX will fail.
+-- This block deduplicates first: for each duplicated WO#, keep the row with
+-- the most recent updated_at and delete the rest. Then create the index.
+DO $$
+DECLARE
+  _dup_count integer;
+BEGIN
+  -- Skip if index already exists
+  IF EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE indexname = 'uq_work_orders_wo_number'
+  ) THEN
+    RAISE NOTICE 'uq_work_orders_wo_number already exists — skipping';
+    RETURN;
+  END IF;
+
+  -- Count duplicate WO numbers
+  SELECT count(*) INTO _dup_count
+  FROM (
+    SELECT work_order_number
+    FROM work_orders
+    WHERE work_order_number IS NOT NULL
+    GROUP BY work_order_number
+    HAVING count(*) > 1
+  ) dups;
+
+  IF _dup_count > 0 THEN
+    RAISE NOTICE 'Deduplicating % work_order_number(s) — keeping most recent row for each', _dup_count;
+
+    -- Delete older duplicates, keep the one with the latest updated_at (ties broken by id)
+    DELETE FROM work_orders w
+    USING (
+      SELECT id
+      FROM (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY work_order_number
+                 ORDER BY updated_at DESC NULLS LAST, id DESC
+               ) AS rn
+        FROM work_orders
+        WHERE work_order_number IS NOT NULL
+      ) ranked
+      WHERE ranked.rn > 1
+    ) dupes
+    WHERE w.id = dupes.id;
+  END IF;
+
+  -- Now safe to create the unique index
+  CREATE UNIQUE INDEX uq_work_orders_wo_number
+    ON work_orders (work_order_number);
+END $$;
 
 
 -- ╔════════════════════════════════════════════════════════════════════════════╗

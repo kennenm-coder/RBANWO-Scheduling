@@ -21,6 +21,7 @@ import { timeBlockStartEnd } from "./calendar-utils";
 import { buildSalesforceUrl } from "./salesforce";
 import { normalizeWoType } from "./normalize";
 import { learnResourceMapping } from "./resource-learning";
+import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
 
 // ── Crews ──
 
@@ -84,8 +85,25 @@ export async function fetchAppointments(
 }
 
 export async function createAppointment(
-  appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>
+  appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>,
+  existingAppointments?: Appointment[]
 ): Promise<Appointment | null> {
+  // Pre-write conflict check — catches multi-day, multi-block, full-day, and secondary/tertiary crew conflicts
+  // that the DB's partial unique index cannot detect.
+  if (existingAppointments && appt.crew_id && appt.scheduled_date && appt.time_block) {
+    const conflicts = checkSchedulingConflicts(
+      appt.crew_id,
+      appt.scheduled_date,
+      appt.duration_days ?? 1,
+      appt.time_block,
+      appt.time_block_end ?? null,
+      existingAppointments,
+    );
+    if (conflicts.length > 0) {
+      throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
+    }
+  }
+
   const sb = requireSupabase();
   const { data, error } = await sb
     .from("sched_appointments")
@@ -104,8 +122,39 @@ export async function createAppointment(
 export async function updateAppointment(
   id: string,
   version: number,
-  updates: Partial<Appointment>
+  updates: Partial<Appointment>,
+  existingAppointments?: Appointment[]
 ): Promise<Appointment | null> {
+  // Pre-write conflict check when scheduling fields are changing.
+  // Only runs when the caller provides existing appointments AND the update touches scheduling fields.
+  if (existingAppointments && (updates.crew_id || updates.scheduled_date || updates.time_block)) {
+    // Merge updates with current appointment to get the full picture.
+    // Find the current appointment in the provided list so we can fill in unchanged fields.
+    const current = existingAppointments.find((a) => a.id === id);
+    if (current) {
+      const crewId = updates.crew_id ?? current.crew_id;
+      const scheduledDate = updates.scheduled_date ?? current.scheduled_date;
+      const timeBlock = updates.time_block ?? current.time_block;
+      const durationDays = updates.duration_days ?? current.duration_days;
+      const timeBlockEnd = updates.time_block_end ?? current.time_block_end;
+
+      if (crewId && scheduledDate && timeBlock) {
+        const conflicts = checkSchedulingConflicts(
+          crewId,
+          scheduledDate,
+          durationDays ?? 1,
+          timeBlock,
+          timeBlockEnd ?? null,
+          existingAppointments,
+          id, // exclude self
+        );
+        if (conflicts.length > 0) {
+          throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
+        }
+      }
+    }
+  }
+
   const sb = requireSupabase();
   // Strip sync-model fields — these are managed exclusively by updateSyncFields()
   // and sync-transitions.ts to prevent ad-hoc mutations from breaking the state machine.
@@ -680,11 +729,27 @@ export async function approveRForceOrder(
   tb: TimeBlock,
   scheduledDate: string,
   actorId?: string | null,
-  actorName?: string | null
+  actorName?: string | null,
+  existingAppointments?: Appointment[]
 ): Promise<{ appointment: Appointment; link: AppointmentLink | null; warnings: string[] }> {
   const warnings: string[] = [];
   const { start, end } = timeBlockStartEnd(tb);
   const appointmentType = (normalizeWoType(rforceOrder.work_order_type) || "install") as Appointment["appointment_type"];
+
+  // Pre-write conflict check — block the approval if it would double-book
+  if (existingAppointments) {
+    const conflicts = checkSchedulingConflicts(
+      crewId,
+      scheduledDate,
+      1, // rForce approvals are always single-day
+      tb,
+      null,
+      existingAppointments,
+    );
+    if (conflicts.length > 0) {
+      throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
+    }
+  }
 
   const sb = requireSupabase();
 

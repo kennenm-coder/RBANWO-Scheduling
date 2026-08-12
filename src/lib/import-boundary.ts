@@ -162,6 +162,8 @@ export async function importCsv(
   const importId = (importRecord as CsvImport).id;
   let changedCount = 0;
   let newCount = 0;
+  let failedCount = 0;
+  const failedWOs: string[] = [];
 
   // 4. Process each order: fetch existing → diff → upsert → snapshot
   for (const order of orders) {
@@ -213,6 +215,8 @@ export async function importCsv(
 
     if (upsertErr) {
       console.warn(`[import] Failed to upsert WO ${woNum}:`, upsertErr.message);
+      failedCount++;
+      failedWOs.push(woNum);
       continue;
     }
 
@@ -240,7 +244,43 @@ export async function importCsv(
     }
   }
 
-  // 5. Update import record with final counts
+  // 5. If ALL rows failed, delete the import record so the same file can be retried.
+  //    The content hash would otherwise block a retry of the exact same file.
+  if (failedCount === orders.length) {
+    await sb.from("sched_csv_imports").delete().eq("id", importId);
+    return {
+      importId: "",
+      status: "parse_error",
+      orderCount: orders.length,
+      changedCount: 0,
+      newCount: 0,
+      message: `All ${orders.length} work orders failed to save. The import has been rolled back so you can retry.`,
+    };
+  }
+
+  // 6. If SOME rows failed, clear the content hash so the same file can be retried
+  //    to pick up the failed rows, but keep the import record for auditing.
+  if (failedCount > 0) {
+    await sb
+      .from("sched_csv_imports")
+      .update({
+        changed_count: changedCount,
+        new_count: newCount,
+        content_hash: null, // Allow retry of the same file
+      })
+      .eq("id", importId);
+
+    return {
+      importId,
+      status: "success",
+      orderCount: orders.length,
+      changedCount,
+      newCount,
+      message: `Imported ${orders.length - failedCount} of ${orders.length} work orders (${newCount} new, ${changedCount} updated). ${failedCount} failed: ${failedWOs.join(", ")}. You can retry the same file to pick up failures.`,
+    };
+  }
+
+  // 7. All rows succeeded — update import record with final counts (hash stays for dedup)
   await sb
     .from("sched_csv_imports")
     .update({ changed_count: changedCount, new_count: newCount })
