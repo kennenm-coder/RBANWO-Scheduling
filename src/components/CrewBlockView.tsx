@@ -26,14 +26,31 @@ import {
   isSameDay,
 } from "date-fns";
 
-// Short block labels for service hourly rows
-const BLOCK_SHORT_LABELS: Record<string, string> = {
-  "9-10": "9a",
-  "10-12": "10a",
-  "12-2": "12p",
-  "2-4": "2p",
-  "4-6": "4p",
+// Measure tech block labels (2-hour blocks)
+const MEASURE_BLOCK_LABELS: Record<string, string> = {
+  "9-10": "9–10a",
+  "10-12": "10–12",
+  "12-2": "12–2p",
+  "2-4": "2–4p",
+  "4-6": "4–6p",
 };
+
+// Service/JIP hourly slots (individual hours 9am–5pm, matching Calendar Doc)
+const SERVICE_HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17] as const;
+const SERVICE_HOUR_LABELS: Record<number, string> = {
+  9: "9",
+  10: "10",
+  11: "11",
+  12: "12",
+  13: "1",
+  14: "2",
+  15: "3",
+  16: "4",
+  17: "5",
+};
+
+// Row mode: "single" = one row, "measure_blocks" = 5 two-hour blocks, "hourly" = 9 hourly slots
+type RowMode = "single" | "measure_blocks" | "hourly";
 
 interface Props {
   currentDate: Date;
@@ -139,24 +156,24 @@ export default function CrewBlockView({
   const sections: {
     title: string;
     crews: Crew[];
-    isService: boolean;
+    rowMode: RowMode;
   }[] = [];
 
   if (filterType === "all" || filterType === "tech_measure") {
     if (measureCrews.length > 0)
-      sections.push({ title: "MEASURES", crews: measureCrews, isService: true });
+      sections.push({ title: "MEASURES", crews: measureCrews, rowMode: "measure_blocks" });
   }
   if (filterType === "all" || filterType === "install") {
     if (installCrews.length > 0)
-      sections.push({ title: "INSTALLS", crews: installCrews, isService: false });
+      sections.push({ title: "INSTALLS", crews: installCrews, rowMode: "single" });
   }
   if (filterType === "all" || filterType === "jip") {
     if (jipCrews.length > 0)
-      sections.push({ title: "JIPS/WOP", crews: jipCrews, isService: false });
+      sections.push({ title: "JIPS/WOP", crews: jipCrews, rowMode: "hourly" });
   }
   if (filterType === "all" || filterType === "service") {
     if (serviceCrews.length > 0)
-      sections.push({ title: "SERVICE", crews: serviceCrews, isService: true });
+      sections.push({ title: "SERVICE", crews: serviceCrews, rowMode: "hourly" });
   }
 
   return (
@@ -199,7 +216,7 @@ export default function CrewBlockView({
               crews={section.crews}
               weekDays={weekDays}
               appointments={appointments}
-              isService={section.isService}
+              rowMode={section.rowMode}
               isCrewOffOnDay={isCrewOffOnDay}
               customerLastName={customerLastName}
               multiDayLabel={multiDayLabel}
@@ -256,7 +273,7 @@ interface SectionBlockProps {
   crews: Crew[];
   weekDays: Date[];
   appointments: Appointment[];
-  isService: boolean;
+  rowMode: RowMode;
   isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
   customerLastName: (appt: Appointment) => string;
   multiDayLabel: (appt: Appointment, day: Date) => string;
@@ -270,7 +287,7 @@ function SectionBlock({
   crews,
   weekDays,
   appointments,
-  isService,
+  rowMode,
   isCrewOffOnDay,
   customerLastName,
   multiDayLabel,
@@ -291,9 +308,20 @@ function SectionBlock({
       </tr>
 
       {crews.map((crew) =>
-        isService ? (
-          // Service crews get hourly sub-rows
-          <ServiceCrewRows
+        rowMode === "measure_blocks" ? (
+          <MeasureCrewRows
+            key={crew.id}
+            crew={crew}
+            weekDays={weekDays}
+            appointments={appointments}
+            isCrewOffOnDay={isCrewOffOnDay}
+            multiDayLabel={multiDayLabel}
+            crewShortName={crewShortName}
+            onAppointmentClick={onAppointmentClick}
+            today={today}
+          />
+        ) : rowMode === "hourly" ? (
+          <HourlyCrewRows
             key={crew.id}
             crew={crew}
             weekDays={weekDays}
@@ -305,7 +333,6 @@ function SectionBlock({
             today={today}
           />
         ) : (
-          // All other crews get one row
           <CrewRow
             key={crew.id}
             crew={crew}
@@ -405,9 +432,9 @@ function CrewRow({
   );
 }
 
-// ─── Service Crew with Hourly Sub-rows ───────────────────────────────────────
+// ─── Measure Crew with 2-hour Block Sub-rows ───────────────────────────────
 
-interface ServiceCrewRowsProps {
+interface MeasureCrewRowsProps {
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
@@ -418,7 +445,7 @@ interface ServiceCrewRowsProps {
   today: Date;
 }
 
-function ServiceCrewRows({
+function MeasureCrewRows({
   crew,
   weekDays,
   appointments,
@@ -427,7 +454,7 @@ function ServiceCrewRows({
   crewShortName,
   onAppointmentClick,
   today,
-}: ServiceCrewRowsProps) {
+}: MeasureCrewRowsProps) {
   const crewColor = crew.color || "#1a73e8";
   const blocks = MEASURE_TIME_BLOCKS; // "9-10", "10-12", "12-2", "2-4", "4-6"
 
@@ -446,7 +473,7 @@ function ServiceCrewRows({
     return map;
   }, [appointments, crew.id, weekDays]);
 
-  // Also check for full_day appointments (service crew might have those)
+  // Full-day appointments
   const fullDayByDay = useMemo(() => {
     const map = new Map<string, Appointment[]>();
     for (const day of weekDays) {
@@ -464,42 +491,35 @@ function ServiceCrewRows({
     <>
       {blocks.map((block, blockIdx) => (
         <tr key={`${crew.id}-${block}`}>
-          {/* Crew name only on first row, spans all block rows */}
           {blockIdx === 0 && (
             <td
               className="border border-border p-1.5 font-semibold whitespace-nowrap text-[11px] align-top"
               rowSpan={blocks.length}
-              style={{
-                borderLeft: `3px solid ${crewColor}`,
-              }}
+              style={{ borderLeft: `3px solid ${crewColor}` }}
               title={crew.name}
             >
               <div>{crewShortName(crew)}</div>
               <div className="text-[9px] text-muted font-normal mt-1 space-y-px">
                 {blocks.map((b) => (
-                  <div key={b}>{BLOCK_SHORT_LABELS[b] || b}</div>
+                  <div key={b}>{MEASURE_BLOCK_LABELS[b] || b}</div>
                 ))}
               </div>
             </td>
           )}
 
-          {/* Day cells for this time block */}
           {weekDays.map((day) => {
             const isToday = isSameDay(day, today);
             const off = isCrewOffOnDay(crew, day);
             const dateStr = format(day, "yyyy-MM-dd");
             const dayAppts = dayApptsMap.get(dateStr) || [];
 
-            // Show OFF only on first block row
             if (off) {
               if (blockIdx === 0) {
                 return (
                   <td
                     key={day.toISOString()}
                     rowSpan={blocks.length}
-                    className={`border border-border p-0.5 text-center align-middle ${
-                      isToday ? "bg-primary/5" : ""
-                    }`}
+                    className={`border border-border p-0.5 text-center align-middle ${isToday ? "bg-primary/5" : ""}`}
                   >
                     <div className="flex items-center justify-center text-muted opacity-60">
                       <Palmtree size={12} className="mr-1" />
@@ -508,25 +528,18 @@ function ServiceCrewRows({
                   </td>
                 );
               }
-              // Skip cells that are part of the OFF rowSpan
               return null;
             }
 
-            // Find appointments that span this time block
             const blockAppts = dayAppts.filter(
               (a) => a.time_block && appointmentSpansBlock(a, block)
             );
-
-            // Full-day appointments show on first block row only
-            const fullDayAppts =
-              blockIdx === 0 ? (fullDayByDay.get(dateStr) || []) : [];
+            const fullDayAppts = blockIdx === 0 ? (fullDayByDay.get(dateStr) || []) : [];
 
             return (
               <td
                 key={day.toISOString()}
-                className={`border border-border/50 p-0.5 align-top text-[10px] ${
-                  isToday ? "bg-primary/5" : ""
-                }`}
+                className={`border border-border/50 p-0.5 align-top text-[10px] ${isToday ? "bg-primary/5" : ""}`}
               >
                 {fullDayAppts.map((appt) => (
                   <BlockCell
@@ -539,6 +552,140 @@ function ServiceCrewRows({
                   />
                 ))}
                 {blockAppts.map((appt) => (
+                  <BlockCell
+                    key={appt.id}
+                    appointment={appt}
+                    label={multiDayLabel(appt, day)}
+                    crewColor={crewColor}
+                    onClick={() => onAppointmentClick(appt)}
+                    small
+                  />
+                ))}
+              </td>
+            );
+          })}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+// ─── Hourly Crew Rows (Service / JIP — 9am–5pm individual hours) ────────────
+
+interface HourlyCrewRowsProps {
+  crew: Crew;
+  weekDays: Date[];
+  appointments: Appointment[];
+  isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  multiDayLabel: (appt: Appointment, day: Date) => string;
+  crewShortName: (crew: Crew) => string;
+  onAppointmentClick: (appt: Appointment) => void;
+  today: Date;
+}
+
+/** Parse the starting hour (0–23) from an appointment's start_time or time_block. */
+function getAppointmentStartHour(appt: Appointment): number | null {
+  // Prefer start_time ("09:00:00", "14:00:00", etc.)
+  if (appt.start_time) {
+    const h = parseInt(appt.start_time.split(":")[0], 10);
+    if (!isNaN(h)) return h;
+  }
+  // Fall back to time_block
+  if (appt.time_block && appt.time_block !== "full_day") {
+    const h = parseInt(appt.time_block.split("-")[0], 10);
+    if (!isNaN(h)) return h;
+  }
+  return null;
+}
+
+function HourlyCrewRows({
+  crew,
+  weekDays,
+  appointments,
+  isCrewOffOnDay,
+  multiDayLabel,
+  crewShortName,
+  onAppointmentClick,
+  today,
+}: HourlyCrewRowsProps) {
+  const crewColor = crew.color || "#1a73e8";
+  const hours = SERVICE_HOURS;
+
+  const dayApptsMap = useMemo(() => {
+    const map = new Map<string, Appointment[]>();
+    for (const day of weekDays) {
+      const dateStr = format(day, "yyyy-MM-dd");
+      const dayAppts = getAppointmentsForCrewAndDay(
+        appointments,
+        crew.id,
+        day
+      ).filter(a => a.status !== "cancelled" && a.status !== "unscheduled");
+      map.set(dateStr, dayAppts);
+    }
+    return map;
+  }, [appointments, crew.id, weekDays]);
+
+  return (
+    <>
+      {hours.map((hour, hourIdx) => (
+        <tr key={`${crew.id}-h${hour}`}>
+          {hourIdx === 0 && (
+            <td
+              className="border border-border p-1.5 font-semibold whitespace-nowrap text-[11px] align-top"
+              rowSpan={hours.length}
+              style={{ borderLeft: `3px solid ${crewColor}` }}
+              title={crew.name}
+            >
+              <div>{crewShortName(crew)}</div>
+              <div className="text-[9px] text-muted font-normal mt-1 space-y-px">
+                {hours.map((h) => (
+                  <div key={h}>{SERVICE_HOUR_LABELS[h]}</div>
+                ))}
+              </div>
+            </td>
+          )}
+
+          {weekDays.map((day) => {
+            const isToday = isSameDay(day, today);
+            const off = isCrewOffOnDay(crew, day);
+            const dateStr = format(day, "yyyy-MM-dd");
+            const dayAppts = dayApptsMap.get(dateStr) || [];
+
+            if (off) {
+              if (hourIdx === 0) {
+                return (
+                  <td
+                    key={day.toISOString()}
+                    rowSpan={hours.length}
+                    className={`border border-border p-0.5 text-center align-middle ${isToday ? "bg-primary/5" : ""}`}
+                  >
+                    <div className="flex items-center justify-center text-muted opacity-60">
+                      <Palmtree size={12} className="mr-1" />
+                      <span className="text-[10px]">OFF</span>
+                    </div>
+                  </td>
+                );
+              }
+              return null;
+            }
+
+            // Match appointments to this hour:
+            // - full_day / no time_block → show on the first hour row only
+            // - specific time → show on the matching hour
+            const hourAppts = dayAppts.filter((a) => {
+              if (a.time_block === "full_day" || !a.time_block) {
+                return hourIdx === 0; // full-day shows on first row
+              }
+              const startH = getAppointmentStartHour(a);
+              return startH === hour;
+            });
+
+            return (
+              <td
+                key={day.toISOString()}
+                className={`border border-border/50 p-0.5 align-top text-[10px] ${isToday ? "bg-primary/5" : ""}`}
+              >
+                {hourAppts.map((appt) => (
                   <BlockCell
                     key={appt.id}
                     appointment={appt}
