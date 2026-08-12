@@ -491,21 +491,17 @@ function MeasureCrewRows({
     <>
       {blocks.map((block, blockIdx) => (
         <tr key={`${crew.id}-${block}`}>
-          {blockIdx === 0 && (
-            <td
-              className="border border-border p-1.5 font-semibold whitespace-nowrap text-[11px] align-top"
-              rowSpan={blocks.length}
-              style={{ borderLeft: `3px solid ${crewColor}` }}
-              title={crew.name}
-            >
-              <div>{crewShortName(crew)}</div>
-              <div className="text-[9px] text-muted font-normal mt-1 space-y-px">
-                {blocks.map((b) => (
-                  <div key={b}>{MEASURE_BLOCK_LABELS[b] || b}</div>
-                ))}
-              </div>
-            </td>
-          )}
+          {/* Crew name + time label — each row gets its own cell for alignment */}
+          <td
+            className={`border border-border p-1 whitespace-nowrap text-[11px] ${blockIdx === 0 ? "border-t" : "border-t-0"}`}
+            style={{ borderLeft: `3px solid ${crewColor}` }}
+            title={crew.name}
+          >
+            {blockIdx === 0 && (
+              <div className="font-semibold">{crewShortName(crew)}</div>
+            )}
+            <div className="text-[9px] text-muted font-normal">{MEASURE_BLOCK_LABELS[block] || block}</div>
+          </td>
 
           {weekDays.map((day) => {
             const isToday = isSameDay(day, today);
@@ -629,21 +625,17 @@ function HourlyCrewRows({
     <>
       {hours.map((hour, hourIdx) => (
         <tr key={`${crew.id}-h${hour}`}>
-          {hourIdx === 0 && (
-            <td
-              className="border border-border p-1.5 font-semibold whitespace-nowrap text-[11px] align-top"
-              rowSpan={hours.length}
-              style={{ borderLeft: `3px solid ${crewColor}` }}
-              title={crew.name}
-            >
-              <div>{crewShortName(crew)}</div>
-              <div className="text-[9px] text-muted font-normal mt-1 space-y-px">
-                {hours.map((h) => (
-                  <div key={h}>{SERVICE_HOUR_LABELS[h]}</div>
-                ))}
-              </div>
-            </td>
-          )}
+          {/* Crew name + hour label — each row gets its own cell for alignment */}
+          <td
+            className={`border border-border p-1 whitespace-nowrap text-[11px] ${hourIdx === 0 ? "border-t" : "border-t-0"}`}
+            style={{ borderLeft: `3px solid ${crewColor}` }}
+            title={crew.name}
+          >
+            {hourIdx === 0 && (
+              <div className="font-semibold">{crewShortName(crew)}</div>
+            )}
+            <div className="text-[9px] text-muted font-normal">{SERVICE_HOUR_LABELS[hour]}</div>
+          </td>
 
           {weekDays.map((day) => {
             const isToday = isSameDay(day, today);
