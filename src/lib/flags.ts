@@ -33,6 +33,7 @@ import {
   getRForceResource,
   timeBlockMatchesHour,
 } from "./normalize";
+import { checkSchedulingConflicts } from "./scheduling-validation";
 
 /** Build a stable fingerprint string for deduplication and resolution matching. */
 function buildFingerprintId(fp: FlagFingerprint): string {
@@ -133,29 +134,74 @@ function detectLiveAppFlags(
       );
     }
 
-    // ── Double booking ──
-    if (appt.time_block) {
-      const sameBlock = active.filter(
-        (a) =>
-          a.id !== appt.id &&
-          a.crew_id === appt.crew_id &&
-          a.scheduled_date === appt.scheduled_date &&
-          a.time_block === appt.time_block
+    // ── Double booking (covers multi-day, multi-block, and full-day conflicts) ──
+    if (appt.time_block && appt.scheduled_date) {
+      const conflicts = checkSchedulingConflicts(
+        appt.crew_id,
+        appt.scheduled_date,
+        appt.duration_days,
+        appt.time_block,
+        appt.time_block_end,
+        active,
+        appt.id
       );
-      // Only flag once per pair (lower id flags it)
-      if (sameBlock.length > 0 && appt.id < sameBlock[0].id) {
+      for (const conflict of conflicts) {
+        // Only flag once per pair: the appointment with the lower ID reports it
+        if (appt.id > conflict.conflictingAppointmentId) continue;
+
+        const reasonLabel = conflict.reason === "multi_day_overlap"
+          ? "multi-day overlap" : conflict.reason === "multi_block_overlap"
+          ? "multi-block overlap" : conflict.reason === "full_day_conflict"
+          ? "full-day conflict" : `${conflict.conflictBlock} block`;
+
         flags.push(
           makeFlag("live_app", "double_booking", "error",
-            `${crewName} is double-booked on ${appt.scheduled_date} in the ${appt.time_block} block`,
+            `${crewName} is double-booked on ${conflict.conflictDate} (${reasonLabel}) — conflicts with ${conflict.customerName}`,
             "Move or cancel one of the conflicting appointments.",
             {
               appointmentId: appt.id, flagCode: "double_booking",
               affectedField: "time_block",
-              appValue: `${appt.crew_id}|${appt.scheduled_date}|${appt.time_block}`,
+              appValue: `${appt.crew_id}|${conflict.conflictDate}|${conflict.conflictBlock}`,
             },
+            { appointmentId: appt.id, crewId: appt.crew_id, date: conflict.conflictDate })
+        );
+      }
+    }
+
+    // ── Invalid resource type (crew type doesn't match appointment type) ──
+    if (crew) {
+      const ELIGIBLE: Record<string, string[]> = {
+        tech_measure: ["measure_tech"],
+        install: ["install_in_house", "install_sub", "jip"],
+        service: ["svc"],
+        jip: ["jip"],
+        lswp: ["install_in_house", "install_sub"],
+        hoa: ["install_in_house", "install_sub"],
+        paint_stain: ["install_in_house", "install_sub"],
+      };
+      const eligible = ELIGIBLE[appt.appointment_type] || [];
+      const allCrewTypes = [crew.crew_type, ...(crew.additional_types || [])];
+      const isEligible = eligible.length === 0 || eligible.some((t) => allCrewTypes.includes(t as typeof allCrewTypes[number]));
+      if (!isEligible) {
+        flags.push(
+          makeFlag("live_app", "invalid_resource_type", "warning",
+            `${crewName} (${crew.crew_type}) is not eligible for ${appt.appointment_type} appointments`,
+            "Reassign to an eligible crew.",
+            { appointmentId: appt.id, flagCode: "invalid_resource_type", affectedField: "crew_type", appValue: crew.crew_type },
             { appointmentId: appt.id, crewId: appt.crew_id, date: appt.scheduled_date })
         );
       }
+    }
+
+    // ── Missing time block (scheduled but no time block) ──
+    if (!appt.time_block) {
+      flags.push(
+        makeFlag("live_app", "missing_time", "warning",
+          `${appt.customer_name} on ${appt.scheduled_date}: no time block assigned`,
+          "Set a time block for this appointment.",
+          { appointmentId: appt.id, flagCode: "missing_time" },
+          { appointmentId: appt.id, date: appt.scheduled_date })
+      );
     }
 
     // ── Missing address ──

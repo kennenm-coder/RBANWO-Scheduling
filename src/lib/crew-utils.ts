@@ -1,5 +1,6 @@
 import { Crew, CrewType, AppointmentType, Appointment, TimeBlock } from "./types";
-import { timeBlockStartEnd, MEASURE_TIME_BLOCKS } from "./calendar-utils";
+import { timeBlockStartEnd, MEASURE_TIME_BLOCKS, getSpannedBlocks } from "./calendar-utils";
+import { addDays, parseISO } from "date-fns";
 
 export function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
   if (types.includes(crew.crew_type)) return true;
@@ -121,17 +122,48 @@ export function getBlockedTimeBlocks(
   dateStr: string
 ): Set<TimeBlock> {
   const blocked = new Set<TimeBlock>();
-  const dayAppts = appointments.filter(
-    (a) =>
-      a.status !== "cancelled" &&
-      (a.crew_id === crewId || a.secondary_crew_id === crewId || a.tertiary_crew_id === crewId) &&
-      a.scheduled_date === dateStr
-  );
+  const targetDate = parseISO(dateStr);
+
+  // Find all appointments for this crew that overlap the target date,
+  // including multi-day appointments that started on an earlier date.
+  const dayAppts = appointments.filter((a) => {
+    if (a.status === "cancelled" || a.status === "unscheduled") return false;
+    if (!(a.crew_id === crewId || a.secondary_crew_id === crewId || a.tertiary_crew_id === crewId)) return false;
+    if (!a.scheduled_date) return false;
+
+    // Direct date match
+    if (a.scheduled_date === dateStr) return true;
+
+    // Multi-day: check if target date falls within the appointment's span
+    if (a.duration_days > 1) {
+      const start = parseISO(a.scheduled_date);
+      for (let d = 1; d < a.duration_days; d++) {
+        const spanned = addDays(start, d);
+        if (spanned.getFullYear() === targetDate.getFullYear() &&
+            spanned.getMonth() === targetDate.getMonth() &&
+            spanned.getDate() === targetDate.getDate()) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
 
   for (const appt of dayAppts) {
-    if (appt.time_block) {
-      blocked.add(appt.time_block);
-    } else if (appt.time_block === "full_day" || (!appt.time_block && appt.appointment_type !== "tech_measure")) {
+    if (appt.time_block === "full_day") {
+      // Full-day blocks everything
+      blocked.add("full_day");
+      for (const b of MEASURE_TIME_BLOCKS) {
+        blocked.add(b);
+      }
+    } else if (appt.time_block) {
+      // Account for multi-block spans (time_block to time_block_end)
+      const spanned = getSpannedBlocks(appt);
+      for (const b of spanned) {
+        blocked.add(b);
+      }
+    } else if (!appt.time_block && appt.appointment_type !== "tech_measure") {
+      // Non-measure appointment without a block = treat as full day
       for (const b of MEASURE_TIME_BLOCKS) {
         blocked.add(b);
       }
