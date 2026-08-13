@@ -6,7 +6,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
 import { geocodeFastZip, geocodeBatch, GeoResult, GeoPrecision, clearAndReGeocode, manualCorrectGeocode } from "@/lib/geocode";
-import { getRForceItemsForDay, typeLabel } from "@/lib/calendar-utils";
+import { getRForceItemsForDay, typeLabel, formatProductBreakdown } from "@/lib/calendar-utils";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { format } from "date-fns";
 import { Loader2, ExternalLink, Navigation, MapPinOff, RefreshCw, Crosshair } from "lucide-react";
@@ -60,7 +60,7 @@ interface MapItem {
   crewName: string;
   crewColor: string;
   crewId: string;
-  productCount?: number | null;
+  productLabel?: string | null;
   workOrderNumber?: string | null;
   orderNumber?: string | null;
   isRForce: boolean;
@@ -112,9 +112,9 @@ function MarkerWithPopup({
           <div className="text-xs text-gray-500 mt-1">
             {m.address}
           </div>
-          {m.productCount != null && m.productCount > 0 && (
+          {m.productLabel && (
             <div className="text-xs text-gray-500 mt-0.5">
-              {m.productCount} products
+              {m.productLabel}
             </div>
           )}
 
@@ -303,7 +303,7 @@ export default function MapView({ date }: Props) {
           crewName: crew.name,
           crewColor: crew.color,
           crewId: crew.id,
-          productCount: appt.product_count,
+          productLabel: formatProductBreakdown(appt),
           workOrderNumber: appt.work_order_number,
           orderNumber: appt.order_number,
           isRForce: false,
@@ -323,7 +323,7 @@ export default function MapView({ date }: Props) {
           crewName: crew.name,
           crewColor: crew.color,
           crewId: crew.id,
-          productCount: rf.rforceOrder.product_count,
+          productLabel: formatProductBreakdown(rf.rforceOrder),
           workOrderNumber: rf.rforceOrder.work_order_number,
           orderNumber: rf.rforceOrder.order_number,
           isRForce: true,

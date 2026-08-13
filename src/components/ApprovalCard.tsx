@@ -1,6 +1,7 @@
 "use client";
 
 import { RForceOrder, Crew } from "@/lib/types";
+import { formatProductBreakdown } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { Check, X, MapPin } from "lucide-react";
 import { useState } from "react";
@@ -113,9 +114,9 @@ export default function ApprovalCard({
         <span className="opacity-70 text-foreground/70">
           {rforceOrder.work_order_type || "Unknown"}
         </span>
-        {rforceOrder.product_count != null && rforceOrder.product_count > 0 && (
+        {formatProductBreakdown(rforceOrder) && (
           <span className="opacity-70 text-foreground/70">
-            {rforceOrder.product_count} units
+            {formatProductBreakdown(rforceOrder)}
           </span>
         )}
       </div>
