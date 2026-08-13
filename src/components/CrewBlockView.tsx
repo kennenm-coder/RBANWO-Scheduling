@@ -9,6 +9,7 @@ import {
   Crew,
   TimeBlock,
   AppointmentType,
+  RForceOrder,
 } from "@/lib/types";
 import {
   getAppointmentsForCrewAndDay,
@@ -18,6 +19,12 @@ import {
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { crewHasType, sortByFirstName } from "@/lib/crew-utils";
+import {
+  getDraggedOrder,
+  setDraggedOrder,
+  getDraggedAppointment,
+  setDraggedAppointment,
+} from "@/lib/drag-context";
 import { Palmtree } from "lucide-react";
 import {
   format,
@@ -72,6 +79,12 @@ export default function CrewBlockView({
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
+  const [scheduleTarget, setScheduleTarget] = useState<{
+    date: Date;
+    crewId: string;
+    timeBlock?: TimeBlock;
+    prefill?: RForceOrder;
+  } | null>(null);
 
   // Sun–Sat week
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 }); // Sunday
@@ -222,6 +235,14 @@ export default function CrewBlockView({
               multiDayLabel={multiDayLabel}
               crewShortName={crewShortName}
               onAppointmentClick={setSelectedAppt}
+              onQueueDrop={(order, crewId, day, block) =>
+                setScheduleTarget({ date: day, crewId, timeBlock: block, prefill: order })
+              }
+              onAppointmentDrop={(appt, targetCrewId, targetDay) => {
+                // For block view, dropping an appointment opens it in edit/reschedule mode
+                // positioned at the target crew and day
+                setSelectedAppt(appt);
+              }}
               today={today}
             />
           ))}
@@ -262,6 +283,17 @@ export default function CrewBlockView({
           onClose={() => setReschedulingAppt(null)}
         />
       )}
+
+      {/* Queue drop → schedule modal */}
+      {scheduleTarget && (
+        <ScheduleModal
+          date={scheduleTarget.date}
+          crewId={scheduleTarget.crewId}
+          timeBlock={scheduleTarget.timeBlock}
+          prefill={scheduleTarget.prefill}
+          onClose={() => setScheduleTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -279,6 +311,8 @@ interface SectionBlockProps {
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
+  onQueueDrop?: (order: RForceOrder, crewId: string, day: Date, block?: TimeBlock) => void;
+  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date) => void;
   today: Date;
 }
 
@@ -293,6 +327,8 @@ function SectionBlock({
   multiDayLabel,
   crewShortName,
   onAppointmentClick,
+  onQueueDrop,
+  onAppointmentDrop,
   today,
 }: SectionBlockProps) {
   return (
@@ -318,6 +354,8 @@ function SectionBlock({
             multiDayLabel={multiDayLabel}
             crewShortName={crewShortName}
             onAppointmentClick={onAppointmentClick}
+            onQueueDrop={onQueueDrop}
+            onAppointmentDrop={onAppointmentDrop}
             today={today}
           />
         ) : rowMode === "hourly" ? (
@@ -330,6 +368,8 @@ function SectionBlock({
             multiDayLabel={multiDayLabel}
             crewShortName={crewShortName}
             onAppointmentClick={onAppointmentClick}
+            onQueueDrop={onQueueDrop}
+            onAppointmentDrop={onAppointmentDrop}
             today={today}
           />
         ) : (
@@ -343,6 +383,8 @@ function SectionBlock({
             multiDayLabel={multiDayLabel}
             crewShortName={crewShortName}
             onAppointmentClick={onAppointmentClick}
+            onQueueDrop={onQueueDrop}
+            onAppointmentDrop={onAppointmentDrop}
             today={today}
           />
         )
@@ -362,6 +404,8 @@ interface CrewRowProps {
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
+  onQueueDrop?: (order: RForceOrder, crewId: string, day: Date, block?: TimeBlock) => void;
+  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date) => void;
   today: Date;
 }
 
@@ -373,9 +417,12 @@ function CrewRow({
   multiDayLabel,
   crewShortName,
   onAppointmentClick,
+  onQueueDrop,
+  onAppointmentDrop,
   today,
 }: CrewRowProps) {
   const crewColor = crew.color || "#1a73e8";
+  const [dragOverDay, setDragOverDay] = useState<string | null>(null);
 
   return (
     <tr>
@@ -394,6 +441,8 @@ function CrewRow({
       {weekDays.map((day) => {
         const isToday = isSameDay(day, today);
         const off = isCrewOffOnDay(crew, day);
+        const dayKey = day.toISOString();
+        const isDragOver = dragOverDay === dayKey;
         const dayAppts = getAppointmentsForCrewAndDay(
           appointments,
           crew.id,
@@ -402,10 +451,36 @@ function CrewRow({
 
         return (
           <td
-            key={day.toISOString()}
-            className={`border border-border p-0.5 align-top min-w-[120px] ${
+            key={dayKey}
+            className={`border border-border p-0.5 align-top min-w-[120px] transition-colors ${
               isToday ? "bg-primary/5" : ""
-            }`}
+            } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+            onDragOver={(e) => {
+              const order = getDraggedOrder();
+              const dragged = getDraggedAppointment();
+              if (!order && !dragged) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              if (dragOverDay !== dayKey) setDragOverDay(dayKey);
+            }}
+            onDragLeave={() => {
+              if (dragOverDay === dayKey) setDragOverDay(null);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOverDay(null);
+              const order = getDraggedOrder();
+              if (order) {
+                onQueueDrop?.(order, crew.id, day, "full_day");
+                setDraggedOrder(null);
+                return;
+              }
+              const dragged = getDraggedAppointment();
+              if (dragged) {
+                onAppointmentDrop?.(dragged.appointment, crew.id, day);
+                setDraggedAppointment(null);
+              }
+            }}
           >
             {off ? (
               <div className="flex items-center justify-center h-full text-muted opacity-60 py-1">
@@ -442,6 +517,8 @@ interface MeasureCrewRowsProps {
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
+  onQueueDrop?: (order: RForceOrder, crewId: string, day: Date, block?: TimeBlock) => void;
+  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date) => void;
   today: Date;
 }
 
@@ -453,10 +530,13 @@ function MeasureCrewRows({
   multiDayLabel,
   crewShortName,
   onAppointmentClick,
+  onQueueDrop,
+  onAppointmentDrop,
   today,
 }: MeasureCrewRowsProps) {
   const crewColor = crew.color || "#1a73e8";
   const blocks = MEASURE_TIME_BLOCKS; // "9-10", "10-12", "12-2", "2-4", "4-6"
+  const [dragOverCell, setDragOverCell] = useState<string | null>(null);
 
   // Pre-compute appointments per day
   const dayApptsMap = useMemo(() => {
@@ -491,21 +571,17 @@ function MeasureCrewRows({
     <>
       {blocks.map((block, blockIdx) => (
         <tr key={`${crew.id}-${block}`}>
-          {blockIdx === 0 && (
-            <td
-              className="border border-border p-1.5 font-semibold whitespace-nowrap text-[11px] align-top"
-              rowSpan={blocks.length}
-              style={{ borderLeft: `3px solid ${crewColor}` }}
-              title={crew.name}
-            >
-              <div>{crewShortName(crew)}</div>
-              <div className="text-[9px] text-muted font-normal mt-1 space-y-px">
-                {blocks.map((b) => (
-                  <div key={b}>{MEASURE_BLOCK_LABELS[b] || b}</div>
-                ))}
-              </div>
-            </td>
-          )}
+          {/* Crew name + time label — each row gets its own cell for alignment */}
+          <td
+            className={`border border-border p-1 whitespace-nowrap text-[11px] ${blockIdx === 0 ? "border-t" : "border-t-0"}`}
+            style={{ borderLeft: `3px solid ${crewColor}` }}
+            title={crew.name}
+          >
+            {blockIdx === 0 && (
+              <div className="font-semibold">{crewShortName(crew)}</div>
+            )}
+            <div className="text-[9px] text-muted font-normal">{MEASURE_BLOCK_LABELS[block] || block}</div>
+          </td>
 
           {weekDays.map((day) => {
             const isToday = isSameDay(day, today);
@@ -535,11 +611,41 @@ function MeasureCrewRows({
               (a) => a.time_block && appointmentSpansBlock(a, block)
             );
             const fullDayAppts = blockIdx === 0 ? (fullDayByDay.get(dateStr) || []) : [];
+            const cellKey = `${dateStr}-${block}`;
+            const isDragOver = dragOverCell === cellKey;
 
             return (
               <td
                 key={day.toISOString()}
-                className={`border border-border/50 p-0.5 align-top text-[10px] ${isToday ? "bg-primary/5" : ""}`}
+                className={`border border-border/50 p-0.5 align-top text-[10px] transition-colors ${
+                  isToday ? "bg-primary/5" : ""
+                } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+                onDragOver={(e) => {
+                  const order = getDraggedOrder();
+                  const dragged = getDraggedAppointment();
+                  if (!order && !dragged) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  if (dragOverCell !== cellKey) setDragOverCell(cellKey);
+                }}
+                onDragLeave={() => {
+                  if (dragOverCell === cellKey) setDragOverCell(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverCell(null);
+                  const order = getDraggedOrder();
+                  if (order) {
+                    onQueueDrop?.(order, crew.id, day, block as TimeBlock);
+                    setDraggedOrder(null);
+                    return;
+                  }
+                  const dragged = getDraggedAppointment();
+                  if (dragged) {
+                    onAppointmentDrop?.(dragged.appointment, crew.id, day);
+                    setDraggedAppointment(null);
+                  }
+                }}
               >
                 {fullDayAppts.map((appt) => (
                   <BlockCell
@@ -580,6 +686,8 @@ interface HourlyCrewRowsProps {
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
+  onQueueDrop?: (order: RForceOrder, crewId: string, day: Date, block?: TimeBlock) => void;
+  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date) => void;
   today: Date;
 }
 
@@ -606,10 +714,13 @@ function HourlyCrewRows({
   multiDayLabel,
   crewShortName,
   onAppointmentClick,
+  onQueueDrop,
+  onAppointmentDrop,
   today,
 }: HourlyCrewRowsProps) {
   const crewColor = crew.color || "#1a73e8";
   const hours = SERVICE_HOURS;
+  const [dragOverCell, setDragOverCell] = useState<string | null>(null);
 
   const dayApptsMap = useMemo(() => {
     const map = new Map<string, Appointment[]>();
@@ -629,21 +740,17 @@ function HourlyCrewRows({
     <>
       {hours.map((hour, hourIdx) => (
         <tr key={`${crew.id}-h${hour}`}>
-          {hourIdx === 0 && (
-            <td
-              className="border border-border p-1.5 font-semibold whitespace-nowrap text-[11px] align-top"
-              rowSpan={hours.length}
-              style={{ borderLeft: `3px solid ${crewColor}` }}
-              title={crew.name}
-            >
-              <div>{crewShortName(crew)}</div>
-              <div className="text-[9px] text-muted font-normal mt-1 space-y-px">
-                {hours.map((h) => (
-                  <div key={h}>{SERVICE_HOUR_LABELS[h]}</div>
-                ))}
-              </div>
-            </td>
-          )}
+          {/* Crew name + hour label — each row gets its own cell for alignment */}
+          <td
+            className={`border border-border p-1 whitespace-nowrap text-[11px] ${hourIdx === 0 ? "border-t" : "border-t-0"}`}
+            style={{ borderLeft: `3px solid ${crewColor}` }}
+            title={crew.name}
+          >
+            {hourIdx === 0 && (
+              <div className="font-semibold">{crewShortName(crew)}</div>
+            )}
+            <div className="text-[9px] text-muted font-normal">{SERVICE_HOUR_LABELS[hour]}</div>
+          </td>
 
           {weekDays.map((day) => {
             const isToday = isSameDay(day, today);
@@ -679,11 +786,43 @@ function HourlyCrewRows({
               const startH = getAppointmentStartHour(a);
               return startH === hour;
             });
+            const cellKey = `${dateStr}-h${hour}`;
+            const isDragOver = dragOverCell === cellKey;
+            // Convert hour to a time block string for the drop target
+            const hourBlock = `${hour}-${hour + 1}` as TimeBlock;
 
             return (
               <td
                 key={day.toISOString()}
-                className={`border border-border/50 p-0.5 align-top text-[10px] ${isToday ? "bg-primary/5" : ""}`}
+                className={`border border-border/50 p-0.5 align-top text-[10px] transition-colors ${
+                  isToday ? "bg-primary/5" : ""
+                } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+                onDragOver={(e) => {
+                  const order = getDraggedOrder();
+                  const dragged = getDraggedAppointment();
+                  if (!order && !dragged) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  if (dragOverCell !== cellKey) setDragOverCell(cellKey);
+                }}
+                onDragLeave={() => {
+                  if (dragOverCell === cellKey) setDragOverCell(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverCell(null);
+                  const order = getDraggedOrder();
+                  if (order) {
+                    onQueueDrop?.(order, crew.id, day, hourBlock);
+                    setDraggedOrder(null);
+                    return;
+                  }
+                  const dragged = getDraggedAppointment();
+                  if (dragged) {
+                    onAppointmentDrop?.(dragged.appointment, crew.id, day);
+                    setDraggedAppointment(null);
+                  }
+                }}
               >
                 {hourAppts.map((appt) => (
                   <BlockCell
