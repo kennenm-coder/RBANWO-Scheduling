@@ -1,28 +1,51 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#3B7A33"/>
-      <stop offset="100%" stop-color="#2D5F27"/>
+      <stop offset="0%" stop-color="#1A1A1A"/>
+      <stop offset="100%" stop-color="#0F0F0F"/>
     </linearGradient>
+    <linearGradient id="piece" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#6BBF62"/>
+      <stop offset="100%" stop-color="#3B7A33"/>
+    </linearGradient>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="116%">
+      <feDropShadow dx="0" dy="4" stdDeviation="10" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
   </defs>
-  <!-- Rounded square background in RBA green -->
-  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
-  <!-- Calendar base -->
-  <rect x="96" y="160" width="320" height="260" rx="24" fill="white" opacity="0.95"/>
-  <!-- Calendar header bar -->
-  <rect x="96" y="160" width="320" height="72" rx="24" fill="white"/>
-  <rect x="96" y="200" width="320" height="32" fill="white"/>
-  <!-- Header accent -->
-  <rect x="96" y="160" width="320" height="72" rx="24" fill="#2D5F27" opacity="0.15"/>
-  <rect x="96" y="200" width="320" height="32" fill="#2D5F27" opacity="0.15"/>
-  <!-- Calendar rings -->
-  <rect x="180" y="128" width="20" height="64" rx="10" fill="white"/>
-  <rect x="312" y="128" width="20" height="64" rx="10" fill="white"/>
-  <!-- Grid lines -->
-  <line x1="96" y1="296" x2="416" y2="296" stroke="#2D5F27" stroke-opacity="0.1" stroke-width="2"/>
-  <line x1="96" y1="356" x2="416" y2="356" stroke="#2D5F27" stroke-opacity="0.1" stroke-width="2"/>
-  <line x1="203" y1="232" x2="203" y2="420" stroke="#2D5F27" stroke-opacity="0.1" stroke-width="2"/>
-  <line x1="310" y1="232" x2="310" y2="420" stroke="#2D5F27" stroke-opacity="0.1" stroke-width="2"/>
-  <!-- Checkmark -->
-  <path d="M 200 320 L 245 365 L 340 270" fill="none" stroke="#3B7A33" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Dark rounded background -->
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <!-- Puzzle piece — centered, bold knobs for clarity at small sizes -->
+  <g transform="translate(256,264)" filter="url(#shadow)">
+    <path d="
+      M -110,-150
+      H -25
+      C -25,-185, 25,-185, 25,-150
+      H 110
+      V -65
+      C 145,-65, 145,-15, 110,-15
+      V 70
+      H 25
+      C 25,105, -25,105, -25,70
+      H -110
+      V -15
+      C -145,-15, -145,-65, -110,-65
+      Z
+    " fill="url(#piece)" stroke="#2D5F27" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Subtle inner highlight for depth -->
+    <path d="
+      M -95,-135
+      H -25
+      C -25,-165, 25,-165, 25,-135
+      H 95
+      V -65
+      C 125,-65, 125,-25, 95,-25
+      V 55
+      H 25
+      C 25,85, -25,85, -25,55
+      H -95
+      V -25
+      C -125,-25, -125,-65, -95,-65
+      Z
+    " fill="none" stroke="white" stroke-opacity="0.12" stroke-width="2" stroke-linejoin="round"/>
+  </g>
 </svg>
