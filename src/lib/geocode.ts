@@ -176,6 +176,48 @@ export async function manualCorrectGeocode(address: string, lat: number, lng: nu
   });
 }
 
+/**
+ * Update the latitude/longitude on a work_orders row in Supabase.
+ * Called when a user manually corrects a pin's location so the
+ * database coordinates stay accurate for future map loads.
+ */
+export async function updateWorkOrderCoords(
+  workOrderNumber: string,
+  lat: number,
+  lng: number,
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  await sb
+    .from("work_orders")
+    .update({ latitude: lat, longitude: lng })
+    .eq("work_order_number", workOrderNumber);
+}
+
+/**
+ * Run the geocoder for an address WITHOUT saving to cache.
+ * Used for "verify" comparisons against database coordinates.
+ */
+export async function geocodeForComparison(address: string): Promise<GeoResult | null> {
+  try {
+    const res = await fetch("/api/geocode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address }),
+    });
+    if (!res.ok) return null;
+    const { result } = await res.json();
+    if (!result) return null;
+    return {
+      lat: result.lat,
+      lng: result.lng,
+      precision: (result.precision as GeoPrecision) || "unknown",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export { extractState, isResultInState, STATE_BOUNDS };
 
 async function bulkCacheLookup(addresses: string[]): Promise<Map<string, GeoResult>> {

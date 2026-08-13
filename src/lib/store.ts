@@ -289,7 +289,9 @@ const RFORCE_COLUMNS = [
   "work_order_type", "customer_name", "address", "scheduled_start",
   "scheduled_end", "product_count", "windows", "patio_doors", "doors",
   "primary_resource", "tech_measure", "installer", "service_rep",
-  "order_alerts", "scheduler_notes", "account_name", "updated_at",
+  "order_alerts", "scheduler_notes", "account_name",
+  "latitude", "longitude",
+  "updated_at",
 ].join(", ");
 
 export async function fetchRForceOrders(): Promise<RForceOrder[]> {
@@ -347,6 +349,8 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
         scheduler_notes: row.scheduler_notes || null,
         account_name: row.account_name || null,
         csv_import_id: null,
+        latitude: row.latitude ?? null,
+        longitude: row.longitude ?? null,
         updated_at: row.updated_at,
       } as RForceOrder))
     );

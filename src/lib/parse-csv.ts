@@ -167,6 +167,8 @@ export function parseCsv(csvText: string): Omit<RForceOrder, "updated_at">[] {
       scheduler_notes: null,
       account_name: val(row, COL.ACCOUNT_NAME) || null,
       csv_import_id: null,
+      latitude: null,
+      longitude: null,
     });
   }
 
