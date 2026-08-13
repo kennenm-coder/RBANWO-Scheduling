@@ -98,10 +98,11 @@ export default function LinkModal(props: Props) {
       }
       await refreshData();
       props.onClose();
-    } catch (err: any) {
-      if (err.message === "VERSION_CONFLICT") {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg === "VERSION_CONFLICT") {
         setError("This record was modified by someone else. Close and try again.");
-      } else if (err.message === "ALREADY_LINKED") {
+      } else if (msg === "ALREADY_LINKED") {
         setError("This record is already linked to another appointment.");
       } else {
         setError("Failed to link. Please try again.");
@@ -171,10 +172,8 @@ export default function LinkModal(props: Props) {
                   : "No unlinked app appointments available."}
             </div>
           )}
-          {(filteredItems as any[]).map((item: any) => {
-            if (props.mode === "link_to_rforce") {
-              const rf = item as RForceOrder;
-              return (
+          {props.mode === "link_to_rforce"
+            ? (filteredItems as RForceOrder[]).map((rf) => (
                 <div
                   key={rf.work_order_number}
                   className="px-4 py-3 hover:bg-surface flex items-start justify-between"
@@ -204,10 +203,8 @@ export default function LinkModal(props: Props) {
                     Link
                   </button>
                 </div>
-              );
-            } else {
-              const appt = item as Appointment;
-              return (
+              ))
+            : (filteredItems as Appointment[]).map((appt) => (
                 <div
                   key={appt.id}
                   className="px-4 py-3 hover:bg-surface flex items-start justify-between"
@@ -240,9 +237,7 @@ export default function LinkModal(props: Props) {
                     Link
                   </button>
                 </div>
-              );
-            }
-          })}
+              ))}
         </div>
       </div>
     </div>

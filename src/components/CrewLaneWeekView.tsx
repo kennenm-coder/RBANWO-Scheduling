@@ -601,7 +601,7 @@ function MeasureTimeLaneCell({
   hasConflict: boolean;
   cellAppts: Appointment[];
   cellDisplayItems: RForceDisplayItem[];
-  rforceOrders: any[];
+  rforceOrders: RForceOrder[];
   searchQuery: string;
   crewObj: Crew | undefined;
   blockedBlocks: Set<TimeBlock>;
@@ -892,7 +892,7 @@ function StandardCell({
   hasConflict: boolean;
   cellAppts: Appointment[];
   cellDisplayItems: RForceDisplayItem[];
-  rforceOrders: any[];
+  rforceOrders: RForceOrder[];
   searchQuery: string;
   crewObj: Crew | undefined;
   timeOffColor?: string;
@@ -1244,7 +1244,7 @@ function CompactRForceContent({
   crew,
   isSynced,
 }: {
-  order: any;
+  order: RForceOrder;
   crew?: Crew;
   isSynced?: boolean;
 }) {

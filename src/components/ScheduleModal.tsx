@@ -268,10 +268,11 @@ export default function ScheduleModal({
         });
       }
       onClose();
-    } catch (err: any) {
-      if (err.message === "DOUBLE_BOOK") {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg === "DOUBLE_BOOK") {
         setError("This crew is already booked for this time block.");
-      } else if (err.message === "VERSION_CONFLICT") {
+      } else if (msg === "VERSION_CONFLICT") {
         setError(
           "This appointment was modified by someone else. Please close and try again."
         );
