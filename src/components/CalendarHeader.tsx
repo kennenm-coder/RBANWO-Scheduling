@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { ViewMode } from "@/lib/types";
-import { formatDateFull, formatWeekRange } from "@/lib/calendar-utils";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { ViewMode, Appointment } from "@/lib/types";
+import { formatDateFull, formatWeekRange, formatDateStr, typeLabel } from "@/lib/calendar-utils";
+import { searchAppointments } from "@/lib/search-utils";
 import {
   ChevronLeft,
   ChevronRight,
@@ -15,6 +16,8 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
+  MapPin,
+  Calendar,
 } from "lucide-react";
 import { useData } from "./DataProvider";
 import ProfileMenu from "./ProfileMenu";
@@ -31,6 +34,7 @@ interface Props {
   onDateChange?: (date: Date) => void;
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
+  onJumpToAppointment?: (date: Date) => void;
   flagCount?: number;
   onFlagsClick?: () => void;
   showRForce?: boolean;
@@ -47,18 +51,45 @@ export default function CalendarHeader({
   onDateChange,
   searchQuery = "",
   onSearchChange,
+  onJumpToAppointment,
   flagCount = 0,
   onFlagsClick,
   showRForce = false,
   onToggleRForce,
 }: Props) {
-  const { connected } = useData();
+  const { connected, appointments, crews } = useData();
   const [searchOpen, setSearchOpen] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>("system");
+  const [searchFocused, setSearchFocused] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
   const dateRef = useRef<HTMLInputElement>(null);
   const nativeDateRef = useRef<HTMLInputElement>(null);
+
+  // Global search: search ALL loaded appointments, not just the current view
+  const crewMap = useMemo(() => new Map(crews.map((c) => [c.id, c])), [crews]);
+  const searchResults = useMemo(() => {
+    if (!searchQuery || searchQuery.length < 2) return [];
+    const scheduled = appointments.filter((a) => a.status !== "cancelled" && a.status !== "unscheduled" && a.scheduled_date);
+    const matches = searchAppointments(scheduled, crews, searchQuery);
+    // Sort by date descending (most recent first), limit to 8
+    return matches
+      .sort((a, b) => (b.scheduled_date || "").localeCompare(a.scheduled_date || ""))
+      .slice(0, 8);
+  }, [searchQuery, appointments, crews]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!searchOpen || !searchFocused) return;
+    function handleClick(e: MouseEvent) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setSearchFocused(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [searchOpen, searchFocused]);
 
   useEffect(() => {
     const saved = getSavedTheme();
@@ -193,26 +224,59 @@ export default function CalendarHeader({
         )}
       </div>
 
-      {/* Search */}
+      {/* Search with global results dropdown */}
       {searchOpen && (
-        <div className="flex items-center gap-1 bg-surface border border-border rounded-full px-2 py-1">
-          <Search size={14} className="text-muted shrink-0" />
-          <input
-            ref={searchRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => onSearchChange?.(e.target.value)}
-            placeholder="Search jobs..."
-            className="bg-transparent text-sm outline-none w-32 sm:w-48"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => onSearchChange?.("")}
-              className="p-0.5 rounded-full hover:bg-border"
-              aria-label="Clear search"
-            >
-              <X size={12} />
-            </button>
+        <div ref={searchContainerRef} className="relative">
+          <div className="flex items-center gap-1 bg-surface border border-border rounded-full px-2 py-1">
+            <Search size={14} className="text-muted shrink-0" />
+            <input
+              ref={searchRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => onSearchChange?.(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              placeholder="Search all scheduled jobs..."
+              className="bg-transparent text-sm outline-none w-32 sm:w-48"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => onSearchChange?.("")}
+                className="p-0.5 rounded-full hover:bg-border"
+                aria-label="Clear search"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* Search results dropdown */}
+          {searchFocused && searchQuery && searchQuery.length >= 2 && (
+            <div className="absolute top-full right-0 mt-1 w-72 sm:w-80 bg-background border border-border rounded-lg shadow-xl z-50 max-h-[360px] overflow-y-auto">
+              {searchResults.length === 0 ? (
+                <div className="p-3 text-center text-muted text-xs">
+                  No scheduled jobs match &ldquo;{searchQuery}&rdquo;
+                </div>
+              ) : (
+                <>
+                  <div className="px-3 py-1.5 text-[10px] text-muted font-medium border-b border-border bg-surface rounded-t-lg">
+                    {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} across all weeks
+                  </div>
+                  {searchResults.map((appt) => (
+                    <SearchResultRow
+                      key={appt.id}
+                      appointment={appt}
+                      crewName={appt.crew_id ? crewMap.get(appt.crew_id)?.name : undefined}
+                      onClick={() => {
+                        if (appt.scheduled_date && onJumpToAppointment) {
+                          onJumpToAppointment(parseISO(appt.scheduled_date));
+                        }
+                        setSearchFocused(false);
+                      }}
+                    />
+                  ))}
+                </>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -299,5 +363,50 @@ export default function CalendarHeader({
         <ProfileMenu />
       </div>
     </header>
+  );
+}
+
+// ── Search Result Row ──
+
+function SearchResultRow({
+  appointment,
+  crewName,
+  onClick,
+}: {
+  appointment: Appointment;
+  crewName?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left px-3 py-2 hover:bg-surface transition-colors border-b border-border/50 last:border-b-0"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-xs truncate">
+          {appointment.customer_name}
+        </span>
+        <span className="text-[10px] text-muted shrink-0 font-medium">
+          {typeLabel(appointment.appointment_type)}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 text-[10px] text-muted mt-0.5">
+        {appointment.scheduled_date && (
+          <span className="flex items-center gap-0.5">
+            <Calendar size={9} />
+            {formatDateStr(appointment.scheduled_date)}
+          </span>
+        )}
+        {crewName && (
+          <span className="truncate">{crewName}</span>
+        )}
+        {appointment.address && (
+          <span className="flex items-center gap-0.5 truncate">
+            <MapPin size={9} className="shrink-0" />
+            {appointment.address.split(",")[0]}
+          </span>
+        )}
+      </div>
+    </button>
   );
 }

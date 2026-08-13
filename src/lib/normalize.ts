@@ -131,6 +131,19 @@ export const COMPLETED_STATUSES = new Set(["Appt Complete / Closed"]);
 export const SCHEDULED_STATUSES = new Set(["Scheduled & Assigned", "Scheduled"]);
 
 /**
+ * rForce order_status values that indicate the order is not currently schedulable.
+ * These items add noise to the queue — they can't be acted on until the hold is
+ * lifted or the collection/dispute is resolved.
+ */
+export const NOT_SCHEDULABLE_ORDER_STATUSES = new Set([
+  "On Hold",
+  "Collection",
+  "Collections",
+  "Dispute",
+  "Credit Hold",
+]);
+
+/**
  * Check if an rForce order is cancelled (checks both wo_status and order_status).
  */
 export function isRForceCancelled(order: {
@@ -141,6 +154,15 @@ export function isRForceCancelled(order: {
     CANCELLED_STATUSES.has(order.wo_status || "") ||
     CANCELLED_STATUSES.has(order.order_status || "")
   );
+}
+
+/**
+ * Check if an rForce order's order_status means it's not currently schedulable.
+ */
+export function isNotSchedulable(order: {
+  order_status?: string | null;
+}): boolean {
+  return NOT_SCHEDULABLE_ORDER_STATUSES.has(order.order_status || "");
 }
 
 // ── Resource/Crew Name Comparison ──

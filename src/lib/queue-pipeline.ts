@@ -19,7 +19,7 @@ import {
 } from "./types";
 import { buildFuzzyMatchIndex, findFuzzyMatchesIndexed } from "./fuzzy-match";
 import { reconcile } from "./reconcile";
-import { normalizeWoTypeOrUnknown } from "./normalize";
+import { normalizeWoTypeOrUnknown, isNotSchedulable } from "./normalize";
 import { typeLabel } from "./calendar-utils";
 
 // ── Address parsing ──
@@ -136,6 +136,15 @@ export function buildQueueItems(
     rfByWo.set(rf.work_order_number, rf);
   }
 
+  // Pre-compute set of non-schedulable WO numbers (On Hold, Collections, etc.)
+  // These items clutter the queue — schedulers can't act on them.
+  const notSchedulableWos = new Set<string>();
+  for (const rf of rforceOrders) {
+    if (isNotSchedulable(rf)) {
+      notSchedulableWos.add(rf.work_order_number);
+    }
+  }
+
   const activeLinkedAppointmentIds = new Set(
     activeLinks
       .filter((l) => !l.unlinked_at)
@@ -163,6 +172,9 @@ export function buildQueueItems(
 
   for (const r of reconResults) {
     const rf = rfByWo.get(r.workOrderNumber);
+
+    // Skip non-schedulable orders (On Hold, Collections, etc.)
+    if (notSchedulableWos.has(r.workOrderNumber)) continue;
 
     // Skip dismissed items
     const dismissKey = rf?.scheduled_start

@@ -234,6 +234,10 @@ export default function CalendarPage() {
           onDateChange={setCurrentDate}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          onJumpToAppointment={(date) => {
+            setCurrentDate(date);
+            // Keep current view but ensure the date is visible
+          }}
           flagCount={flagCount}
           onFlagsClick={() => setIssuesOpen(true)}
           showRForce={showRForce}
