@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { useData } from "./DataProvider";
 import { RForceOrder, Appointment } from "@/lib/types";
+import { formatDateStr } from "@/lib/calendar-utils";
 import { linkAppointment } from "@/lib/store";
 import { onAppointmentLinked } from "@/lib/sync-transitions";
 import { X, Search, Link2, MapPin } from "lucide-react";
@@ -23,6 +25,8 @@ type Props = LinkToRForceProps | LinkToAppProps;
 
 export default function LinkModal(props: Props) {
   const { rforceOrders, appointments, activeLinks, refreshData } = useData();
+  const onClose = props.onClose;
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [search, setSearch] = useState("");
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState("");
@@ -97,10 +101,11 @@ export default function LinkModal(props: Props) {
       }
       await refreshData();
       props.onClose();
-    } catch (err: any) {
-      if (err.message === "VERSION_CONFLICT") {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg === "VERSION_CONFLICT") {
         setError("This record was modified by someone else. Close and try again.");
-      } else if (err.message === "ALREADY_LINKED") {
+      } else if (msg === "ALREADY_LINKED") {
         setError("This record is already linked to another appointment.");
       } else {
         setError("Failed to link. Please try again.");
@@ -170,10 +175,8 @@ export default function LinkModal(props: Props) {
                   : "No unlinked app appointments available."}
             </div>
           )}
-          {(filteredItems as any[]).map((item: any) => {
-            if (props.mode === "link_to_rforce") {
-              const rf = item as RForceOrder;
-              return (
+          {props.mode === "link_to_rforce"
+            ? (filteredItems as RForceOrder[]).map((rf) => (
                 <div
                   key={rf.work_order_number}
                   className="px-4 py-3 hover:bg-surface flex items-start justify-between"
@@ -203,10 +206,8 @@ export default function LinkModal(props: Props) {
                     Link
                   </button>
                 </div>
-              );
-            } else {
-              const appt = item as Appointment;
-              return (
+              ))
+            : (filteredItems as Appointment[]).map((appt) => (
                 <div
                   key={appt.id}
                   className="px-4 py-3 hover:bg-surface flex items-start justify-between"
@@ -220,7 +221,7 @@ export default function LinkModal(props: Props) {
                       <span className="truncate">{appt.address}</span>
                     </div>
                     <div className="flex gap-3 text-xs text-muted mt-0.5">
-                      <span>Date: {appt.scheduled_date}</span>
+                      <span>Date: {appt.scheduled_date ? formatDateStr(appt.scheduled_date) : "—"}</span>
                       <span>
                         {appt.appointment_type === "tech_measure"
                           ? "Tech Measure"
@@ -239,9 +240,7 @@ export default function LinkModal(props: Props) {
                     Link
                   </button>
                 </div>
-              );
-            }
-          })}
+              ))}
         </div>
       </div>
     </div>

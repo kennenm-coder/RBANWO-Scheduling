@@ -7,7 +7,7 @@ import {
   upsertAvailabilityRule,
   deleteAvailabilityRule,
 } from "@/lib/store";
-import { Plus, Trash2, Clock, Ban, CalendarOff } from "lucide-react";
+import { Plus, Trash2, Clock, CalendarOff, Pencil, Save } from "lucide-react";
 import { format } from "date-fns";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -66,6 +66,7 @@ export default function AvailabilityEditor({
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadRules();
@@ -94,6 +95,20 @@ export default function AvailabilityEditor({
     setEffectiveEnd("");
     setReason("");
     setAdding(false);
+    setEditingId(null);
+  }
+
+  function startEdit(rule: AvailabilityRule) {
+    setEditingId(rule.id);
+    setKind(rule.kind);
+    setWeekdays([...rule.weekdays]);
+    setRepeatInterval(rule.repeat_interval);
+    setStartTime(rule.start_time || "08:00");
+    setEndTime(rule.end_time || "18:00");
+    setEffectiveStart(rule.effective_start);
+    setEffectiveEnd(rule.effective_end || "");
+    setReason(rule.reason || "");
+    setAdding(true);
   }
 
   async function handleSave() {
@@ -103,6 +118,7 @@ export default function AvailabilityEditor({
 
     try {
       await upsertAvailabilityRule({
+        ...(editingId ? { id: editingId } : {}),
         crew_id: crewId,
         kind,
         weekdays,
@@ -167,8 +183,16 @@ export default function AvailabilityEditor({
                 </span>
               )}
               <button
+                onClick={() => startEdit(rule)}
+                className="p-0.5 text-muted hover:text-primary shrink-0"
+                title="Edit rule"
+              >
+                <Pencil size={11} />
+              </button>
+              <button
                 onClick={() => handleDelete(rule.id)}
                 className="p-0.5 text-muted hover:text-red-500 shrink-0"
+                title="Delete rule"
               >
                 <Trash2 size={11} />
               </button>
@@ -187,6 +211,20 @@ export default function AvailabilityEditor({
         </button>
       ) : (
         <div className="border border-border rounded-lg p-3 space-y-3 bg-surface/50">
+          {editingId && (
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium text-primary flex items-center gap-1">
+                <Pencil size={10} />
+                Editing rule
+              </span>
+              <button
+                onClick={resetForm}
+                className="text-[11px] text-muted hover:text-foreground"
+              >
+                Cancel edit
+              </button>
+            </div>
+          )}
           <div>
             <label className="block text-[11px] text-muted mb-1">Type</label>
             <select
@@ -314,9 +352,12 @@ export default function AvailabilityEditor({
             <button
               onClick={handleSave}
               disabled={weekdays.length === 0 || saving}
-              className="flex-1 py-2 bg-primary text-white rounded-lg text-xs font-medium hover:opacity-90 disabled:opacity-50"
+              className={`flex-1 py-2 text-white rounded-lg text-xs font-medium hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-1 ${
+                editingId ? "bg-green-600" : "bg-primary"
+              }`}
             >
-              {saving ? "Saving..." : "Save Rule"}
+              {editingId ? <Save size={12} /> : <Plus size={12} />}
+              {saving ? "Saving..." : editingId ? "Save Changes" : "Save Rule"}
             </button>
             <button
               onClick={resetForm}

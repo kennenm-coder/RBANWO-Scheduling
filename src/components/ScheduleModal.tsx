@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
   Appointment,
   AppointmentType,
+  CrewType,
   TimeBlock,
   RForceOrder,
 } from "@/lib/types";
+import { normalizeWoType } from "@/lib/normalize";
 import { captureOriginalEntry } from "@/lib/sync-transitions";
 import {
   getTimeBlocksForType,
@@ -48,15 +51,34 @@ export default function ScheduleModal({
     createAppointment,
     updateAppointment,
   } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
 
-  const [type, setType] = useState<AppointmentType>(
-    editingAppointment?.appointment_type ||
-      (prefill?.work_order_type === "Install"
-        ? "install"
-        : prefill?.work_order_type === "Service"
-          ? "service"
-          : "tech_measure")
-  );
+  // Derive appointment type: editing > prefill rForce type > target crew type > tech_measure
+  function deriveAppointmentType(): AppointmentType {
+    if (editingAppointment?.appointment_type) return editingAppointment.appointment_type;
+    // Use the canonical normalizer for rForce work_order_type (handles JIP, LSWP, Paint/Stain, etc.)
+    if (prefill?.work_order_type) {
+      const normalized = normalizeWoType(prefill.work_order_type);
+      if (normalized) return normalized;
+    }
+    // Derive from the target crew's type when clicking a crew row directly
+    if (crewId) {
+      const targetCrew = crews.find((c) => c.id === crewId);
+      if (targetCrew) {
+        const CREW_TO_APPT: Partial<Record<CrewType, AppointmentType>> = {
+          measure_tech: "tech_measure",
+          install_in_house: "install",
+          install_sub: "install",
+          jip: "jip",
+          svc: "service",
+        };
+        const mapped = CREW_TO_APPT[targetCrew.crew_type];
+        if (mapped) return mapped;
+      }
+    }
+    return "tech_measure";
+  }
+  const [type, setType] = useState<AppointmentType>(deriveAppointmentType);
   const [selectedCrewId, setSelectedCrewId] = useState(
     editingAppointment?.crew_id || crewId || ""
   );
@@ -248,10 +270,11 @@ export default function ScheduleModal({
         });
       }
       onClose();
-    } catch (err: any) {
-      if (err.message === "DOUBLE_BOOK") {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg === "DOUBLE_BOOK") {
         setError("This crew is already booked for this time block.");
-      } else if (err.message === "VERSION_CONFLICT") {
+      } else if (msg === "VERSION_CONFLICT") {
         setError(
           "This appointment was modified by someone else. Please close and try again."
         );

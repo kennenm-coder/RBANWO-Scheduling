@@ -601,7 +601,7 @@ function MeasureTimeLaneCell({
   hasConflict: boolean;
   cellAppts: Appointment[];
   cellDisplayItems: RForceDisplayItem[];
-  rforceOrders: any[];
+  rforceOrders: RForceOrder[];
   searchQuery: string;
   crewObj: Crew | undefined;
   blockedBlocks: Set<TimeBlock>;
@@ -836,12 +836,15 @@ function MeasureTimeLaneCell({
                           </div>
                         );
                       })}
-                      <button
-                        onClick={() => onSchedule(block)}
-                        className="w-full h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
-                      >
-                        <Plus size={7} className="text-muted/20 hover:text-primary" />
-                      </button>
+                      {/* Only show + button if no app appointments occupy this block */}
+                      {blockAppts.length === 0 && (
+                        <button
+                          onClick={() => onSchedule(block)}
+                          className="w-full h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
+                        >
+                          <Plus size={7} className="text-muted/20 hover:text-primary" />
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <button
@@ -889,7 +892,7 @@ function StandardCell({
   hasConflict: boolean;
   cellAppts: Appointment[];
   cellDisplayItems: RForceDisplayItem[];
-  rforceOrders: any[];
+  rforceOrders: RForceOrder[];
   searchQuery: string;
   crewObj: Crew | undefined;
   timeOffColor?: string;
@@ -1241,7 +1244,7 @@ function CompactRForceContent({
   crew,
   isSynced,
 }: {
-  order: any;
+  order: RForceOrder;
   crew?: Crew;
   isSynced?: boolean;
 }) {

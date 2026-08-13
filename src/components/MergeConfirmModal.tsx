@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { Appointment, RForceOrder, FuzzyMatchCandidate } from "@/lib/types";
 import { normalizeWoType } from "@/lib/normalize";
 import { X, GitMerge, ArrowRight, Loader2 } from "lucide-react";
@@ -26,6 +27,7 @@ export default function MergeConfirmModal({
   onReject,
   onClose,
 }: Props) {
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [merging, setMerging] = useState(false);
 
   // Compute what will change (mirrors merge.ts logic)

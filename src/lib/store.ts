@@ -541,6 +541,22 @@ export async function createTimeOffRequest(
   return data as TimeOffRequest;
 }
 
+export async function updateTimeOffRequest(
+  id: string,
+  updates: Partial<Omit<TimeOffRequest, "id" | "created_at">>
+): Promise<TimeOffRequest | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("time_off_requests")
+    .update(updates)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as TimeOffRequest;
+}
+
 export async function deleteTimeOffRequest(id: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;

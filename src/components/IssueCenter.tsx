@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback } from "react";
 import { useData } from "./DataProvider";
 import { detectFlags, applyResolutions, categorizeFlags, countActionableFlags, SchedulingFlag } from "@/lib/flags";
 import { openSalesforce } from "@/lib/salesforce";
-import { timeBlockStartEnd } from "@/lib/calendar-utils";
+import { timeBlockStartEnd, formatDateStr } from "@/lib/calendar-utils";
 import { normalizeWoType } from "@/lib/normalize";
 import { Appointment, FlagClass, FlagCode, TimeBlock } from "@/lib/types";
 import {
@@ -480,7 +480,7 @@ function FlagRow({
             <div className={`text-sm ${isWaiting || isResolved ? "line-through" : ""}`}>{flag.message}</div>
             <div className="text-[10px] text-muted mt-0.5">
               {CLASS_LABELS[flag.flagClass]}
-              {flag.date && ` · ${flag.date}`}
+              {flag.date && ` · ${formatDateStr(flag.date)}`}
               {flag.workOrderNumber && ` · WO: ${flag.workOrderNumber}`}
             </div>
           </div>

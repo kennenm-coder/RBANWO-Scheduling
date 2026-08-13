@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { useData } from "./DataProvider";
-import { X, Plus, Trash2 } from "lucide-react";
+import { TimeOffRequest } from "@/lib/types";
+import { formatDateStr } from "@/lib/calendar-utils";
+import { X, Plus, Trash2, Pencil, Save } from "lucide-react";
 import { format } from "date-fns";
 
 interface Props {
@@ -10,32 +13,58 @@ interface Props {
 }
 
 export default function TimeOffEditor({ onClose }: Props) {
-  const { crews, timeOffRequests, addTimeOff, removeTimeOff } = useData();
+  const { crews, timeOffRequests, addTimeOff, updateTimeOff, removeTimeOff } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [employeeName, setEmployeeName] = useState("");
   const [department, setDepartment] = useState("");
   const [startDate, setStartDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [endDate, setEndDate] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const sortedRequests = [...timeOffRequests].sort((a, b) =>
     a.start_date.localeCompare(b.start_date)
   );
 
-  const handleAdd = async () => {
+  function resetForm() {
+    setEmployeeName("");
+    setDepartment("");
+    setStartDate(format(new Date(), "yyyy-MM-dd"));
+    setEndDate("");
+    setEditingId(null);
+  }
+
+  function startEdit(req: TimeOffRequest) {
+    setEditingId(req.id);
+    setEmployeeName(req.employee_name);
+    setDepartment(req.department);
+    setStartDate(req.start_date);
+    setEndDate(req.end_date || "");
+  }
+
+  const handleSave = async () => {
     if (!employeeName.trim() || !startDate) return;
     setSaving(true);
     try {
-      await addTimeOff({
-        employee_name: employeeName.trim(),
-        department: department || "Unknown",
-        start_date: startDate,
-        end_date: endDate || null,
-      });
-      setEmployeeName("");
-      setDepartment("");
-      setStartDate(format(new Date(), "yyyy-MM-dd"));
-      setEndDate("");
+      if (editingId) {
+        // Update existing
+        await updateTimeOff(editingId, {
+          employee_name: employeeName.trim(),
+          department: department || "Unknown",
+          start_date: startDate,
+          end_date: endDate || null,
+        });
+      } else {
+        // Create new
+        await addTimeOff({
+          employee_name: employeeName.trim(),
+          department: department || "Unknown",
+          start_date: startDate,
+          end_date: endDate || null,
+        });
+      }
+      resetForm();
     } catch {
       alert("Failed to save time off request.");
     } finally {
@@ -47,6 +76,7 @@ export default function TimeOffEditor({ onClose }: Props) {
     setDeletingId(id);
     try {
       await removeTimeOff(id);
+      if (editingId === id) resetForm();
     } catch {
       alert("Failed to remove time off request.");
     } finally {
@@ -74,6 +104,20 @@ export default function TimeOffEditor({ onClose }: Props) {
         </div>
 
         <div className="p-4 border-b border-border space-y-3">
+          {editingId && (
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-primary flex items-center gap-1">
+                <Pencil size={12} />
+                Editing request
+              </span>
+              <button
+                onClick={resetForm}
+                className="text-xs text-muted hover:text-foreground"
+              >
+                Cancel edit
+              </button>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-muted mb-1">
@@ -135,12 +179,18 @@ export default function TimeOffEditor({ onClose }: Props) {
             </div>
           </div>
           <button
-            onClick={handleAdd}
+            onClick={handleSave}
             disabled={saving || !employeeName.trim() || !startDate}
-            className="w-full py-2 bg-primary text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+            className={`w-full py-2 text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 ${
+              editingId ? "bg-green-600" : "bg-primary"
+            }`}
           >
-            <Plus size={16} />
-            {saving ? "Saving..." : "Add Time Off"}
+            {editingId ? <Save size={16} /> : <Plus size={16} />}
+            {saving
+              ? "Saving..."
+              : editingId
+                ? "Save Changes"
+                : "Add Time Off"}
           </button>
         </div>
 
@@ -151,32 +201,49 @@ export default function TimeOffEditor({ onClose }: Props) {
             </div>
           ) : (
             <div className="space-y-2">
-              {sortedRequests.map((req) => (
-                <div
-                  key={req.id}
-                  className="flex items-center justify-between p-3 rounded-lg border border-border bg-surface"
-                >
-                  <div>
-                    <div className="text-sm font-medium">
-                      {req.employee_name}
+              {sortedRequests.map((req) => {
+                const isEditing = editingId === req.id;
+                return (
+                  <div
+                    key={req.id}
+                    className={`flex items-center justify-between p-3 rounded-lg border bg-surface transition-colors ${
+                      isEditing
+                        ? "border-primary bg-primary/5"
+                        : "border-border"
+                    }`}
+                  >
+                    <div>
+                      <div className="text-sm font-medium">
+                        {req.employee_name}
+                      </div>
+                      <div className="text-xs text-muted">
+                        {req.department} &middot;{" "}
+                        {formatDateStr(req.start_date)}
+                        {req.end_date && req.end_date !== req.start_date
+                          ? ` – ${formatDateStr(req.end_date)}`
+                          : ""}
+                      </div>
                     </div>
-                    <div className="text-xs text-muted">
-                      {req.department} &middot;{" "}
-                      {req.start_date}
-                      {req.end_date && req.end_date !== req.start_date
-                        ? ` – ${req.end_date}`
-                        : ""}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => startEdit(req)}
+                        className="p-1.5 rounded-full hover:bg-primary/10 text-muted hover:text-primary"
+                        title="Edit"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(req.id)}
+                        disabled={deletingId === req.id}
+                        className="p-1.5 rounded-full hover:bg-danger/10 text-danger disabled:opacity-50"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDelete(req.id)}
-                    disabled={deletingId === req.id}
-                    className="p-1.5 rounded-full hover:bg-danger/10 text-danger disabled:opacity-50"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

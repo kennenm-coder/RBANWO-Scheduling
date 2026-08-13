@@ -1,7 +1,8 @@
 "use client";
 
 import { Appointment, Crew, RForceOrder, AppointmentLink } from "@/lib/types";
-import { typeLabel, timeBlockLabel } from "@/lib/calendar-utils";
+import { typeLabel, timeBlockLabel, formatDateStr, formatDateStrFull } from "@/lib/calendar-utils";
+import { addDays, parseISO, format } from "date-fns";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
 import { useData } from "./DataProvider";
@@ -23,7 +24,8 @@ import {
   Save,
   Undo2,
 } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import EventHistory from "./EventHistory";
 
 interface Props {
@@ -42,6 +44,7 @@ export default function AppointmentSheet({
   onFlag,
 }: Props) {
   const { crews, rforceOrders, activeLinks, cancelAppointment, unscheduleAppointment, updateAppointment, refreshData } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [cancelling, setCancelling] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -184,9 +187,13 @@ export default function AppointmentSheet({
           </InfoRow>
 
           <InfoRow icon={<Calendar size={16} />} label="Date">
-            {appointment.scheduled_date || "Unscheduled"}
-            {appointment.duration_days > 1 &&
-              ` (${appointment.duration_days} days)`}
+            {appointment.scheduled_date
+              ? appointment.duration_days > 1
+                ? `${formatDateStr(appointment.scheduled_date)} – ${formatDateStr(
+                    format(addDays(parseISO(appointment.scheduled_date), appointment.duration_days - 1), "yyyy-MM-dd")
+                  )} (${appointment.duration_days} days)`
+                : formatDateStrFull(appointment.scheduled_date)
+              : "Unscheduled"}
           </InfoRow>
 
           <InfoRow icon={<Clock size={16} />} label="Time">
@@ -270,7 +277,7 @@ export default function AppointmentSheet({
                   {dateDiff && (
                     <div className="flex justify-between">
                       <span className="text-muted">Date:</span>
-                      <span>App: <strong>{appointment.scheduled_date}</strong> | rForce: <strong>{rfDate}</strong></span>
+                      <span>App: <strong>{formatDateStr(appointment.scheduled_date!)}</strong> | rForce: <strong>{formatDateStr(rfDate!)}</strong></span>
                     </div>
                   )}
                   {crewDiff && (

@@ -39,6 +39,7 @@ import {
   cancelAppointment as cancelApptInDb,
   unscheduleAppointment as unscheduleApptInDb,
   createTimeOffRequest as createTimeOffInDb,
+  updateTimeOffRequest as updateTimeOffInDb,
   deleteTimeOffRequest as deleteTimeOffInDb,
   approveRForceOrder as approveRForceInDb,
   dismissRForceOrder as dismissRForceInDb,
@@ -109,6 +110,7 @@ interface DataContextValue {
   refreshData: () => Promise<void>;
   ensureDateRange: (date: Date) => void;
   addTimeOff: (req: Omit<TimeOffRequest, "id" | "created_at">) => Promise<TimeOffRequest | null>;
+  updateTimeOff: (id: string, updates: Partial<Omit<TimeOffRequest, "id" | "created_at">>) => Promise<TimeOffRequest | null>;
   removeTimeOff: (id: string) => Promise<void>;
 }
 
@@ -344,6 +346,19 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handleUpdateTimeOff = useCallback(
+    async (id: string, updates: Partial<Omit<TimeOffRequest, "id" | "created_at">>) => {
+      const result = await updateTimeOffInDb(id, updates);
+      if (result) {
+        setTimeOffRequests((prev) =>
+          prev.map((r) => (r.id === id ? result : r))
+        );
+      }
+      return result;
+    },
+    []
+  );
+
   const handleRemoveTimeOff = useCallback(
     async (id: string) => {
       await deleteTimeOffInDb(id);
@@ -465,6 +480,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         refreshData: loadData,
         ensureDateRange,
         addTimeOff: handleAddTimeOff,
+        updateTimeOff: handleUpdateTimeOff,
         removeTimeOff: handleRemoveTimeOff,
       }}
     >

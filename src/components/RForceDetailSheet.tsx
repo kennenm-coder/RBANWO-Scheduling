@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { RForceOrder, Crew } from "@/lib/types";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
 import { parseCity } from "@/lib/crew-utils";
+import { formatDateStr } from "@/lib/calendar-utils";
 import { useData } from "./DataProvider";
 import ScheduleModal from "./ScheduleModal";
 import {
@@ -33,6 +35,7 @@ interface Props {
 
 export default function RForceDetailSheet({ order, crew, onClose, onApprove, onDismiss }: Props) {
   const { refreshData } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [scheduling, setScheduling] = useState(false);
   const [notes, setNotes] = useState(order.scheduler_notes || "");
   const [saving, setSaving] = useState(false);
@@ -105,10 +108,10 @@ export default function RForceDetailSheet({ order, crew, onClose, onApprove, onD
 
             {order.scheduled_start && (
               <InfoRow icon={<Calendar size={16} />} label="Scheduled">
-                {order.scheduled_start.slice(0, 10)}
+                {formatDateStr(order.scheduled_start.slice(0, 10))}
                 {order.scheduled_end &&
                   order.scheduled_end.slice(0, 10) !== order.scheduled_start.slice(0, 10) &&
-                  ` – ${order.scheduled_end.slice(0, 10)}`}
+                  ` – ${formatDateStr(order.scheduled_end.slice(0, 10))}`}
               </InfoRow>
             )}
 

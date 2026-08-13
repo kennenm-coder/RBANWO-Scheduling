@@ -47,12 +47,11 @@ export function parseCity(address: string): string {
 export function getCrewDepartments(crews: Crew[]) {
   const active = crews.filter((c) => c.is_active);
   const main = active.filter((c) => !crewHasType(c, "misc", "second", "management"));
-  const management = active.filter((c) => c.crew_type === "management");
+  const management = sortByFirstName(active.filter((c) => c.crew_type === "management"));
   const seconds = active.filter((c) => c.crew_type === "second");
 
   return {
     measure: sortByFirstName(main.filter((c) => crewHasType(c, "measure_tech"))),
-    measureManagement: sortByFirstName(management.filter((c) => c.manages?.includes("measure"))),
     install: sortByFirstName(main.filter((c) => crewHasType(c, "install_in_house", "install_sub"))),
     installSeconds: sortByFirstName(
       seconds.filter((c) => {
@@ -60,9 +59,7 @@ export function getCrewDepartments(crews: Crew[]) {
         return primary && (primary.crew_type === "install_in_house" || primary.crew_type === "install_sub");
       })
     ),
-    installManagement: sortByFirstName(management.filter((c) => c.manages?.includes("install"))),
     service: sortByFirstName(main.filter((c) => crewHasType(c, "svc"))),
-    serviceManagement: sortByFirstName(management.filter((c) => c.manages?.includes("service"))),
     jip: sortByFirstName(main.filter((c) => crewHasType(c, "jip"))),
     jipSeconds: sortByFirstName(
       seconds.filter((c) => {
@@ -70,7 +67,8 @@ export function getCrewDepartments(crews: Crew[]) {
         return primary && primary.crew_type === "jip";
       })
     ),
-    jipManagement: sortByFirstName(management.filter((c) => c.manages?.includes("jip"))),
+    // Single consolidated management list — no duplicates
+    management,
   };
 }
 
@@ -86,15 +84,13 @@ export function getDepartmentSections(crews: Crew[]): DepartmentSection[] {
   const sections: DepartmentSection[] = [];
 
   if (d.measure.length) sections.push({ key: "measure", title: "Measure Techs", crews: d.measure, filterType: "tech_measure" });
-  if (d.measureManagement.length) sections.push({ key: "measure-mgmt", title: "Measure Management", crews: d.measureManagement, filterType: "tech_measure" });
-  if (d.installManagement.length) sections.push({ key: "install-mgmt", title: "Install Management", crews: d.installManagement, filterType: "install" });
   if (d.install.length) sections.push({ key: "install", title: "Install", crews: d.install, filterType: "install" });
   if (d.installSeconds.length) sections.push({ key: "install-seconds", title: "Install Seconds", crews: d.installSeconds, filterType: "install" });
   if (d.service.length) sections.push({ key: "service", title: "Service", crews: d.service, filterType: "service" });
-  if (d.serviceManagement.length) sections.push({ key: "service-mgmt", title: "Service Management", crews: d.serviceManagement, filterType: "service" });
   if (d.jip.length) sections.push({ key: "jip", title: "JIP", crews: d.jip, filterType: "jip" });
   if (d.jipSeconds.length) sections.push({ key: "jip-seconds", title: "JIP Seconds", crews: d.jipSeconds, filterType: "jip" });
-  if (d.jipManagement.length) sections.push({ key: "jip-mgmt", title: "JIP Management", crews: d.jipManagement, filterType: "jip" });
+  // Single management section — each crew appears once, no duplicates
+  if (d.management.length) sections.push({ key: "management", title: "Management", crews: d.management, filterType: "install" });
 
   return sections;
 }
