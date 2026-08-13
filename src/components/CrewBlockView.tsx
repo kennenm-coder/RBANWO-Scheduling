@@ -203,8 +203,8 @@ export default function CrewBlockView({
               return (
                 <th
                   key={day.toISOString()}
-                  className={`border border-border p-1.5 text-center cursor-pointer hover:bg-primary/10 transition-colors ${
-                    isToday ? "bg-primary/15 font-bold" : ""
+                  className={`border border-border p-1.5 text-center cursor-pointer hover:bg-primary/10 transition-colors bg-surface ${
+                    isToday ? "!bg-primary/15 font-bold" : ""
                   }`}
                   onClick={() => onDayClick?.(day)}
                   title={`Click to open ${format(day, "EEEE, MMM d")} in day view`}
