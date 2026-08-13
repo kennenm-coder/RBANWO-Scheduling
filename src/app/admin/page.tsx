@@ -2,6 +2,7 @@
 
 import { useData } from "@/components/DataProvider";
 import { exportAppointments, exportComparison } from "@/lib/csv-export";
+import UserManager from "@/components/UserManager";
 import { Loader2, Download, ArrowRightLeft } from "lucide-react";
 
 export default function AdminPage() {
@@ -66,6 +67,11 @@ export default function AdminPage() {
             <br />
             <strong>App vs rForce</strong> — side-by-side comparison matched by work order number. Columns flag date/crew mismatches and items that exist in only one system.
           </p>
+        </div>
+
+        {/* ── User Management ── */}
+        <div className="border-t border-border pt-6">
+          <UserManager />
         </div>
       </div>
     </div>

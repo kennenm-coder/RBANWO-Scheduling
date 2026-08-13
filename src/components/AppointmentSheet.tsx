@@ -4,8 +4,9 @@ import { Appointment, Crew, RForceOrder, AppointmentLink } from "@/lib/types";
 import { typeLabel, timeBlockLabel, formatDateStr, formatDateStrFull } from "@/lib/calendar-utils";
 import { addDays, parseISO, format } from "date-fns";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
-import { updateSchedulerNotes } from "@/lib/store";
+import { updateSchedulerNotes, createAppointmentEvent } from "@/lib/store";
 import { useData } from "./DataProvider";
+import { useCurrentActor } from "./AuthProvider";
 import {
   X,
   MapPin,
@@ -44,6 +45,7 @@ export default function AppointmentSheet({
   onFlag,
 }: Props) {
   const { crews, rforceOrders, activeLinks, cancelAppointment, unscheduleAppointment, updateAppointment, refreshData } = useData();
+  const { actorId, actorName } = useCurrentActor();
   useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [cancelling, setCancelling] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
@@ -92,6 +94,15 @@ export default function AppointmentSheet({
     setCancelling(true);
     try {
       await cancelAppointment(appointment.id, appointment.version, cancelReason || undefined);
+      createAppointmentEvent({
+        appointment_id: appointment.id,
+        action: "cancelled",
+        actor_id: actorId,
+        actor_name_snapshot: actorName,
+        before_state: { status: appointment.status },
+        after_state: { status: "cancelled" },
+        reason: cancelReason || null,
+      });
       onClose();
     } catch {
       alert("Failed to cancel. The appointment may have been modified.");
@@ -107,6 +118,15 @@ export default function AppointmentSheet({
         status: "scheduled",
         reschedule_reason: null,
       });
+      createAppointmentEvent({
+        appointment_id: appointment.id,
+        action: "restored",
+        actor_id: actorId,
+        actor_name_snapshot: actorName,
+        before_state: { status: appointment.status },
+        after_state: { status: "scheduled" },
+        reason: null,
+      });
       onClose();
     } catch {
       alert("Failed to restore. The appointment may have been modified.");
@@ -119,6 +139,19 @@ export default function AppointmentSheet({
     setUnscheduling(true);
     try {
       await unscheduleAppointment(appointment.id, appointment.version);
+      createAppointmentEvent({
+        appointment_id: appointment.id,
+        action: "unscheduled",
+        actor_id: actorId,
+        actor_name_snapshot: actorName,
+        before_state: {
+          status: appointment.status,
+          crew_id: appointment.crew_id,
+          scheduled_date: appointment.scheduled_date,
+        },
+        after_state: { status: "unscheduled" },
+        reason: null,
+      });
       onClose();
     } catch {
       alert("Failed to unschedule. The appointment may have been modified.");
