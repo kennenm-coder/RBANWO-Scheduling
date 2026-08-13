@@ -20,6 +20,7 @@ import {
   Calendar,
 } from "lucide-react";
 import { useData } from "./DataProvider";
+import FreshnessIndicator from "./FreshnessIndicator";
 import ProfileMenu from "./ProfileMenu";
 import { parseISO, format } from "date-fns";
 import { Theme, getSavedTheme, applyTheme } from "@/lib/theme";
@@ -57,7 +58,7 @@ export default function CalendarHeader({
   showRForce = false,
   onToggleRForce,
 }: Props) {
-  const { connected, appointments, crews } = useData();
+  const { appointments, crews } = useData();
   const [searchOpen, setSearchOpen] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>("system");
@@ -320,11 +321,7 @@ export default function CalendarHeader({
             <span>rF</span>
           </button>
         )}
-        <div
-          className={`w-2 h-2 rounded-full ${connected ? "bg-success" : "bg-danger"}`}
-          title={connected ? "Connected" : "Disconnected"}
-          aria-label={connected ? "Connected to server" : "Disconnected from server"}
-        />
+        <FreshnessIndicator />
         <div className="flex rounded-full border border-border overflow-hidden">
           <button
             onClick={() => onViewChange("day")}
