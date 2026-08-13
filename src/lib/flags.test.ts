@@ -102,6 +102,8 @@ function makeRForceOrder(overrides: Partial<RForceOrder> = {}): RForceOrder {
     scheduler_notes: null,
     account_name: null,
     csv_import_id: null,
+    latitude: null,
+    longitude: null,
     updated_at: "2026-08-01T00:00:00Z",
     ...overrides,
   };

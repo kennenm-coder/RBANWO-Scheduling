@@ -1,6 +1,7 @@
-import { Crew, CrewType, AppointmentType, Appointment, TimeBlock } from "./types";
+import { Crew, CrewType, AppointmentType, Appointment, TimeBlock, AvailabilityRule, AvailabilityException } from "./types";
 import { MEASURE_TIME_BLOCKS, getSpannedBlocks } from "./calendar-utils";
 import { addDays, parseISO } from "date-fns";
+import { getCrewRoleForDate } from "./availability";
 
 export function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
   if (types.includes(crew.crew_type)) return true;
@@ -91,6 +92,78 @@ export function getDepartmentSections(crews: Crew[]): DepartmentSection[] {
   if (d.jipSeconds.length) sections.push({ key: "jip-seconds", title: "JIP Seconds", crews: d.jipSeconds, filterType: "jip" });
   // Single management section — each crew appears once, no duplicates
   if (d.management.length) sections.push({ key: "management", title: "Management", crews: d.management, filterType: "install" });
+
+  return sections;
+}
+
+/**
+ * Date-aware department sections.
+ *
+ * Crews with an active `role_assignment` rule for the given date are moved
+ * into the matching department section instead of their default crew_type
+ * section. This handles patterns like "SVC Mon/Wed/Fri, MT Tue/Thu".
+ */
+export function getDepartmentSectionsForDate(
+  crews: Crew[],
+  date: Date,
+  rules: AvailabilityRule[],
+  exceptions: AvailabilityException[]
+): DepartmentSection[] {
+  const active = crews.filter((c) => c.is_active);
+  const main = active.filter((c) => !crewHasType(c, "misc", "second", "management"));
+  const management = sortByFirstName(active.filter((c) => c.crew_type === "management"));
+  const seconds = active.filter((c) => c.crew_type === "second");
+
+  // Build buckets
+  const buckets: Record<string, Crew[]> = {
+    measure: [],
+    install: [],
+    service: [],
+    jip: [],
+  };
+
+  // Sort each main crew into their date-specific department
+  for (const crew of main) {
+    const roleOverride = getCrewRoleForDate(crew.id, date, rules, exceptions);
+    if (roleOverride && buckets[roleOverride]) {
+      buckets[roleOverride].push(crew);
+    } else {
+      // Default placement by crew_type
+      if (crewHasType(crew, "measure_tech")) buckets.measure.push(crew);
+      else if (crewHasType(crew, "install_in_house", "install_sub")) buckets.install.push(crew);
+      else if (crewHasType(crew, "svc")) buckets.service.push(crew);
+      else if (crewHasType(crew, "jip")) buckets.jip.push(crew);
+    }
+  }
+
+  // Sort each bucket by first name
+  for (const key of Object.keys(buckets)) {
+    buckets[key] = sortByFirstName(buckets[key]);
+  }
+
+  // Build install seconds
+  const installSeconds = sortByFirstName(
+    seconds.filter((c) => {
+      const primary = active.find((p) => p.id === c.primary_crew_id);
+      return primary && (primary.crew_type === "install_in_house" || primary.crew_type === "install_sub");
+    })
+  );
+  // Build JIP seconds
+  const jipSeconds = sortByFirstName(
+    seconds.filter((c) => {
+      const primary = active.find((p) => p.id === c.primary_crew_id);
+      return primary && primary.crew_type === "jip";
+    })
+  );
+
+  const sections: DepartmentSection[] = [];
+  if (buckets.measure.length) sections.push({ key: "measure", title: "Measure Techs", crews: buckets.measure, filterType: "tech_measure" });
+  if (buckets.install.length) sections.push({ key: "install", title: "Install", crews: buckets.install, filterType: "install" });
+  if (installSeconds.length) sections.push({ key: "install-seconds", title: "Install Seconds", crews: installSeconds, filterType: "install" });
+  if (buckets.service.length) sections.push({ key: "service", title: "Service", crews: buckets.service, filterType: "service" });
+  if (buckets.jip.length) sections.push({ key: "jip", title: "JIP", crews: buckets.jip, filterType: "jip" });
+  if (jipSeconds.length) sections.push({ key: "jip-seconds", title: "JIP Seconds", crews: jipSeconds, filterType: "jip" });
+  if (management.length) sections.push({ key: "management", title: "Management", crews: management, filterType: "install" });
 
   return sections;
 }

@@ -1,25 +1,101 @@
 "use client";
 
 import "leaflet/dist/leaflet.css";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
-import { geocodeFastZip, geocodeBatch, GeoResult, GeoPrecision, clearAndReGeocode, manualCorrectGeocode } from "@/lib/geocode";
-import { getRForceItemsForDay, typeLabel } from "@/lib/calendar-utils";
+import {
+  geocodeAddress,
+  clearAndReGeocode,
+  manualCorrectGeocode,
+  geocodeForComparison,
+  updateWorkOrderCoords,
+  GeoResult,
+  GeoPrecision,
+} from "@/lib/geocode";
+import { getRForceItemsForDay, typeLabel, formatProductBreakdown, RForceCalendarItem } from "@/lib/calendar-utils";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
+import { Appointment, RForceOrder } from "@/lib/types";
 import { format } from "date-fns";
-import { Loader2, ExternalLink, Navigation, MapPinOff, RefreshCw, Crosshair } from "lucide-react";
+import {
+  Loader2,
+  ExternalLink,
+  Navigation,
+  MapPinOff,
+  RefreshCw,
+  Crosshair,
+  Database,
+  Globe,
+  PenLine,
+  ShieldCheck,
+  ShieldAlert,
+  CheckCircle2,
+  AlertTriangle,
+} from "lucide-react";
 
-function crewMarkerIcon(color: string, label?: string | number, precision?: GeoPrecision): L.DivIcon {
+// ── Types ──
+
+type GeoSource = "database" | "geocoded" | "manual";
+
+interface MapItem {
+  id: string;
+  customerName: string;
+  address: string;
+  type: string;
+  crewName: string;
+  crewColor: string;
+  crewId: string;
+  productLabel?: string | null;
+  workOrderNumber?: string | null;
+  orderNumber?: string | null;
+  isRForce: boolean;
+  geo: GeoResult;
+  geoSource: GeoSource;
+}
+
+interface VerifyResult {
+  geocoded: GeoResult;
+  distanceMeters: number;
+}
+
+// ── Utilities ──
+
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatDistance(meters: number): string {
+  if (meters < 100) return `${Math.round(meters)}m`;
+  if (meters < 1000) return `${Math.round(meters / 10) * 10}m`;
+  const miles = meters / 1609.344;
+  return miles < 10 ? `${miles.toFixed(1)} mi` : `${Math.round(miles)} mi`;
+}
+
+function crewMarkerIcon(color: string, label?: string | number, precision?: GeoPrecision, source?: GeoSource): L.DivIcon {
   const isApproximate = precision === "zip" || precision === "unknown";
+  const isManual = source === "manual";
   const text = label != null ? `<span style="
     color:${isApproximate ? "#666" : "#fff"};font-size:12px;font-weight:700;
     line-height:28px;text-shadow:0 1px 2px rgba(0,0,0,${isApproximate ? "0.15" : "0.4"});
   ">${label}</span>` : "";
-  const border = isApproximate
-    ? `border:3px dashed ${color};background:${color}33`
-    : `border:3px solid white;background:${color}`;
+
+  let border: string;
+  if (isApproximate) {
+    border = `border:3px dashed ${color};background:${color}33`;
+  } else if (isManual) {
+    border = `border:3px solid #3b82f6;background:${color}`;
+  } else {
+    border = `border:3px solid white;background:${color}`;
+  }
+
   return L.divIcon({
     className: "",
     html: `<div style="
@@ -52,21 +128,6 @@ interface Props {
   date: Date;
 }
 
-interface MapItem {
-  id: string;
-  customerName: string;
-  address: string;
-  type: string;
-  crewName: string;
-  crewColor: string;
-  crewId: string;
-  productCount?: number | null;
-  workOrderNumber?: string | null;
-  orderNumber?: string | null;
-  isRForce: boolean;
-  geo: GeoResult;
-}
-
 function precisionLabel(p?: GeoPrecision): string {
   switch (p) {
     case "rooftop": return "Exact";
@@ -76,30 +137,85 @@ function precisionLabel(p?: GeoPrecision): string {
   }
 }
 
+function sourceIcon(source: GeoSource) {
+  switch (source) {
+    case "database": return <Database size={10} />;
+    case "geocoded": return <Globe size={10} />;
+    case "manual": return <PenLine size={10} />;
+  }
+}
+
+function sourceLabel(source: GeoSource): string {
+  switch (source) {
+    case "database": return "Database";
+    case "geocoded": return "Geocoded";
+    case "manual": return "Manual override";
+  }
+}
+
+function sourceColor(source: GeoSource): string {
+  switch (source) {
+    case "database": return "text-emerald-600";
+    case "geocoded": return "text-blue-600";
+    case "manual": return "text-violet-600";
+  }
+}
+
+// ── Marker popup with verify / correct flow ──
+
 function MarkerWithPopup({
   item: m,
   order,
   onReGeocode,
   onCorrect,
+  onAcceptVerified,
 }: {
   item: MapItem;
   order?: number;
   onReGeocode: () => Promise<void>;
   onCorrect: (lat: number, lng: number) => Promise<void>;
+  onAcceptVerified: (geo: GeoResult) => Promise<void>;
 }) {
   const [correcting, setCorrecting] = useState(false);
   const [reGeocoding, setReGeocoding] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
+  const [acceptingVerified, setAcceptingVerified] = useState(false);
   const [latInput, setLatInput] = useState("");
   const [lngInput, setLngInput] = useState("");
+  const [saved, setSaved] = useState(false);
+
   const isApprox = m.geo.precision === "zip" || m.geo.precision === "unknown";
+
+  const handleVerify = useCallback(async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    const geocoded = await geocodeForComparison(m.address);
+    if (geocoded) {
+      const dist = haversineMeters(m.geo.lat, m.geo.lng, geocoded.lat, geocoded.lng);
+      setVerifyResult({ geocoded, distanceMeters: dist });
+    }
+    setVerifying(false);
+  }, [m.address, m.geo.lat, m.geo.lng]);
+
+  const handleAcceptVerified = useCallback(async () => {
+    if (!verifyResult) return;
+    setAcceptingVerified(true);
+    await onAcceptVerified(verifyResult.geocoded);
+    setVerifyResult(null);
+    setAcceptingVerified(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, [verifyResult, onAcceptVerified]);
 
   return (
     <Marker
       position={[m.geo.lat, m.geo.lng]}
-      icon={crewMarkerIcon(m.crewColor, order, m.geo.precision)}
+      icon={crewMarkerIcon(m.crewColor, order, m.geo.precision, m.geoSource)}
     >
       <Popup>
-        <div className="text-sm min-w-[200px]">
+        <div className="text-sm min-w-[220px] max-w-[300px]">
+          {/* Header */}
           <div className="font-bold flex items-center gap-2">
             {m.customerName}
             {m.isRForce && (
@@ -109,24 +225,42 @@ function MarkerWithPopup({
           <div className="text-xs text-gray-600 mt-0.5">
             {m.type} &middot; {m.crewName}
           </div>
-          <div className="text-xs text-gray-500 mt-1">
-            {m.address}
+          <div className="text-xs text-gray-500 mt-1">{m.address}</div>
+          {m.productLabel && (
+            <div className="text-xs text-gray-500 mt-0.5">{m.productLabel}</div>
+          )}
+
+          {/* Source + precision badges */}
+          <div className="flex items-center gap-3 mt-2 py-1.5 px-2 bg-gray-50 rounded border border-gray-100">
+            {/* Source */}
+            <div className={`flex items-center gap-1 text-[10px] ${sourceColor(m.geoSource)}`}>
+              {sourceIcon(m.geoSource)}
+              <span className="font-medium">{sourceLabel(m.geoSource)}</span>
+            </div>
+            <div className="text-gray-300">|</div>
+            {/* Precision */}
+            <div className={`flex items-center gap-1 text-[10px] ${
+              isApprox ? "text-amber-600" : "text-green-600"
+            }`}>
+              {isApprox ? <MapPinOff size={10} /> : <Crosshair size={10} />}
+              {precisionLabel(m.geo.precision)}
+            </div>
           </div>
-          {m.productCount != null && m.productCount > 0 && (
-            <div className="text-xs text-gray-500 mt-0.5">
-              {m.productCount} products
+
+          {/* Coordinates */}
+          <div className="text-[9px] text-gray-400 mt-1 font-mono">
+            {m.geo.lat.toFixed(6)}, {m.geo.lng.toFixed(6)}
+          </div>
+
+          {/* Saved confirmation */}
+          {saved && (
+            <div className="flex items-center gap-1 mt-1.5 text-[10px] text-green-600 bg-green-50 rounded px-2 py-1">
+              <CheckCircle2 size={10} />
+              Location updated & saved to database
             </div>
           )}
 
-          {/* Precision badge */}
-          <div className={`flex items-center gap-1 mt-1.5 text-[10px] ${
-            isApprox ? "text-amber-600" : "text-green-600"
-          }`}>
-            {isApprox ? <MapPinOff size={10} /> : <Crosshair size={10} />}
-            {precisionLabel(m.geo.precision)}
-            {m.geo.manualOverride && <span className="text-blue-500">(manual)</span>}
-          </div>
-
+          {/* Action buttons */}
           <div className="flex gap-2 mt-2 flex-wrap">
             <a
               href={mapsHref(m.address)}
@@ -146,55 +280,170 @@ function MarkerWithPopup({
                 rForce
               </button>
             )}
-            {isApprox && !correcting && (
-              <button
-                onClick={async () => {
-                  setReGeocoding(true);
-                  await onReGeocode();
-                  setReGeocoding(false);
-                }}
-                disabled={reGeocoding}
-                className="text-xs text-amber-600 underline flex items-center gap-1 disabled:opacity-50"
-              >
-                {reGeocoding ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
-                Re-geocode
-              </button>
-            )}
           </div>
 
-          {/* Manual correction */}
-          {isApprox && !correcting && (
-            <button
-              onClick={() => {
-                setLatInput(m.geo.lat.toFixed(6));
-                setLngInput(m.geo.lng.toFixed(6));
-                setCorrecting(true);
-              }}
-              className="text-[10px] text-gray-400 underline mt-1 block"
-            >
-              Set exact location...
-            </button>
+          {/* Location tools */}
+          <div className="border-t border-gray-200 mt-2 pt-2">
+            <div className="text-[10px] font-medium text-gray-500 mb-1.5">Location tools</div>
+            <div className="flex gap-1.5 flex-wrap">
+              {/* Verify button — compare database vs geocoder */}
+              {m.geoSource === "database" && !verifyResult && (
+                <button
+                  onClick={handleVerify}
+                  disabled={verifying}
+                  className="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-700 rounded border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50 flex items-center gap-1"
+                >
+                  {verifying ? <Loader2 size={10} className="animate-spin" /> : <ShieldCheck size={10} />}
+                  Verify with geocoder
+                </button>
+              )}
+
+              {/* Re-geocode for geocoded items */}
+              {m.geoSource === "geocoded" && !correcting && (
+                <button
+                  onClick={async () => {
+                    setReGeocoding(true);
+                    await onReGeocode();
+                    setReGeocoding(false);
+                  }}
+                  disabled={reGeocoding}
+                  className="text-[10px] px-2 py-1 bg-blue-50 text-blue-700 rounded border border-blue-200 hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1"
+                >
+                  {reGeocoding ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                  Re-geocode
+                </button>
+              )}
+
+              {/* Correct location — available on ALL pins */}
+              {!correcting && (
+                <button
+                  onClick={() => {
+                    setLatInput(m.geo.lat.toFixed(6));
+                    setLngInput(m.geo.lng.toFixed(6));
+                    setCorrecting(true);
+                    setVerifyResult(null);
+                  }}
+                  className="text-[10px] px-2 py-1 bg-gray-100 text-gray-700 rounded border border-gray-200 hover:bg-gray-200 flex items-center gap-1"
+                >
+                  <PenLine size={10} />
+                  Correct location
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Verify result panel */}
+          {verifyResult && !correcting && (
+            <div className={`mt-2 p-2 rounded border ${
+              verifyResult.distanceMeters < 100
+                ? "bg-green-50 border-green-200"
+                : verifyResult.distanceMeters < 500
+                  ? "bg-amber-50 border-amber-200"
+                  : "bg-red-50 border-red-200"
+            }`}>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                {verifyResult.distanceMeters < 100 ? (
+                  <>
+                    <CheckCircle2 size={12} className="text-green-600" />
+                    <span className="text-[11px] font-medium text-green-700">Match — coordinates agree</span>
+                  </>
+                ) : verifyResult.distanceMeters < 500 ? (
+                  <>
+                    <AlertTriangle size={12} className="text-amber-600" />
+                    <span className="text-[11px] font-medium text-amber-700">
+                      Minor difference — {formatDistance(verifyResult.distanceMeters)} apart
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert size={12} className="text-red-600" />
+                    <span className="text-[11px] font-medium text-red-700">
+                      Mismatch — {formatDistance(verifyResult.distanceMeters)} apart
+                    </span>
+                  </>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-1 text-[9px] font-mono">
+                <div>
+                  <div className="text-gray-500 font-sans mb-0.5">Database</div>
+                  <div className="text-emerald-700">{m.geo.lat.toFixed(6)}, {m.geo.lng.toFixed(6)}</div>
+                </div>
+                <div>
+                  <div className="text-gray-500 font-sans mb-0.5">Geocoder</div>
+                  <div className="text-blue-700">{verifyResult.geocoded.lat.toFixed(6)}, {verifyResult.geocoded.lng.toFixed(6)}</div>
+                </div>
+              </div>
+
+              {verifyResult.distanceMeters >= 100 && (
+                <div className="flex gap-1.5 mt-2">
+                  <button
+                    onClick={handleAcceptVerified}
+                    disabled={acceptingVerified}
+                    className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {acceptingVerified ? <Loader2 size={10} className="animate-spin" /> : <Globe size={10} />}
+                    Use geocoder result
+                  </button>
+                  <button
+                    onClick={() => setVerifyResult(null)}
+                    className="text-[10px] px-2 py-0.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                  >
+                    Keep database
+                  </button>
+                  <button
+                    onClick={() => {
+                      setLatInput(m.geo.lat.toFixed(6));
+                      setLngInput(m.geo.lng.toFixed(6));
+                      setCorrecting(true);
+                      setVerifyResult(null);
+                    }}
+                    className="text-[10px] px-2 py-0.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 flex items-center gap-1"
+                  >
+                    <PenLine size={10} />
+                    Enter manually
+                  </button>
+                </div>
+              )}
+
+              {verifyResult.distanceMeters < 100 && (
+                <button
+                  onClick={() => setVerifyResult(null)}
+                  className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded hover:bg-green-200 mt-1.5"
+                >
+                  OK, dismiss
+                </button>
+              )}
+            </div>
           )}
+
+          {/* Manual correction panel */}
           {correcting && (
             <div className="mt-2 p-2 bg-gray-50 rounded border border-gray-200 space-y-1.5">
-              <div className="text-[10px] font-medium text-gray-600">Enter coordinates:</div>
+              <div className="text-[10px] font-medium text-gray-600">Enter exact coordinates:</div>
               <div className="flex gap-1">
-                <input
-                  type="text"
-                  value={latInput}
-                  onChange={(e) => setLatInput(e.target.value)}
-                  placeholder="Latitude"
-                  className="text-xs border rounded px-1.5 py-0.5 w-24"
-                />
-                <input
-                  type="text"
-                  value={lngInput}
-                  onChange={(e) => setLngInput(e.target.value)}
-                  placeholder="Longitude"
-                  className="text-xs border rounded px-1.5 py-0.5 w-24"
-                />
+                <div className="flex-1">
+                  <label className="text-[9px] text-gray-400 block mb-0.5">Latitude</label>
+                  <input
+                    type="text"
+                    value={latInput}
+                    onChange={(e) => setLatInput(e.target.value)}
+                    placeholder="41.653200"
+                    className="text-xs border rounded px-1.5 py-1 w-full font-mono"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[9px] text-gray-400 block mb-0.5">Longitude</label>
+                  <input
+                    type="text"
+                    value={lngInput}
+                    onChange={(e) => setLngInput(e.target.value)}
+                    placeholder="-83.540000"
+                    className="text-xs border rounded px-1.5 py-1 w-full font-mono"
+                  />
+                </div>
               </div>
-              <div className="flex gap-1">
+              <div className="flex gap-1.5">
                 <button
                   onClick={async () => {
                     const lat = parseFloat(latInput);
@@ -202,20 +451,26 @@ function MarkerWithPopup({
                     if (!isNaN(lat) && !isNaN(lng)) {
                       await onCorrect(lat, lng);
                       setCorrecting(false);
+                      setSaved(true);
+                      setTimeout(() => setSaved(false), 2000);
                     }
                   }}
-                  className="text-[10px] px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  className="text-[10px] px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
                 >
-                  Save
+                  <CheckCircle2 size={10} />
+                  Save to database
                 </button>
                 <button
                   onClick={() => setCorrecting(false)}
-                  className="text-[10px] px-2 py-0.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+                  className="text-[10px] px-2.5 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                 >
                   Cancel
                 </button>
               </div>
-              <div className="text-[9px] text-gray-400">Tip: right-click on Google Maps → &quot;What&apos;s here?&quot; to get coordinates</div>
+              <div className="text-[9px] text-gray-400 leading-tight">
+                Tip: right-click on Google Maps → &quot;What&apos;s here?&quot; to get coordinates.
+                This updates the work order in the database so future loads use the corrected location.
+              </div>
             </div>
           )}
         </div>
@@ -224,12 +479,31 @@ function MarkerWithPopup({
   );
 }
 
+// ── Helpers to extract pre-computed coordinates ──
+
+function geoFromOrder(order: RForceOrder): GeoResult | null {
+  if (order.latitude != null && order.longitude != null) {
+    return { lat: order.latitude, lng: order.longitude, precision: "rooftop" };
+  }
+  return null;
+}
+
+function geoFromLinkedOrder(
+  appt: Appointment,
+  rforceOrders: RForceOrder[]
+): GeoResult | null {
+  if (!appt.work_order_number) return null;
+  const rf = rforceOrders.find((r) => r.work_order_number === appt.work_order_number);
+  return rf ? geoFromOrder(rf) : null;
+}
+
+// ── Main component ──
+
 export default function MapView({ date }: Props) {
   const { crews, appointments, rforceOrders } = useData();
-  const [geoCache, setGeoCache] = useState<Map<string, GeoResult>>(new Map());
-  const [loading, setLoading] = useState(true);
-  const [refining, setRefining] = useState(false);
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [geocodedExtras, setGeocodedExtras] = useState<Map<string, GeoResult>>(new Map());
+  const [overrides, setOverrides] = useState<Map<string, { geo: GeoResult; source: GeoSource }>>(new Map());
+  const [geocodingCount, setGeocodingCount] = useState(0);
 
   const dateStr = format(date, "yyyy-MM-dd");
 
@@ -244,58 +518,19 @@ export default function MapView({ date }: Props) {
     [rforceOrders, appointments, crews, date]
   );
 
-  const allAddresses = useMemo(() => {
-    const addrs: string[] = [];
-    for (const a of dayAppointments) {
-      if (a.address) addrs.push(a.address);
-    }
-    for (const rf of dayRForceItems) {
-      if (rf.rforceOrder.address) addrs.push(rf.rforceOrder.address);
-    }
-    return [...new Set(addrs)];
-  }, [dayAppointments, dayRForceItems]);
+  // ── Phase 1: Build map items instantly from pre-computed coordinates ──
 
-  useEffect(() => {
-    if (allAddresses.length === 0) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setRefining(false);
+  const { instantItems, needsGeocoding } = useMemo(() => {
+    const instant: MapItem[] = [];
+    const needsGeo: { id: string; address: string; appt?: Appointment; rf?: RForceCalendarItem }[] = [];
 
-    geocodeFastZip(allAddresses).then((fastResults) => {
-      if (cancelled) return;
-      setGeoCache(new Map(fastResults));
-      setLoading(false);
-      setRefining(true);
-
-      geocodeBatch(allAddresses, (done, total) => {
-        if (!cancelled) setProgress({ done, total });
-      }).then((preciseResults) => {
-        if (!cancelled) {
-          setGeoCache((prev) => {
-            const merged = new Map(prev);
-            for (const [addr, geo] of preciseResults) {
-              merged.set(addr, geo);
-            }
-            return merged;
-          });
-          setRefining(false);
-        }
-      });
-    });
-
-    return () => { cancelled = true; };
-  }, [dateStr, allAddresses]);
-
-  const mapItems: MapItem[] = useMemo(() => {
-    const items: MapItem[] = [];
     for (const appt of dayAppointments) {
-      const geo = geoCache.get(appt.address);
       const crew = crews.find((c) => c.id === appt.crew_id);
-      if (geo && crew) {
-        items.push({
+      if (!crew || !appt.address) continue;
+
+      const geo = geoFromLinkedOrder(appt, rforceOrders);
+      if (geo) {
+        instant.push({
           id: appt.id,
           customerName: appt.customer_name,
           address: appt.address,
@@ -303,19 +538,25 @@ export default function MapView({ date }: Props) {
           crewName: crew.name,
           crewColor: crew.color,
           crewId: crew.id,
-          productCount: appt.product_count,
+          productLabel: formatProductBreakdown(appt),
           workOrderNumber: appt.work_order_number,
           orderNumber: appt.order_number,
           isRForce: false,
           geo,
+          geoSource: "database",
         });
+      } else {
+        needsGeo.push({ id: appt.id, address: appt.address, appt });
       }
     }
+
     for (const rf of dayRForceItems) {
-      const geo = geoCache.get(rf.rforceOrder.address || "");
       const crew = crews.find((c) => c.id === rf.crewId);
-      if (geo && crew) {
-        items.push({
+      if (!crew) continue;
+
+      const geo = geoFromOrder(rf.rforceOrder);
+      if (geo) {
+        instant.push({
           id: rf.rforceOrder.work_order_number,
           customerName: rf.rforceOrder.customer_name || "Unknown",
           address: rf.rforceOrder.address || "",
@@ -323,16 +564,102 @@ export default function MapView({ date }: Props) {
           crewName: crew.name,
           crewColor: crew.color,
           crewId: crew.id,
-          productCount: rf.rforceOrder.product_count,
+          productLabel: formatProductBreakdown(rf.rforceOrder),
           workOrderNumber: rf.rforceOrder.work_order_number,
           orderNumber: rf.rforceOrder.order_number,
           isRForce: true,
           geo,
+          geoSource: "database",
+        });
+      } else if (rf.rforceOrder.address) {
+        needsGeo.push({ id: rf.rforceOrder.work_order_number, address: rf.rforceOrder.address, rf });
+      }
+    }
+
+    return { instantItems: instant, needsGeocoding: needsGeo };
+  }, [dayAppointments, dayRForceItems, rforceOrders, crews]);
+
+  // ── Phase 2: Background-geocode items missing coordinates ──
+
+  useEffect(() => {
+    if (needsGeocoding.length === 0) return;
+    let cancelled = false;
+    setGeocodingCount(needsGeocoding.length);
+
+    (async () => {
+      for (const item of needsGeocoding) {
+        if (cancelled) break;
+        const geo = await geocodeAddress(item.address);
+        if (geo && !cancelled) {
+          setGeocodedExtras((prev) => {
+            const next = new Map(prev);
+            next.set(item.id, geo);
+            return next;
+          });
+        }
+      }
+      if (!cancelled) setGeocodingCount(0);
+    })();
+
+    return () => { cancelled = true; };
+  }, [dateStr, needsGeocoding]);
+
+  // ── Merge all sources into final list, applying overrides ──
+
+  const mapItems: MapItem[] = useMemo(() => {
+    // Start with instant items, apply any overrides
+    const items = instantItems.map((m) => {
+      const ov = overrides.get(m.id);
+      return ov ? { ...m, geo: ov.geo, geoSource: ov.source } : m;
+    });
+
+    // Add geocoded extras
+    for (const item of needsGeocoding) {
+      const ov = overrides.get(item.id);
+      const geo = ov?.geo ?? geocodedExtras.get(item.id);
+      const source: GeoSource = ov?.source ?? "geocoded";
+      if (!geo) continue;
+
+      if (item.appt) {
+        const crew = crews.find((c) => c.id === item.appt!.crew_id);
+        if (!crew) continue;
+        items.push({
+          id: item.appt.id,
+          customerName: item.appt.customer_name,
+          address: item.appt.address,
+          type: typeLabel(item.appt.appointment_type),
+          crewName: crew.name,
+          crewColor: crew.color,
+          crewId: crew.id,
+          productLabel: formatProductBreakdown(item.appt),
+          workOrderNumber: item.appt.work_order_number,
+          orderNumber: item.appt.order_number,
+          isRForce: false,
+          geo,
+          geoSource: source,
+        });
+      } else if (item.rf) {
+        const crew = crews.find((c) => c.id === item.rf!.crewId);
+        if (!crew) continue;
+        items.push({
+          id: item.rf.rforceOrder.work_order_number,
+          customerName: item.rf.rforceOrder.customer_name || "Unknown",
+          address: item.rf.rforceOrder.address || "",
+          type: item.rf.rforceOrder.work_order_type || "Unknown",
+          crewName: crew.name,
+          crewColor: crew.color,
+          crewId: crew.id,
+          productLabel: formatProductBreakdown(item.rf.rforceOrder),
+          workOrderNumber: item.rf.rforceOrder.work_order_number,
+          orderNumber: item.rf.rforceOrder.order_number,
+          isRForce: true,
+          geo,
+          geoSource: source,
         });
       }
     }
     return items;
-  }, [dayAppointments, dayRForceItems, geoCache, crews]);
+  }, [instantItems, needsGeocoding, geocodedExtras, overrides, crews]);
 
   const crewOrder = useMemo(() => {
     const order = new Map<string, number>();
@@ -347,19 +674,14 @@ export default function MapView({ date }: Props) {
 
   const positions: [number, number][] = mapItems.map((m) => [m.geo.lat, m.geo.lng]);
   const totalItems = dayAppointments.length + dayRForceItems.length;
-
   const defaultCenter: [number, number] = [41.65, -83.54];
 
-  if (loading) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3">
-        <Loader2 size={32} className="animate-spin text-primary" />
-        <div className="text-sm text-muted">
-          Loading map...
-        </div>
-      </div>
-    );
-  }
+  // Stats for legend
+  const sourceStats = useMemo(() => {
+    const stats = { database: 0, geocoded: 0, manual: 0 };
+    for (const m of mapItems) stats[m.geoSource]++;
+    return stats;
+  }, [mapItems]);
 
   if (totalItems === 0) {
     return (
@@ -369,13 +691,22 @@ export default function MapView({ date }: Props) {
     );
   }
 
+  if (instantItems.length === 0 && geocodingCount > 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3">
+        <Loader2 size={32} className="animate-spin text-primary" />
+        <div className="text-sm text-muted">Locating addresses...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 relative">
-      {refining && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-amber-50 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded-lg px-4 py-2 shadow-lg z-[1000] flex items-center gap-2">
-          <Loader2 size={14} className="animate-spin text-amber-600" />
-          <span className="text-xs text-amber-700 dark:text-amber-300">
-            Showing approximate locations — refining to exact addresses... {progress.done}/{progress.total}
+      {geocodingCount > 0 && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-blue-50 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-lg px-4 py-2 shadow-lg z-[1000] flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin text-blue-600" />
+          <span className="text-xs text-blue-700 dark:text-blue-300">
+            Geocoding {geocodingCount} address{geocodingCount !== 1 ? "es" : ""} without coordinates...
           </span>
         </div>
       )}
@@ -399,18 +730,39 @@ export default function MapView({ date }: Props) {
             onReGeocode={async () => {
               const result = await clearAndReGeocode(m.address);
               if (result) {
-                setGeoCache((prev) => {
+                setOverrides((prev) => {
                   const next = new Map(prev);
-                  next.set(m.address, result);
+                  next.set(m.id, { geo: result, source: "geocoded" });
                   return next;
                 });
               }
             }}
             onCorrect={async (lat, lng) => {
+              // Save to geocode cache
               await manualCorrectGeocode(m.address, lat, lng);
-              setGeoCache((prev) => {
+              // Save to work_orders table if this is an rForce item
+              if (m.workOrderNumber) {
+                await updateWorkOrderCoords(m.workOrderNumber, lat, lng);
+              }
+              // Update local state
+              setOverrides((prev) => {
                 const next = new Map(prev);
-                next.set(m.address, { lat, lng, precision: "rooftop", manualOverride: true });
+                next.set(m.id, {
+                  geo: { lat, lng, precision: "rooftop", manualOverride: true },
+                  source: "manual",
+                });
+                return next;
+              });
+            }}
+            onAcceptVerified={async (geo) => {
+              // Save geocoder result to both caches
+              await manualCorrectGeocode(m.address, geo.lat, geo.lng);
+              if (m.workOrderNumber) {
+                await updateWorkOrderCoords(m.workOrderNumber, geo.lat, geo.lng);
+              }
+              setOverrides((prev) => {
+                const next = new Map(prev);
+                next.set(m.id, { geo: { ...geo, precision: "rooftop" }, source: "manual" });
                 return next;
               });
             }}
@@ -418,12 +770,13 @@ export default function MapView({ date }: Props) {
         ))}
       </MapContainer>
 
-      {!refining && mapItems.length < totalItems && (
+      {geocodingCount === 0 && mapItems.length < totalItems && (
         <div className="absolute bottom-4 left-4 bg-background/90 backdrop-blur border border-border rounded-lg px-3 py-2 text-xs text-muted shadow-lg z-[1000]">
-          Showing {mapItems.length} of {totalItems} items (some addresses could not be geocoded)
+          Showing {mapItems.length} of {totalItems} items (some addresses could not be located)
         </div>
       )}
 
+      {/* Legend */}
       <div className="absolute top-3 right-3 bg-background/90 backdrop-blur border border-border rounded-lg p-2 shadow-lg z-[1000]">
         <div className="text-[10px] text-muted font-medium mb-1.5">Crews</div>
         <div className="space-y-1">
@@ -443,20 +796,47 @@ export default function MapView({ date }: Props) {
               );
             })}
         </div>
-        {mapItems.some((m) => m.geo.precision === "zip" || m.geo.precision === "unknown") && (
-          <>
-            <div className="border-t border-border mt-1.5 pt-1.5">
-              <div className="text-[10px] text-muted font-medium mb-1">Accuracy</div>
-              <div className="flex items-center gap-1.5 text-[10px]">
-                <div className="w-3 h-3 rounded-full shrink-0 bg-gray-500 border-2 border-white shadow-sm" />
-                <span>Exact</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
-                <div className="w-3 h-3 rounded-full shrink-0 border-2 border-dashed border-gray-400" />
-                <span className="text-amber-600">Approximate</span>
-              </div>
+
+        {/* Source breakdown */}
+        <div className="border-t border-border mt-1.5 pt-1.5">
+          <div className="text-[10px] text-muted font-medium mb-1">Pin source</div>
+          {sourceStats.database > 0 && (
+            <div className="flex items-center gap-1.5 text-[10px] text-emerald-600">
+              <Database size={9} />
+              <span>Database ({sourceStats.database})</span>
             </div>
-          </>
+          )}
+          {sourceStats.geocoded > 0 && (
+            <div className="flex items-center gap-1.5 text-[10px] text-blue-600 mt-0.5">
+              <Globe size={9} />
+              <span>Geocoded ({sourceStats.geocoded})</span>
+            </div>
+          )}
+          {sourceStats.manual > 0 && (
+            <div className="flex items-center gap-1.5 text-[10px] text-violet-600 mt-0.5">
+              <PenLine size={9} />
+              <span>Manual ({sourceStats.manual})</span>
+            </div>
+          )}
+        </div>
+
+        {/* Accuracy legend if any approximate pins */}
+        {mapItems.some((m) => m.geo.precision === "zip" || m.geo.precision === "unknown") && (
+          <div className="border-t border-border mt-1.5 pt-1.5">
+            <div className="text-[10px] text-muted font-medium mb-1">Accuracy</div>
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <div className="w-3 h-3 rounded-full shrink-0 bg-gray-500 border-2 border-white shadow-sm" />
+              <span>Exact</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
+              <div className="w-3 h-3 rounded-full shrink-0 border-2 border-dashed border-gray-400" />
+              <span className="text-amber-600">Approximate</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
+              <div className="w-3 h-3 rounded-full shrink-0 bg-gray-500 border-2 border-blue-500 shadow-sm" />
+              <span className="text-blue-600">Manual override</span>
+            </div>
+          </div>
         )}
       </div>
     </div>

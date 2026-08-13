@@ -1,19 +1,51 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#1C1C1C"/>
-      <stop offset="100%" stop-color="#111111"/>
+      <stop offset="0%" stop-color="#1A1A1A"/>
+      <stop offset="100%" stop-color="#0F0F0F"/>
     </linearGradient>
-    <linearGradient id="piece" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#4A8C3F"/>
-      <stop offset="100%" stop-color="#2D5F27"/>
+    <linearGradient id="piece" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#6BBF62"/>
+      <stop offset="100%" stop-color="#3B7A33"/>
     </linearGradient>
-    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
-      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.35"/>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="116%">
+      <feDropShadow dx="0" dy="4" stdDeviation="10" flood-color="#000" flood-opacity="0.5"/>
     </filter>
   </defs>
-  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
-  <g transform="translate(76, 76) scale(3.6)" filter="url(#shadow)">
-    <path d="M 15 15 L 38 15 C 38 3, 62 3, 62 15 L 85 15 L 85 38 C 97 38, 97 62, 85 62 L 85 85 L 62 85 C 62 73, 38 73, 38 85 L 15 85 L 15 62 C 27 62, 27 38, 15 38 Z" fill="url(#piece)"/>
+  <!-- Dark rounded background -->
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <!-- Puzzle piece — centered, bold knobs for clarity at small sizes -->
+  <g transform="translate(256,264)" filter="url(#shadow)">
+    <path d="
+      M -110,-150
+      H -25
+      C -25,-185, 25,-185, 25,-150
+      H 110
+      V -65
+      C 145,-65, 145,-15, 110,-15
+      V 70
+      H 25
+      C 25,105, -25,105, -25,70
+      H -110
+      V -15
+      C -145,-15, -145,-65, -110,-65
+      Z
+    " fill="url(#piece)" stroke="#2D5F27" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Subtle inner highlight for depth -->
+    <path d="
+      M -95,-135
+      H -25
+      C -25,-165, 25,-165, 25,-135
+      H 95
+      V -65
+      C 125,-65, 125,-25, 95,-25
+      V 55
+      H 25
+      C 25,85, -25,85, -25,55
+      H -95
+      V -25
+      C -125,-25, -125,-65, -95,-65
+      Z
+    " fill="none" stroke="white" stroke-opacity="0.12" stroke-width="2" stroke-linejoin="round"/>
   </g>
 </svg>

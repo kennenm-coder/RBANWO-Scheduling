@@ -6,7 +6,7 @@ import { RForceOrder, Crew } from "@/lib/types";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
 import { parseCity } from "@/lib/crew-utils";
-import { formatDateStr } from "@/lib/calendar-utils";
+import { formatDateStr, formatProductBreakdown, formatProductShort } from "@/lib/calendar-utils";
 import { useData } from "./DataProvider";
 import ScheduleModal from "./ScheduleModal";
 import {
@@ -145,13 +145,11 @@ export default function RForceDetailSheet({ order, crew, onClose, onApprove, onD
             {order.product_count != null && order.product_count > 0 && (
               <InfoRow icon={<Package size={16} />} label="Products">
                 {order.product_count} units
-                {(() => {
-                  const parts: string[] = [];
-                  if (order.windows) parts.push(`${order.windows}W`);
-                  if (order.patio_doors) parts.push(`${order.patio_doors}PD`);
-                  if (order.doors) parts.push(`${order.doors}D`);
-                  return parts.length > 0 ? ` (${parts.join("/")})` : "";
-                })()}
+                {formatProductShort(order) && (
+                  <span className="text-muted ml-1">
+                    {formatProductShort(order)}
+                  </span>
+                )}
               </InfoRow>
             )}
 

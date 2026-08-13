@@ -258,6 +258,8 @@ describe("approveRForceOrder conflict prevention", () => {
       scheduler_notes: null,
       account_name: null,
       csv_import_id: null,
+      latitude: null,
+      longitude: null,
       updated_at: "2026-08-15T00:00:00Z",
     };
 

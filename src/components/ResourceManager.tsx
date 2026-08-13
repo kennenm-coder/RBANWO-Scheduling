@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useData } from "./DataProvider";
 import { upsertCrew, deactivateCrew, toggleCrewActive } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
@@ -36,6 +36,20 @@ export default function ResourceManager() {
   const [aliasInput, setAliasInput] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [linkingAlias, setLinkingAlias] = useState<string | null>(null);
+
+  // Close editing modal on Escape
+  useEffect(() => {
+    if (!editing) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setEditing(null);
+        setAliasInput("");
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [editing]);
 
   const allCrews = crews;
   const displayCrews = showInactive ? allCrews : allCrews.filter((c) => c.is_active);

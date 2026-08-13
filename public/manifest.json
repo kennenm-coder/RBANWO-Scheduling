@@ -1,10 +1,12 @@
 {
   "name": "RBANWO Scheduling",
   "short_name": "Scheduling",
+  "description": "Renewal by Andersen NWO — Scheduling Workspace",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#3B7A33",
+  "orientation": "any",
   "icons": [
     {
       "src": "/icon.svg",

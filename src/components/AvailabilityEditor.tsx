@@ -7,7 +7,7 @@ import {
   upsertAvailabilityRule,
   deleteAvailabilityRule,
 } from "@/lib/store";
-import { Plus, Trash2, Clock, CalendarOff, Pencil, Save } from "lucide-react";
+import { Plus, Trash2, Clock, CalendarOff, Pencil, Save, Briefcase } from "lucide-react";
 import { format } from "date-fns";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -15,6 +15,14 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const KIND_OPTIONS: { value: AvailabilityKind; label: string }[] = [
   { value: "unavailable", label: "Day Off" },
   { value: "block", label: "Custom Hours" },
+  { value: "role_assignment", label: "Department Assignment" },
+];
+
+const DEPARTMENT_OPTIONS: { value: string; label: string }[] = [
+  { value: "measure", label: "Measure Tech" },
+  { value: "install", label: "Install" },
+  { value: "service", label: "Service" },
+  { value: "jip", label: "JIP" },
 ];
 
 function ruleDescription(rule: AvailabilityRule): string {
@@ -40,6 +48,11 @@ function ruleDescription(rule: AvailabilityRule): string {
     return `Works ${rule.start_time}–${rule.end_time} on ${days}${interval}`;
   }
 
+  if (rule.kind === "role_assignment" && rule.department) {
+    const deptLabel = DEPARTMENT_OPTIONS.find((d) => d.value === rule.department)?.label || rule.department;
+    return `${deptLabel} on ${days}${interval}`;
+  }
+
   return `${rule.kind} — ${days}${interval}`;
 }
 
@@ -55,6 +68,7 @@ export default function AvailabilityEditor({
   const [adding, setAdding] = useState(false);
 
   const [kind, setKind] = useState<AvailabilityKind>("unavailable");
+  const [department, setDepartment] = useState("");
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [repeatInterval, setRepeatInterval] = useState(1);
   const [startTime, setStartTime] = useState("08:00");
@@ -87,6 +101,7 @@ export default function AvailabilityEditor({
 
   function resetForm() {
     setKind("unavailable");
+    setDepartment("");
     setWeekdays([]);
     setRepeatInterval(1);
     setStartTime("08:00");
@@ -101,6 +116,7 @@ export default function AvailabilityEditor({
   function startEdit(rule: AvailabilityRule) {
     setEditingId(rule.id);
     setKind(rule.kind);
+    setDepartment(rule.department || "");
     setWeekdays([...rule.weekdays]);
     setRepeatInterval(rule.repeat_interval);
     setStartTime(rule.start_time || "08:00");
@@ -113,6 +129,7 @@ export default function AvailabilityEditor({
 
   async function handleSave() {
     if (weekdays.length === 0) return;
+    if (kind === "role_assignment" && !department) return;
     setSaving(true);
     setError(null);
 
@@ -121,6 +138,7 @@ export default function AvailabilityEditor({
         ...(editingId ? { id: editingId } : {}),
         crew_id: crewId,
         kind,
+        department: kind === "role_assignment" ? department : null,
         weekdays,
         repeat_interval: repeatInterval,
         start_time: kind === "block" ? startTime : null,
@@ -169,7 +187,9 @@ export default function AvailabilityEditor({
               key={rule.id}
               className="flex items-center gap-2 px-2.5 py-1.5 bg-surface border border-border rounded-lg text-xs"
             >
-              {rule.kind === "block" ? (
+              {rule.kind === "role_assignment" ? (
+                <Briefcase size={12} className="text-purple-500 shrink-0" />
+              ) : rule.kind === "block" ? (
                 <Clock size={12} className="text-blue-500 shrink-0" />
               ) : (
                 <CalendarOff size={12} className="text-muted shrink-0" />
@@ -239,6 +259,29 @@ export default function AvailabilityEditor({
               ))}
             </select>
           </div>
+
+          {kind === "role_assignment" && (
+            <div>
+              <label className="block text-[11px] text-muted mb-1">
+                Department
+              </label>
+              <select
+                value={department}
+                onChange={(e) => setDepartment(e.target.value)}
+                className="w-full border border-border rounded-lg px-2.5 py-1.5 text-sm bg-background"
+              >
+                <option value="">Select department...</option>
+                {DEPARTMENT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-muted/60 mt-1">
+                e.g. &quot;Service on Mon/Wed/Fri&quot; or &quot;Measure Tech on Tue/Thu&quot;
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-[11px] text-muted mb-1">

@@ -33,11 +33,11 @@ export default function WeekSummary({ currentDate, onDayClick }: Props) {
           const measureCount = measureAppts.length;
           const installCount = installAppts.length;
 
-          // Sum product counts for the day
-          const totalProducts = dayAppts.reduce(
-            (sum, a) => sum + (a.product_count || 0),
-            0
+          // Service/JIP appointments shown separately for scheduling clarity
+          const serviceAppts = dayAppts.filter(
+            (a) => a.appointment_type === "service" || a.appointment_type === "jip"
           );
+          const pureInstallCount = installAppts.length - serviceAppts.length;
 
           return (
             <button
@@ -71,17 +71,17 @@ export default function WeekSummary({ currentDate, onDayClick }: Props) {
                         {measureCount}M
                       </span>
                     )}
-                    {installCount > 0 && (
+                    {pureInstallCount > 0 && (
                       <span className="text-[9px] bg-install text-white rounded px-1">
-                        {installCount}I
+                        {pureInstallCount}I
+                      </span>
+                    )}
+                    {serviceAppts.length > 0 && (
+                      <span className="text-[9px] bg-service text-white rounded px-1">
+                        {serviceAppts.length}S
                       </span>
                     )}
                   </div>
-                  {totalProducts > 0 && (
-                    <span className="text-[8px] text-muted" title={`${totalProducts} total product units`}>
-                      {totalProducts}u
-                    </span>
-                  )}
                 </div>
               )}
             </button>

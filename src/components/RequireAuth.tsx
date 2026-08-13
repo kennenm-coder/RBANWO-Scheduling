@@ -7,15 +7,12 @@ import { Loader2 } from "lucide-react";
  * Soft auth gate — shows a loading spinner while the session initialises,
  * then always renders children regardless of auth state.
  *
- * When we're ready to enforce login, flip ENFORCE_AUTH to true (or replace
- * this component with the hard-gate version that redirects to /login).
+ * Auth enforcement will be added later when the calendar app's login
+ * system is integrated into this app.
  */
-const ENFORCE_AUTH = false;
-
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const { loading } = useAuth();
 
-  // Still loading the session — brief spinner so the UI doesn't flash
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center min-h-[60vh]">
@@ -27,9 +24,5 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
     );
   }
 
-  // Soft gate: always render children (auth enforcement is off for now)
-  if (!ENFORCE_AUTH) return <>{children}</>;
-
-  // Hard gate path (currently unreachable) — left for future activation
   return <>{children}</>;
 }

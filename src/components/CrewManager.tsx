@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useData } from "./DataProvider";
 import { upsertCrew, deactivateCrew } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
@@ -10,6 +10,19 @@ import { Plus, Pencil, Trash2, X, Save } from "lucide-react";
 export default function CrewManager() {
   const { crews, refreshData } = useData();
   const [editing, setEditing] = useState<Partial<Crew> | null>(null);
+
+  // Close editing modal on Escape
+  useEffect(() => {
+    if (!editing) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setEditing(null);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [editing]);
 
   const grouped = crews.reduce(
     (acc, c) => {

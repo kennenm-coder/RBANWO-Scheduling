@@ -20,8 +20,9 @@ import {
 import { buildSalesforceUrl } from "@/lib/salesforce";
 import { validateAppointment } from "@/lib/scheduling-rules";
 import { getEligibleCrews } from "@/lib/crew-utils";
-import { fetchAccountSuggestions, AccountSuggestion } from "@/lib/store";
+import { fetchAccountSuggestions, AccountSuggestion, createAppointmentEvent } from "@/lib/store";
 import { useData } from "./DataProvider";
+import { useCurrentActor } from "./AuthProvider";
 import { X, AlertTriangle, AlertCircle, MapPin } from "lucide-react";
 import { format } from "date-fns";
 
@@ -51,6 +52,7 @@ export default function ScheduleModal({
     createAppointment,
     updateAppointment,
   } = useData();
+  const { actorId, actorName } = useCurrentActor();
   useEscapeKey(useCallback(() => onClose(), [onClose]));
 
   // Derive appointment type: editing > prefill rForce type > target crew type > tech_measure
@@ -234,8 +236,28 @@ export default function ScheduleModal({
             } : {}),
           }
         );
+        // Log audit event
+        createAppointmentEvent({
+          appointment_id: editingAppointment.id,
+          action: rescheduleMode ? "rescheduled" : "updated",
+          actor_id: actorId,
+          actor_name_snapshot: actorName,
+          before_state: {
+            crew_id: editingAppointment.crew_id,
+            scheduled_date: editingAppointment.scheduled_date,
+            time_block: editingAppointment.time_block,
+            customer_name: editingAppointment.customer_name,
+          },
+          after_state: {
+            crew_id: selectedCrewId,
+            scheduled_date: selectedDate,
+            time_block: selectedBlock,
+            customer_name: customerName,
+          },
+          reason: rescheduleMode ? rescheduleReason.trim() : null,
+        });
       } else {
-        await createAppointment({
+        const result = await createAppointment({
           crew_id: selectedCrewId,
           secondary_crew_id: secondaryCrewId || null,
           tertiary_crew_id: tertiaryCrewId || null,
@@ -254,7 +276,7 @@ export default function ScheduleModal({
           salesforce_url: salesforceUrl,
           status: "scheduled",
           reschedule_reason: null,
-          scheduled_by: null,
+          scheduled_by: actorId || null,
           merge_source_wo: null,
           // Capture immutable snapshot of manual entry for later reconciliation
           original_entry_snapshot: captureOriginalEntry({
@@ -268,6 +290,23 @@ export default function ScheduleModal({
             appointment_type: type,
           }),
         });
+        // Log audit event
+        if (result) {
+          createAppointmentEvent({
+            appointment_id: result.id,
+            action: "created",
+            actor_id: actorId,
+            actor_name_snapshot: actorName,
+            before_state: null,
+            after_state: {
+              customer_name: customerName,
+              scheduled_date: selectedDate,
+              crew_id: selectedCrewId,
+              time_block: selectedBlock,
+            },
+            reason: null,
+          });
+        }
       }
       onClose();
     } catch (err: unknown) {

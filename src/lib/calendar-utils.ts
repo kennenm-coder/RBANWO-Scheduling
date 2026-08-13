@@ -218,6 +218,63 @@ export function typeLabel(type: AppointmentType): string {
   }
 }
 
+/**
+ * Format a product breakdown string from rForce unit fields.
+ * Returns e.g. "4W / 1PD / 1D" or "5 units" if no breakdown available.
+ * Returns null if there's nothing to show.
+ */
+export function formatProductBreakdown(data: {
+  product_count?: number | null;
+  windows?: number | null;
+  patio_doors?: number | null;
+  doors?: number | null;
+}): string | null {
+  const w = data.windows ?? 0;
+  const pd = data.patio_doors ?? 0;
+  const d = data.doors ?? 0;
+  const hasBreakdown = w > 0 || pd > 0 || d > 0;
+
+  if (hasBreakdown) {
+    const parts: string[] = [];
+    if (w > 0) parts.push(`${w}W`);
+    if (pd > 0) parts.push(`${pd}PD`);
+    if (d > 0) parts.push(`${d}D`);
+    return parts.join(" / ");
+  }
+
+  if (data.product_count != null && data.product_count > 0) {
+    return `${data.product_count} units`;
+  }
+
+  return null;
+}
+
+/**
+ * Short product summary for compact displays (cards, queue items).
+ * Returns e.g. "(4W)" or "(5W/1PD/1D)" or null.
+ */
+export function formatProductShort(data: {
+  product_count?: number | null;
+  windows?: number | null;
+  patio_doors?: number | null;
+  doors?: number | null;
+}): string | null {
+  const w = data.windows ?? 0;
+  const pd = data.patio_doors ?? 0;
+  const d = data.doors ?? 0;
+  const hasBreakdown = w > 0 || pd > 0 || d > 0;
+
+  if (hasBreakdown) {
+    const parts: string[] = [];
+    if (w > 0) parts.push(`${w}W`);
+    if (pd > 0) parts.push(`${pd}PD`);
+    if (d > 0) parts.push(`${d}D`);
+    return `(${parts.join("/")})`;
+  }
+
+  return null;
+}
+
 export function crewTypeLabel(type: Crew["crew_type"]): string {
   switch (type) {
     case "measure_tech":

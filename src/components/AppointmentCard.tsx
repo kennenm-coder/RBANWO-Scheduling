@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Appointment, Crew } from "@/lib/types";
-import { typeLabel } from "@/lib/calendar-utils";
+import { typeLabel, formatProductBreakdown } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { useData } from "./DataProvider";
 import { MapPin, Unlink, AlertTriangle, CheckCircle, Undo2 } from "lucide-react";
@@ -113,9 +113,9 @@ export default function AppointmentCard({
             <span className="opacity-80">
               {typeLabel(appointment.appointment_type)}
             </span>
-            {appointment.product_count && (
+            {formatProductBreakdown(appointment) && (
               <span className="opacity-80">
-                {appointment.product_count} units
+                {formatProductBreakdown(appointment)}
               </span>
             )}
           </div>

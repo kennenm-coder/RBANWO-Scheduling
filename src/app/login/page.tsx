@@ -37,6 +37,8 @@ export default function LoginPage() {
     <div className="flex-1 flex items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.svg" alt="" className="w-16 h-16 mx-auto mb-3 rounded-2xl" />
           <h1 className="text-2xl font-bold">RBANWO Scheduling</h1>
           <p className="text-sm text-muted mt-1">Sign in to your account</p>
         </div>

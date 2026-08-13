@@ -1,6 +1,7 @@
 "use client";
 
 import { RForceOrder, Crew } from "@/lib/types";
+import { formatProductBreakdown } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { MapPin, AlertTriangle, Check } from "lucide-react";
 
@@ -58,9 +59,9 @@ export default function RForceCard({ order, crew, compact, isSynced, onClick }: 
             <span>
               {order.work_order_type || "Unknown"}
             </span>
-            {order.product_count != null && order.product_count > 0 && (
+            {formatProductBreakdown(order) && (
               <span>
-                {order.product_count} units
+                {formatProductBreakdown(order)}
               </span>
             )}
           </div>

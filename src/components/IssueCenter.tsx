@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { useData } from "./DataProvider";
 import { detectFlags, applyResolutions, categorizeFlags, countActionableFlags, SchedulingFlag } from "@/lib/flags";
 import { openSalesforce } from "@/lib/salesforce";
@@ -134,6 +135,7 @@ function matchesSearch(flag: SchedulingFlag, query: string, appointments: Appoin
 
 export default function IssueCenter({ onClose, onNavigate }: Props) {
   const { appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions, resolveFlag, unresolveFlag } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [showWaiting, setShowWaiting] = useState(true);
   const [showResolved, setShowResolved] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");

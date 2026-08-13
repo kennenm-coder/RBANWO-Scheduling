@@ -143,6 +143,8 @@ export interface RForceOrder {
   scheduler_notes: string | null;
   account_name: string | null;
   csv_import_id: string | null;
+  latitude: number | null;
+  longitude: number | null;
   updated_at: string;
 }
 
