@@ -28,8 +28,10 @@ function parseAddressParts(address: string): { city: string; state: string; zip:
   if (!address) return { city: "", state: "", zip: "" };
 
   let zip = "";
-  const zipMatch = address.match(/\b(\d{5})(?:-\d{4})?\b/);
-  if (zipMatch) zip = zipMatch[1];
+  // Match the LAST 5-digit number in the address — street numbers like "11750" come first,
+  // the actual ZIP code (e.g. "45840") always appears at or near the end.
+  const zipMatches = [...address.matchAll(/\b(\d{5})(?:-\d{4})?\b/g)];
+  if (zipMatches.length > 0) zip = zipMatches[zipMatches.length - 1][1];
 
   let state = "";
   const stateMatch = address.match(/,\s*([A-Z]{2})\s+\d{5}/);
