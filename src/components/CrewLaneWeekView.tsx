@@ -836,12 +836,15 @@ function MeasureTimeLaneCell({
                           </div>
                         );
                       })}
-                      <button
-                        onClick={() => onSchedule(block)}
-                        className="w-full h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
-                      >
-                        <Plus size={7} className="text-muted/20 hover:text-primary" />
-                      </button>
+                      {/* Only show + button if no app appointments occupy this block */}
+                      {blockAppts.length === 0 && (
+                        <button
+                          onClick={() => onSchedule(block)}
+                          className="w-full h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
+                        >
+                          <Plus size={7} className="text-muted/20 hover:text-primary" />
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <button

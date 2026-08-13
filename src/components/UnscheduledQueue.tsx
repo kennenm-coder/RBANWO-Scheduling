@@ -4,6 +4,7 @@ import { useMemo, useState, useCallback } from "react";
 import { useData } from "./DataProvider";
 import { buildQueueItems } from "@/lib/queue-pipeline";
 import { openSalesforce } from "@/lib/salesforce";
+import { formatDateStr } from "@/lib/calendar-utils";
 import ScheduleModal from "./ScheduleModal";
 import LinkModal from "./LinkModal";
 import MergeConfirmModal from "./MergeConfirmModal";
@@ -661,7 +662,7 @@ function QueueItemCard({
             {item.effectiveDate && (
               <span className="flex items-center gap-0.5 shrink-0">
                 <Calendar size={10} className="shrink-0" />
-                {item.effectiveDate}
+                {formatDateStr(item.effectiveDate)}
               </span>
             )}
             {item.assignedResource && (

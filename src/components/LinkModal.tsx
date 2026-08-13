@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { useData } from "./DataProvider";
 import { RForceOrder, Appointment } from "@/lib/types";
+import { formatDateStr } from "@/lib/calendar-utils";
 import { linkAppointment } from "@/lib/store";
 import { onAppointmentLinked } from "@/lib/sync-transitions";
 import { X, Search, Link2, MapPin } from "lucide-react";
@@ -220,7 +221,7 @@ export default function LinkModal(props: Props) {
                       <span className="truncate">{appt.address}</span>
                     </div>
                     <div className="flex gap-3 text-xs text-muted mt-0.5">
-                      <span>Date: {appt.scheduled_date}</span>
+                      <span>Date: {appt.scheduled_date ? formatDateStr(appt.scheduled_date) : "—"}</span>
                       <span>
                         {appt.appointment_type === "tech_measure"
                           ? "Tech Measure"

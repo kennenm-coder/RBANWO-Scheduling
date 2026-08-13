@@ -136,6 +136,20 @@ export function formatDateFull(date: Date): string {
   return format(date, "EEEE, MMMM d, yyyy");
 }
 
+/** Format a YYYY-MM-DD string as "Mon, Aug 11" — human-friendly short date. */
+export function formatDateStr(dateStr: string): string {
+  if (!dateStr) return "—";
+  const d = parseISO(dateStr);
+  return format(d, "EEE, MMM d");
+}
+
+/** Format a YYYY-MM-DD string as "Monday, August 11, 2026" — full friendly date. */
+export function formatDateStrFull(dateStr: string): string {
+  if (!dateStr) return "—";
+  const d = parseISO(dateStr);
+  return format(d, "EEEE, MMMM d, yyyy");
+}
+
 export function formatWeekRange(date: Date): string {
   const days = getWeekDays(date);
   return `${format(days[0], "MMM d")} – ${format(days[6], "MMM d, yyyy")}`;

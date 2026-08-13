@@ -5,6 +5,7 @@ import { RForceOrder, Crew } from "@/lib/types";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
 import { parseCity } from "@/lib/crew-utils";
+import { formatDateStr } from "@/lib/calendar-utils";
 import { useData } from "./DataProvider";
 import ScheduleModal from "./ScheduleModal";
 import {
@@ -105,10 +106,10 @@ export default function RForceDetailSheet({ order, crew, onClose, onApprove, onD
 
             {order.scheduled_start && (
               <InfoRow icon={<Calendar size={16} />} label="Scheduled">
-                {order.scheduled_start.slice(0, 10)}
+                {formatDateStr(order.scheduled_start.slice(0, 10))}
                 {order.scheduled_end &&
                   order.scheduled_end.slice(0, 10) !== order.scheduled_start.slice(0, 10) &&
-                  ` – ${order.scheduled_end.slice(0, 10)}`}
+                  ` – ${formatDateStr(order.scheduled_end.slice(0, 10))}`}
               </InfoRow>
             )}
 

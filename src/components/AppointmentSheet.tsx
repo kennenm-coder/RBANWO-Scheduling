@@ -1,7 +1,7 @@
 "use client";
 
 import { Appointment, Crew, RForceOrder, AppointmentLink } from "@/lib/types";
-import { typeLabel, timeBlockLabel } from "@/lib/calendar-utils";
+import { typeLabel, timeBlockLabel, formatDateStr, formatDateStrFull } from "@/lib/calendar-utils";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
 import { useData } from "./DataProvider";
@@ -184,7 +184,9 @@ export default function AppointmentSheet({
           </InfoRow>
 
           <InfoRow icon={<Calendar size={16} />} label="Date">
-            {appointment.scheduled_date || "Unscheduled"}
+            {appointment.scheduled_date
+              ? formatDateStrFull(appointment.scheduled_date)
+              : "Unscheduled"}
             {appointment.duration_days > 1 &&
               ` (${appointment.duration_days} days)`}
           </InfoRow>
@@ -270,7 +272,7 @@ export default function AppointmentSheet({
                   {dateDiff && (
                     <div className="flex justify-between">
                       <span className="text-muted">Date:</span>
-                      <span>App: <strong>{appointment.scheduled_date}</strong> | rForce: <strong>{rfDate}</strong></span>
+                      <span>App: <strong>{formatDateStr(appointment.scheduled_date!)}</strong> | rForce: <strong>{formatDateStr(rfDate!)}</strong></span>
                     </div>
                   )}
                   {crewDiff && (
