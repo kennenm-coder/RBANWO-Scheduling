@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { RForceOrder, Crew } from "@/lib/types";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
@@ -34,6 +35,7 @@ interface Props {
 
 export default function RForceDetailSheet({ order, crew, onClose, onApprove, onDismiss }: Props) {
   const { refreshData } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [scheduling, setScheduling] = useState(false);
   const [notes, setNotes] = useState(order.scheduler_notes || "");
   const [saving, setSaving] = useState(false);

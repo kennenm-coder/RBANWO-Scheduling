@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { useData } from "./DataProvider";
 import { TimeOffRequest } from "@/lib/types";
 import { formatDateStr } from "@/lib/calendar-utils";
@@ -13,6 +14,7 @@ interface Props {
 
 export default function TimeOffEditor({ onClose }: Props) {
   const { crews, timeOffRequests, addTimeOff, updateTimeOff, removeTimeOff } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [employeeName, setEmployeeName] = useState("");
   const [department, setDepartment] = useState("");
   const [startDate, setStartDate] = useState(format(new Date(), "yyyy-MM-dd"));

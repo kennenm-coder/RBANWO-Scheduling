@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
   Appointment,
   AppointmentType,
@@ -50,6 +51,7 @@ export default function ScheduleModal({
     createAppointment,
     updateAppointment,
   } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
 
   // Derive appointment type: editing > prefill rForce type > target crew type > tech_measure
   function deriveAppointmentType(): AppointmentType {

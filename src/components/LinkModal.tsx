@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { useData } from "./DataProvider";
 import { RForceOrder, Appointment } from "@/lib/types";
 import { formatDateStr } from "@/lib/calendar-utils";
@@ -24,6 +25,8 @@ type Props = LinkToRForceProps | LinkToAppProps;
 
 export default function LinkModal(props: Props) {
   const { rforceOrders, appointments, activeLinks, refreshData } = useData();
+  const onClose = props.onClose;
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [search, setSearch] = useState("");
   const [linking, setLinking] = useState(false);
   const [error, setError] = useState("");

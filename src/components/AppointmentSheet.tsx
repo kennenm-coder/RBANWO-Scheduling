@@ -24,7 +24,8 @@ import {
   Save,
   Undo2,
 } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import EventHistory from "./EventHistory";
 
 interface Props {
@@ -43,6 +44,7 @@ export default function AppointmentSheet({
   onFlag,
 }: Props) {
   const { crews, rforceOrders, activeLinks, cancelAppointment, unscheduleAppointment, updateAppointment, refreshData } = useData();
+  useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [cancelling, setCancelling] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
