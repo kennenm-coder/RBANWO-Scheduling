@@ -21,15 +21,23 @@ export default function WeekSummary({ currentDate, onDayClick }: Props) {
           const isSelected = isSameDay(day, currentDate);
           const today = isToday(day);
 
-          const measureCount = dayAppts.filter(
+          const measureAppts = dayAppts.filter(
             (a) => a.appointment_type === "tech_measure"
-          ).length;
-          const installCount = dayAppts.filter(
+          );
+          const installAppts = dayAppts.filter(
             (a) =>
               a.appointment_type === "install" ||
               a.appointment_type === "jip" ||
               a.appointment_type === "service"
-          ).length;
+          );
+          const measureCount = measureAppts.length;
+          const installCount = installAppts.length;
+
+          // Sum product counts for the day
+          const totalProducts = dayAppts.reduce(
+            (sum, a) => sum + (a.product_count || 0),
+            0
+          );
 
           return (
             <button
@@ -56,15 +64,22 @@ export default function WeekSummary({ currentDate, onDayClick }: Props) {
                 {format(day, "d")}
               </span>
               {dayAppts.length > 0 && (
-                <div className="flex gap-0.5 mt-1">
-                  {measureCount > 0 && (
-                    <span className="text-[9px] bg-measure text-white rounded px-1">
-                      {measureCount}M
-                    </span>
-                  )}
-                  {installCount > 0 && (
-                    <span className="text-[9px] bg-install text-white rounded px-1">
-                      {installCount}I
+                <div className="flex flex-col items-center gap-0.5 mt-1">
+                  <div className="flex gap-0.5">
+                    {measureCount > 0 && (
+                      <span className="text-[9px] bg-measure text-white rounded px-1">
+                        {measureCount}M
+                      </span>
+                    )}
+                    {installCount > 0 && (
+                      <span className="text-[9px] bg-install text-white rounded px-1">
+                        {installCount}I
+                      </span>
+                    )}
+                  </div>
+                  {totalProducts > 0 && (
+                    <span className="text-[8px] text-muted" title={`${totalProducts} total product units`}>
+                      {totalProducts}u
                     </span>
                   )}
                 </div>

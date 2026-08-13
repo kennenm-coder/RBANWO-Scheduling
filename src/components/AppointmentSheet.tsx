@@ -2,6 +2,7 @@
 
 import { Appointment, Crew, RForceOrder, AppointmentLink } from "@/lib/types";
 import { typeLabel, timeBlockLabel, formatDateStr, formatDateStrFull } from "@/lib/calendar-utils";
+import { addDays, parseISO, format } from "date-fns";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
 import { useData } from "./DataProvider";
@@ -185,10 +186,12 @@ export default function AppointmentSheet({
 
           <InfoRow icon={<Calendar size={16} />} label="Date">
             {appointment.scheduled_date
-              ? formatDateStrFull(appointment.scheduled_date)
+              ? appointment.duration_days > 1
+                ? `${formatDateStr(appointment.scheduled_date)} – ${formatDateStr(
+                    format(addDays(parseISO(appointment.scheduled_date), appointment.duration_days - 1), "yyyy-MM-dd")
+                  )} (${appointment.duration_days} days)`
+                : formatDateStrFull(appointment.scheduled_date)
               : "Unscheduled"}
-            {appointment.duration_days > 1 &&
-              ` (${appointment.duration_days} days)`}
           </InfoRow>
 
           <InfoRow icon={<Clock size={16} />} label="Time">
