@@ -2,7 +2,6 @@
 
 import { useData } from "@/components/DataProvider";
 import { exportAppointments, exportComparison } from "@/lib/csv-export";
-import UserManager from "@/components/UserManager";
 import { Loader2, Download, ArrowRightLeft } from "lucide-react";
 
 export default function AdminPage() {
@@ -69,10 +68,6 @@ export default function AdminPage() {
           </p>
         </div>
 
-        {/* ── User Management ── */}
-        <div className="border-t border-border pt-6">
-          <UserManager />
-        </div>
       </div>
     </div>
   );

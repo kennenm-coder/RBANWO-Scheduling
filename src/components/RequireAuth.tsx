@@ -1,22 +1,18 @@
 "use client";
 
 import { useAuth } from "./AuthProvider";
-import { useRouter, usePathname } from "next/navigation";
-import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
 
+/**
+ * Soft auth gate — shows a loading spinner while the session initialises,
+ * then always renders children regardless of auth state.
+ *
+ * Auth enforcement will be added later when the calendar app's login
+ * system is integrated into this app.
+ */
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
+  const { loading } = useAuth();
 
-  useEffect(() => {
-    if (!loading && !user && pathname !== "/login") {
-      router.replace("/login");
-    }
-  }, [loading, user, pathname, router]);
-
-  // Still loading the session — brief spinner so the UI doesn't flash
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center min-h-[60vh]">
@@ -26,11 +22,6 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
         </div>
       </div>
     );
-  }
-
-  // Not logged in and not on login page — show nothing while redirect happens
-  if (!user && pathname !== "/login") {
-    return null;
   }
 
   return <>{children}</>;

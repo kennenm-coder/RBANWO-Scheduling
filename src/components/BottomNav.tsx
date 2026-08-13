@@ -18,14 +18,6 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-
-  // Don't render nav on the login page
-  if (pathname === "/login") return null;
-
-  return <BottomNavInner pathname={pathname} />;
-}
-
-function BottomNavInner({ pathname }: { pathname: string }) {
   const { crews, appointments, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions } = useData();
 
   const unmatchedCount = useMemo(
