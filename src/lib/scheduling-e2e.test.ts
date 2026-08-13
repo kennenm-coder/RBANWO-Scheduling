@@ -59,7 +59,12 @@ function makeCrew(overrides: Partial<Crew> & { id: string }): Crew {
     notes: null,
     sort_order: 1,
     is_active: true,
+    aliases: null,
+    manages: null,
     additional_types: null,
+    primary_crew_id: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }
@@ -111,7 +116,12 @@ function makeLink(overrides: Partial<AppointmentLink> = {}): AppointmentLink {
     work_order_number: "WO-12345",
     order_number: "ORD-001",
     match_method: "fuzzy",
+    linked_by: null,
     linked_at: "2026-08-10T00:00:00Z",
+    unlinked_by: null,
+    unlinked_at: null,
+    unlink_reason: null,
+    created_at: "2026-08-10T00:00:00Z",
     ...overrides,
   };
 }

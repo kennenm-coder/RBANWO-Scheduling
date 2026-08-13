@@ -175,3 +175,35 @@ export function isTimeBlockAvailable(
   if (!availability.available) return false;
   return !availability.unavailableBlocks.has(block);
 }
+
+/**
+ * Get the active department role assignment for a crew on a given date.
+ *
+ * Used for recurring role patterns like "SVC on Mon/Wed/Fri" and
+ * "Measure Tech on Tue/Thu". Returns the department string (e.g.
+ * "service", "measure") or null if no role_assignment rule applies.
+ */
+export function getCrewRoleForDate(
+  crewId: string,
+  date: Date,
+  rules: AvailabilityRule[],
+  exceptions: AvailabilityException[]
+): string | null {
+  const dateStr = format(date, "yyyy-MM-dd");
+  const dayOfWeek = date.getDay();
+  const crewRules = rules.filter(
+    (r) => r.crew_id === crewId && r.kind === "role_assignment" && r.is_active
+  );
+  const crewExceptions = exceptions.filter((e) =>
+    crewRules.some((r) => r.id === e.rule_id)
+  );
+
+  for (const rule of crewRules) {
+    const result = ruleAppliesToDate(rule, dateStr, dayOfWeek, crewExceptions);
+    if (!result) continue;
+    // role_assignment rule applies — return the department
+    return rule.department || null;
+  }
+
+  return null;
+}

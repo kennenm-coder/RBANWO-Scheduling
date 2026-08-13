@@ -19,7 +19,7 @@ import {
 } from "./types";
 import { buildFuzzyMatchIndex, findFuzzyMatchesIndexed } from "./fuzzy-match";
 import { reconcile } from "./reconcile";
-import { normalizeWoTypeOrUnknown, isNotSchedulable } from "./normalize";
+import { normalizeWoTypeOrUnknown, isNotSchedulable, isNonFieldWork } from "./normalize";
 import { typeLabel } from "./calendar-utils";
 
 // ── Address parsing ──
@@ -137,10 +137,11 @@ export function buildQueueItems(
   }
 
   // Pre-compute set of non-schedulable WO numbers (On Hold, Collections, etc.)
+  // and non-field WO types (Paint Shop/Paint/Stain — handled outside field scheduling).
   // These items clutter the queue — schedulers can't act on them.
   const notSchedulableWos = new Set<string>();
   for (const rf of rforceOrders) {
-    if (isNotSchedulable(rf)) {
+    if (isNotSchedulable(rf) || isNonFieldWork(rf)) {
       notSchedulableWos.add(rf.work_order_number);
     }
   }

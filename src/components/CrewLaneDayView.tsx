@@ -27,7 +27,7 @@ import {
 import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
 import { onSchedulerEditedLinkedAppointment } from "@/lib/sync-transitions";
 import { useCurrentActor } from "./AuthProvider";
-import { crewHasType, sortByFirstName, getEligibleCrews } from "@/lib/crew-utils";
+import { crewHasType, sortByFirstName, getEligibleCrews, getDepartmentSectionsForDate } from "@/lib/crew-utils";
 import RForceDetailSheet from "./RForceDetailSheet";
 import { Palmtree, MapPinned, Ban } from "lucide-react";
 import { format } from "date-fns";
@@ -109,26 +109,13 @@ export default function CrewLaneDayView({
     return false;
   }
 
-  const activeCrews = crews.filter((c) => c.is_active);
-
-  const mainCrews = activeCrews.filter((c) => !crewHasType(c, "misc", "second", "management"));
-
-  const measureCrews = sortByFirstName(mainCrews.filter((c) => crewHasType(c, "measure_tech")));
-  const installCrews = sortByFirstName(mainCrews.filter((c) => crewHasType(c, "install_in_house", "install_sub")));
-  const jipCrews = sortByFirstName(mainCrews.filter((c) => crewHasType(c, "jip")));
-  const serviceCrews = sortByFirstName(mainCrews.filter((c) => crewHasType(c, "svc")));
-
-  const managementCrews = sortByFirstName(activeCrews.filter((c) => c.crew_type === "management"));
-
-  const secondCrews = activeCrews.filter((c) => c.crew_type === "second");
-  const installSeconds = sortByFirstName(secondCrews.filter((c) => {
-    const primary = activeCrews.find((p) => p.id === c.primary_crew_id);
-    return primary && (primary.crew_type === "install_in_house" || primary.crew_type === "install_sub");
-  }));
-  const jipSeconds = sortByFirstName(secondCrews.filter((c) => {
-    const primary = activeCrews.find((p) => p.id === c.primary_crew_id);
-    return primary && primary.crew_type === "jip";
-  }));
+  // Build department sections using role_assignment rules for the current date.
+  // Crews with a "SVC M/W/F" or "MT T/Th" rule get moved to the correct
+  // department section based on today's day of week.
+  const sections = useMemo(
+    () => getDepartmentSectionsForDate(crews, date, availabilityRules, availabilityExceptions),
+    [crews, date, availabilityRules, availabilityExceptions]
+  );
 
   async function handleAppointmentDrop(appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) {
     const appt = appointments.find((a) => a.id === appointmentId);
@@ -208,11 +195,13 @@ export default function CrewLaneDayView({
 
   return (
     <div className="flex-1 overflow-auto">
-      {(filterType === "all" || filterType === "tech_measure") &&
-        measureCrews.length > 0 && (
+      {sections
+        .filter((s) => filterType === "all" || filterType === s.filterType)
+        .map((s) => (
           <CrewSection
-            title="Measure Techs"
-            crews={measureCrews}
+            key={s.key}
+            title={s.title}
+            crews={s.crews}
             date={date}
             appointments={appointments}
             rforceOrders={rforceOrders}
@@ -231,156 +220,7 @@ export default function CrewLaneDayView({
             onAppointmentDrop={handleAppointmentDrop}
             onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
           />
-        )}
-
-      {(filterType === "all" || filterType === "install") &&
-        installCrews.length > 0 && (
-          <CrewSection
-            title="Install"
-            crews={installCrews}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceDisplayItems={rforceDisplayItems}
-            isCrewOff={isCrewOff}
-            availabilityRules={availabilityRules}
-            availabilityExceptions={availabilityExceptions}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-            showRForce={showRForce}
-            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
-            onApproveRForce={approveRForce}
-            onDismissRForce={dismissRForce}
-            onAppointmentDrop={handleAppointmentDrop}
-            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
-          />
-        )}
-      {(filterType === "all" || filterType === "install") &&
-        installSeconds.length > 0 && (
-          <CrewSection
-            title="Install Seconds"
-            crews={installSeconds}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceDisplayItems={rforceDisplayItems}
-            isCrewOff={isCrewOff}
-            availabilityRules={availabilityRules}
-            availabilityExceptions={availabilityExceptions}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-            showRForce={showRForce}
-            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
-            onApproveRForce={approveRForce}
-            onDismissRForce={dismissRForce}
-            onAppointmentDrop={handleAppointmentDrop}
-            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
-          />
-        )}
-
-      {/* Service section + management */}
-      {(filterType === "all" || filterType === "service") &&
-        serviceCrews.length > 0 && (
-          <CrewSection
-            title="Service"
-            crews={serviceCrews}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceDisplayItems={rforceDisplayItems}
-            isCrewOff={isCrewOff}
-            availabilityRules={availabilityRules}
-            availabilityExceptions={availabilityExceptions}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-            showRForce={showRForce}
-            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
-            onApproveRForce={approveRForce}
-            onDismissRForce={dismissRForce}
-            onAppointmentDrop={handleAppointmentDrop}
-            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
-          />
-        )}
-      {/* JIP section + seconds */}
-      {(filterType === "all" || filterType === "jip") &&
-        jipCrews.length > 0 && (
-          <CrewSection
-            title="JIP"
-            crews={jipCrews}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceDisplayItems={rforceDisplayItems}
-            isCrewOff={isCrewOff}
-            availabilityRules={availabilityRules}
-            availabilityExceptions={availabilityExceptions}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-            showRForce={showRForce}
-            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
-            onApproveRForce={approveRForce}
-            onDismissRForce={dismissRForce}
-            onAppointmentDrop={handleAppointmentDrop}
-            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
-          />
-        )}
-      {(filterType === "all" || filterType === "jip") &&
-        jipSeconds.length > 0 && (
-          <CrewSection
-            title="JIP Seconds"
-            crews={jipSeconds}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceDisplayItems={rforceDisplayItems}
-            isCrewOff={isCrewOff}
-            availabilityRules={availabilityRules}
-            availabilityExceptions={availabilityExceptions}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-            showRForce={showRForce}
-            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
-            onApproveRForce={approveRForce}
-            onDismissRForce={dismissRForce}
-            onAppointmentDrop={handleAppointmentDrop}
-            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
-          />
-        )}
-      {/* Single consolidated Management section — no duplicates */}
-      {filterType === "all" &&
-        managementCrews.length > 0 && (
-          <CrewSection
-            title="Management"
-            crews={managementCrews}
-            date={date}
-            appointments={appointments}
-            rforceOrders={rforceOrders}
-            rforceDisplayItems={rforceDisplayItems}
-            isCrewOff={isCrewOff}
-            availabilityRules={availabilityRules}
-            availabilityExceptions={availabilityExceptions}
-            onCardClick={setSelectedAppt}
-            onCellClick={(crewId, block) =>
-              setScheduleTarget({ crewId, block })
-            }
-            showRForce={showRForce}
-            onRForceClick={(order, crew, displayItem) => setSelectedRForce({ order, crew, displayItem })}
-            onApproveRForce={approveRForce}
-            onDismissRForce={dismissRForce}
-            onAppointmentDrop={handleAppointmentDrop}
-            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
-          />
-        )}
+        ))}
 
       {selectedAppt && (
         <AppointmentSheet

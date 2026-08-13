@@ -29,7 +29,7 @@ import {
 import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
 import { onSchedulerEditedLinkedAppointment } from "@/lib/sync-transitions";
 import { useCurrentActor } from "./AuthProvider";
-import { getDepartmentSections, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType, getEligibleCrews } from "@/lib/crew-utils";
+import { getDepartmentSectionsForDate, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType, getEligibleCrews } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences } from "@/lib/preferences";
 import { format, isToday, parseISO, addDays } from "date-fns";
@@ -159,7 +159,14 @@ export default function CrewLaneWeekView({
     return null;
   }
 
-  const sections = useMemo(() => getDepartmentSections(crews), [crews]);
+  // Use date-aware sections so role_assignment rules (e.g. SVC M/W/F)
+  // move crews to the correct department for the current week's start day.
+  // For week view, we use the currentDate (the focused day) to determine
+  // role placement — crews appear in their role for that day.
+  const sections = useMemo(
+    () => getDepartmentSectionsForDate(crews, currentDate, availabilityRules, availabilityExceptions),
+    [crews, currentDate, availabilityRules, availabilityExceptions]
+  );
 
   const filteredSections = useMemo(() => {
     if (filterType === "all") return sections;

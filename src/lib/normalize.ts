@@ -30,6 +30,7 @@ const RAW_WO_TYPE_TO_CANONICAL: Record<string, AppointmentType> = {
   "HOA": "hoa",
   "Paint/Stain": "paint_stain",
   "Paint": "paint_stain",
+  "Paint Shop": "paint_stain",
   "Stain": "paint_stain",
 };
 
@@ -163,6 +164,26 @@ export function isNotSchedulable(order: {
   order_status?: string | null;
 }): boolean {
   return NOT_SCHEDULABLE_ORDER_STATUSES.has(order.order_status || "");
+}
+
+/**
+ * Work-order types that are handled outside the field scheduling workflow.
+ * Paint/Stain orders go to the paint shop — they clutter the queue because
+ * schedulers can't assign a crew or date to them.
+ */
+export const NON_FIELD_WO_TYPES: Set<AppointmentType> = new Set([
+  "paint_stain",
+]);
+
+/**
+ * Check if an rForce order's work_order_type is a non-field type
+ * (e.g. Paint Shop) that shouldn't appear in the scheduling queue.
+ */
+export function isNonFieldWork(order: {
+  work_order_type?: string | null;
+}): boolean {
+  const canonical = normalizeWoType(order.work_order_type);
+  return canonical !== null && NON_FIELD_WO_TYPES.has(canonical);
 }
 
 // ── Resource/Crew Name Comparison ──

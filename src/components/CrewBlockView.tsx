@@ -18,7 +18,7 @@ import {
   typeLabel,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
-import { crewHasType, sortByFirstName } from "@/lib/crew-utils";
+import { crewHasType, sortByFirstName, getDepartmentSectionsForDate } from "@/lib/crew-utils";
 import {
   getDraggedOrder,
   setDraggedOrder,
@@ -74,6 +74,8 @@ export default function CrewBlockView({
     crews,
     appointments,
     timeOffRequests,
+    availabilityRules,
+    availabilityExceptions,
     updateAppointment,
   } = useData();
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
@@ -91,25 +93,18 @@ export default function CrewBlockView({
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const today = new Date();
 
-  // Crew groups (same logic as day/week view)
-  const activeCrews = crews.filter((c) => c.is_active);
-  const mainCrews = activeCrews.filter(
-    (c) => !crewHasType(c, "misc", "second", "management")
+  // Build date-aware department sections using role_assignment rules
+  const deptSections = useMemo(
+    () => getDepartmentSectionsForDate(crews, currentDate, availabilityRules, availabilityExceptions),
+    [crews, currentDate, availabilityRules, availabilityExceptions]
   );
-  const measureCrews = sortByFirstName(
-    mainCrews.filter((c) => crewHasType(c, "measure_tech"))
-  );
-  const installCrews = sortByFirstName(
-    mainCrews.filter((c) =>
-      crewHasType(c, "install_in_house", "install_sub")
-    )
-  );
-  const jipCrews = sortByFirstName(
-    mainCrews.filter((c) => crewHasType(c, "jip"))
-  );
-  const serviceCrews = sortByFirstName(
-    mainCrews.filter((c) => crewHasType(c, "svc"))
-  );
+
+  // Map department sections to block view section configs
+  const sectionForKey = (key: string) => deptSections.find((s) => s.key === key);
+  const measureCrews = sectionForKey("measure")?.crews || [];
+  const installCrews = sectionForKey("install")?.crews || [];
+  const jipCrews = sectionForKey("jip")?.crews || [];
+  const serviceCrews = sectionForKey("service")?.crews || [];
 
   // Time-off lookup per day
   const offByDay = useMemo(() => {

@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback } from "react";
 import { useData } from "./DataProvider";
 import { buildQueueItems } from "@/lib/queue-pipeline";
 import { openSalesforce } from "@/lib/salesforce";
-import { formatDateStr } from "@/lib/calendar-utils";
+import { formatDateStr, formatProductBreakdown } from "@/lib/calendar-utils";
 import ScheduleModal from "./ScheduleModal";
 import LinkModal from "./LinkModal";
 import MergeConfirmModal from "./MergeConfirmModal";
@@ -696,23 +696,20 @@ function QueueItemCard({
                 Order: {item.orderNumber}
               </span>
             )}
-            {item.productCount != null && item.productCount > 0 && (
-              <span className="text-[10px] text-muted bg-surface px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                <Package size={8} />
-                {item.productCount}
-                {(item.windows || item.patioDoors || item.doors) && (
-                  <span className="text-muted/60 ml-0.5">
-                    ({[
-                      item.windows ? `${item.windows}W` : null,
-                      item.patioDoors ? `${item.patioDoors}PD` : null,
-                      item.doors ? `${item.doors}D` : null,
-                    ]
-                      .filter(Boolean)
-                      .join("/")})
-                  </span>
-                )}
-              </span>
-            )}
+            {(() => {
+              const productLabel = formatProductBreakdown({
+                product_count: item.productCount,
+                windows: item.windows,
+                patio_doors: item.patioDoors,
+                doors: item.doors,
+              });
+              return productLabel ? (
+                <span className="text-[10px] text-muted bg-surface px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                  <Package size={8} />
+                  {productLabel}
+                </span>
+              ) : null;
+            })()}
             {item.hasAlerts && (
               <span className="text-[10px] bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded flex items-center gap-0.5" title={item.rforceOrder?.order_alerts || ""}>
                 <AlertOctagon size={8} />
