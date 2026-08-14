@@ -37,11 +37,11 @@ export default function DiscrepancyBadge({ differences, onClick }: Props) {
       }}
     >
       <div
-        className="bg-amber-500 text-white rounded-bl-md rounded-tr-lg px-1.5 py-0.5 text-[9px] font-semibold flex items-center gap-0.5 cursor-pointer hover:bg-amber-600 transition-colors"
+        className="bg-amber-500 text-white rounded-bl-md rounded-tr-lg px-1.5 py-0.5 text-[10px] font-bold flex items-center gap-0.5 cursor-pointer hover:bg-amber-600 transition-colors shadow-sm animate-pulse"
         title={lines.join("\n")}
       >
-        <AlertTriangle size={9} />
-        rF
+        <AlertTriangle size={10} />
+        rF ≠
       </div>
       {expanded && (
         <div className="absolute top-full right-0 mt-0.5 bg-amber-50 dark:bg-amber-950 border border-amber-300 dark:border-amber-700 rounded-md shadow-lg p-2 text-[10px] text-amber-900 dark:text-amber-100 whitespace-nowrap z-[5]">

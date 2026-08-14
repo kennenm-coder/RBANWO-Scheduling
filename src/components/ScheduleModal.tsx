@@ -20,10 +20,20 @@ import {
 import { buildSalesforceUrl } from "@/lib/salesforce";
 import { validateAppointment } from "@/lib/scheduling-rules";
 import { getEligibleCrews } from "@/lib/crew-utils";
+import {
+  getSchedulingMode,
+  isFixedBlock,
+  isTimed,
+  isFullDay,
+  getDefaultTimes,
+  resolveScheduleTimes,
+  SchedulingMode,
+} from "@/lib/scheduling-policy";
 import { fetchAccountSuggestions, AccountSuggestion, createAppointmentEvent } from "@/lib/store";
+import { executeScheduleMove } from "@/lib/schedule-command";
 import { useData } from "./DataProvider";
 import { useCurrentActor } from "./AuthProvider";
-import { X, AlertTriangle, AlertCircle, MapPin } from "lucide-react";
+import { X, AlertTriangle, AlertCircle, MapPin, ChevronDown, ChevronRight, Users } from "lucide-react";
 import { format } from "date-fns";
 
 interface Props {
@@ -33,6 +43,8 @@ interface Props {
   prefill?: RForceOrder;
   editingAppointment?: Appointment;
   rescheduleMode?: boolean;
+  initialStartTime?: string;
+  initialEndTime?: string;
   onClose: () => void;
 }
 
@@ -43,11 +55,14 @@ export default function ScheduleModal({
   prefill,
   editingAppointment,
   rescheduleMode,
+  initialStartTime,
+  initialEndTime,
   onClose,
 }: Props) {
   const {
     crews,
     appointments,
+    rforceOrders,
     timeOffRequests,
     createAppointment,
     updateAppointment,
@@ -118,9 +133,28 @@ export default function ScheduleModal({
   const [durationDays, setDurationDays] = useState(
     editingAppointment?.duration_days?.toString() || "1"
   );
-  const [notes, setNotes] = useState(
-    editingAppointment?.notes || ""
+  // Parse additional crew members from notes (stored as "[Resources: Name, Name]" prefix)
+  function parseAdditionalMembers(notesStr: string | null): { members: string; cleanNotes: string } {
+    if (!notesStr) return { members: "", cleanNotes: "" };
+    const match = notesStr.match(/^\[Resources: ([^\]]*)\]\s*/);
+    if (match) return { members: match[1], cleanNotes: notesStr.slice(match[0].length) };
+    return { members: "", cleanNotes: notesStr };
+  }
+  const parsed = parseAdditionalMembers(editingAppointment?.notes || "");
+  const [additionalMembers, setAdditionalMembers] = useState(parsed.members);
+  const [notes, setNotes] = useState(parsed.cleanNotes);
+  const [showResources, setShowResources] = useState(
+    !!(editingAppointment?.secondary_crew_id || editingAppointment?.tertiary_crew_id || parsed.members)
   );
+  // Explicit start/end for timed types (service, JIP, etc.)
+  const timedDefaults = getDefaultTimes(type);
+  const [startTime, setStartTime] = useState(
+    initialStartTime || editingAppointment?.start_time || timedDefaults.start
+  );
+  const [endTime, setEndTime] = useState(
+    initialEndTime || editingAppointment?.end_time || timedDefaults.end
+  );
+  const schedulingMode = getSchedulingMode(type);
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -203,59 +237,69 @@ export default function ScheduleModal({
     setSaving(true);
     setError("");
 
-    const { start, end } = timeBlockStartEnd(selectedBlock);
+    // Use scheduling policy to resolve times based on type
+    const resolved = resolveScheduleTimes(type, {
+      timeBlock: schedulingMode === "fixed_block" ? selectedBlock : null,
+      startTime: schedulingMode === "timed" ? startTime : null,
+      endTime: schedulingMode === "timed" ? endTime : null,
+    });
+    const start = resolved.start;
+    const end = resolved.end;
+    const resolvedBlock = resolved.timeBlock ?? selectedBlock;
+
     const salesforceUrl = workOrderNumber
       ? buildSalesforceUrl(workOrderNumber)
       : null;
 
+    // Merge additional crew members into notes
+    const membersPrefix = additionalMembers.trim() ? `[Resources: ${additionalMembers.trim()}] ` : "";
+    const combinedNotes = (membersPrefix + (notes || "")).trim() || null;
+
     try {
       if (editingAppointment) {
-        await updateAppointment(
-          editingAppointment.id,
-          editingAppointment.version,
+        const nonSchedulingUpdates: Partial<Appointment> = {
+          secondary_crew_id: secondaryCrewId || null,
+          tertiary_crew_id: tertiaryCrewId || null,
+          appointment_type: type,
+          customer_name: customerName,
+          address,
+          order_number: orderNumber || null,
+          work_order_number: workOrderNumber || null,
+          product_count: productCount ? parseInt(productCount) : null,
+          notes: combinedNotes,
+          salesforce_url: salesforceUrl,
+          ...(rescheduleMode ? { reschedule_reason: rescheduleReason.trim() } : {}),
+        };
+
+        // Scheduling and descriptive fields are committed in one optimistic
+        // update. This prevents a move from succeeding while the accompanying
+        // customer/resource edits fail (or vice versa).
+        const moveResult = await executeScheduleMove(
           {
-            crew_id: selectedCrewId,
-            secondary_crew_id: secondaryCrewId || null,
-            tertiary_crew_id: tertiaryCrewId || null,
-            appointment_type: type,
-            scheduled_date: selectedDate,
-            start_time: start,
-            end_time: end,
-            time_block: selectedBlock,
-            duration_days: parseInt(durationDays) || 1,
-            customer_name: customerName,
-            address,
-            order_number: orderNumber || null,
-            work_order_number: workOrderNumber || null,
-            product_count: productCount ? parseInt(productCount) : null,
-            notes: notes || null,
-            salesforce_url: salesforceUrl,
-            ...(rescheduleMode ? {
-              reschedule_reason: rescheduleReason.trim(),
-              status: "rescheduled" as const,
-            } : {}),
-          }
+            appointmentId: editingAppointment.id,
+            expectedVersion: editingAppointment.version,
+            crewId: selectedCrewId,
+            scheduledDate: selectedDate,
+            timeBlock: resolvedBlock,
+            startTime: start,
+            endTime: end,
+            durationDays: parseInt(durationDays) || 1,
+            additionalUpdates: nonSchedulingUpdates,
+            auditAction: rescheduleMode ? "rescheduled" : "updated",
+            reason: rescheduleMode ? rescheduleReason.trim() : null,
+          },
+          editingAppointment,
+          appointments,
+          crews,
+          rforceOrders,
+          updateAppointment,
+          { id: actorId, name: actorName }
         );
-        // Log audit event
-        createAppointmentEvent({
-          appointment_id: editingAppointment.id,
-          action: rescheduleMode ? "rescheduled" : "updated",
-          actor_id: actorId,
-          actor_name_snapshot: actorName,
-          before_state: {
-            crew_id: editingAppointment.crew_id,
-            scheduled_date: editingAppointment.scheduled_date,
-            time_block: editingAppointment.time_block,
-            customer_name: editingAppointment.customer_name,
-          },
-          after_state: {
-            crew_id: selectedCrewId,
-            scheduled_date: selectedDate,
-            time_block: selectedBlock,
-            customer_name: customerName,
-          },
-          reason: rescheduleMode ? rescheduleReason.trim() : null,
-        });
+        if (!moveResult.ok) {
+          setError(moveResult.error.message);
+          setSaving(false);
+          return;
+        }
       } else {
         const result = await createAppointment({
           crew_id: selectedCrewId,
@@ -265,14 +309,14 @@ export default function ScheduleModal({
           scheduled_date: selectedDate,
           start_time: start,
           end_time: end,
-          time_block: selectedBlock,
+          time_block: resolvedBlock,
           duration_days: parseInt(durationDays) || 1,
           customer_name: customerName,
           address,
           order_number: orderNumber || null,
           work_order_number: workOrderNumber || null,
           product_count: productCount ? parseInt(productCount) : null,
-          notes: notes || null,
+          notes: combinedNotes,
           salesforce_url: salesforceUrl,
           status: "scheduled",
           reschedule_reason: null,
@@ -284,7 +328,7 @@ export default function ScheduleModal({
             address,
             scheduled_date: selectedDate,
             crew_id: selectedCrewId,
-            time_block: selectedBlock,
+            time_block: resolvedBlock,
             start_time: start,
             notes: notes || null,
             appointment_type: type,
@@ -302,7 +346,7 @@ export default function ScheduleModal({
               customer_name: customerName,
               scheduled_date: selectedDate,
               crew_id: selectedCrewId,
-              time_block: selectedBlock,
+              time_block: resolvedBlock,
             },
             reason: null,
           });
@@ -317,8 +361,12 @@ export default function ScheduleModal({
         setError(
           "This appointment was modified by someone else. Please close and try again."
         );
+      } else if (msg.includes("SCHEDULING_CONFLICT")) {
+        setError(msg.replace("SCHEDULING_CONFLICT: ", ""));
+      } else if (msg.includes("DUPLICATE_WO")) {
+        setError("A work order with this number is already scheduled.");
       } else {
-        setError("Failed to save. Please try again.");
+        setError(msg || "Failed to save. Please try again.");
       }
     } finally {
       setSaving(false);
@@ -351,11 +399,14 @@ export default function ScheduleModal({
               <select
                 value={type}
                 onChange={(e) => {
-                  setType(e.target.value as AppointmentType);
-                  const blocks = getTimeBlocksForType(
-                    e.target.value as AppointmentType
-                  );
+                  const newType = e.target.value as AppointmentType;
+                  setType(newType);
+                  const blocks = getTimeBlocksForType(newType);
                   setSelectedBlock(blocks[0]);
+                  // Reset times to defaults for the new type
+                  const defaults = getDefaultTimes(newType);
+                  setStartTime(defaults.start);
+                  setEndTime(defaults.end);
                 }}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
               >
@@ -407,27 +458,76 @@ export default function ScheduleModal({
                 )}
               </select>
             </div>
-            <div>
-              <label className="block text-xs text-muted mb-1">
-                Time Block
-              </label>
-              <select
-                value={selectedBlock}
-                onChange={(e) =>
-                  setSelectedBlock(e.target.value as TimeBlock)
-                }
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
-              >
-                {timeBlocks.map((b) => (
-                  <option key={b} value={b}>
-                    {timeBlockLabel(b)}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* Mode-aware time selection */}
+            {schedulingMode === "fixed_block" && (
+              <div>
+                <label className="block text-xs text-muted mb-1">
+                  Time Block
+                </label>
+                <select
+                  value={selectedBlock}
+                  onChange={(e) =>
+                    setSelectedBlock(e.target.value as TimeBlock)
+                  }
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+                >
+                  {timeBlocks.map((b) => (
+                    <option key={b} value={b}>
+                      {timeBlockLabel(b)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {schedulingMode === "full_day" && (
+              <div>
+                <label className="block text-xs text-muted mb-1">
+                  Duration (days)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={durationDays}
+                  onChange={(e) => setDurationDays(e.target.value)}
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+                />
+              </div>
+            )}
           </div>
 
-          {type !== "tech_measure" && (
+          {/* Timed types get explicit start/end pickers */}
+          {schedulingMode === "timed" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-muted mb-1">
+                  Start Time
+                </label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  step="1800"
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-muted mb-1">
+                  End Time
+                </label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  step="1800"
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Duration for timed types too (multi-day service jobs) */}
+          {schedulingMode === "timed" && (
             <div>
               <label className="block text-xs text-muted mb-1">
                 Duration (days)
@@ -443,45 +543,79 @@ export default function ScheduleModal({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-muted mb-1">
-                Second
-              </label>
-              <select
-                value={secondaryCrewId}
-                onChange={(e) => setSecondaryCrewId(e.target.value)}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
-              >
-                <option value="">None</option>
-                {crews
-                  .filter((c) => c.is_active && c.id !== selectedCrewId && c.id !== tertiaryCrewId)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-muted mb-1">
-                Third / Helper
-              </label>
-              <select
-                value={tertiaryCrewId}
-                onChange={(e) => setTertiaryCrewId(e.target.value)}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
-              >
-                <option value="">None</option>
-                {crews
-                  .filter((c) => c.is_active && c.id !== selectedCrewId && c.id !== secondaryCrewId)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
+          {/* ── Additional Resources ── */}
+          <div className="border border-border rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowResources(!showResources)}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium text-foreground hover:bg-surface transition-colors"
+            >
+              <Users size={14} className="text-muted" />
+              Additional Resources
+              {(secondaryCrewId || tertiaryCrewId || additionalMembers) && (
+                <span className="ml-auto text-[10px] bg-primary/10 text-primary rounded-full px-1.5 py-0.5">
+                  {[secondaryCrewId, tertiaryCrewId].filter(Boolean).length + (additionalMembers ? 1 : 0)}
+                </span>
+              )}
+              {showResources ? <ChevronDown size={14} className="ml-auto text-muted" /> : <ChevronRight size={14} className="ml-auto text-muted" />}
+            </button>
+            {showResources && (
+              <div className="border-t border-border px-3 py-3 space-y-3 bg-surface/30">
+                <div>
+                  <label className="block text-xs text-muted mb-1">
+                    Lead Installer #2
+                  </label>
+                  <select
+                    value={secondaryCrewId}
+                    onChange={(e) => setSecondaryCrewId(e.target.value)}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+                  >
+                    <option value="">— None —</option>
+                    {crews
+                      .filter((c) => c.is_active && c.id !== selectedCrewId && c.id !== tertiaryCrewId)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted mb-1">
+                    Lead Installer #3
+                  </label>
+                  <select
+                    value={tertiaryCrewId}
+                    onChange={(e) => setTertiaryCrewId(e.target.value)}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+                  >
+                    <option value="">— None —</option>
+                    {crews
+                      .filter((c) => c.is_active && c.id !== selectedCrewId && c.id !== secondaryCrewId)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-muted mb-1">
+                    Additional Crew Members
+                  </label>
+                  <input
+                    type="text"
+                    value={additionalMembers}
+                    onChange={(e) => setAdditionalMembers(e.target.value)}
+                    placeholder="e.g. John Smith, Mike Jones"
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+                  />
+                  <p className="text-[10px] text-muted mt-1">
+                    Names of helpers or secondary crew members not listed as lead installers
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div>

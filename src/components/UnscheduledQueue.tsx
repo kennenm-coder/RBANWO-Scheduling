@@ -53,7 +53,7 @@ import {
   AlertOctagon,
   Info,
 } from "lucide-react";
-import { setDraggedOrder } from "@/lib/drag-context";
+import { useSchedulerDrag } from "@/lib/drag-context";
 
 // ── Category config (queue-status colors, separate from WO-type colors) ──
 
@@ -573,6 +573,7 @@ function QueueItemCard({
   onMerge: () => void;
   onRejectMatch?: () => void;
 }) {
+  const { setDraggedOrder } = useSchedulerDrag();
   const cfg = CATEGORY_CONFIG[item.category];
   const Icon = cfg.icon;
   const woColor = getWoTypeColor(item.normalizedWoType);

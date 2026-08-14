@@ -19,12 +19,7 @@ import {
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { crewHasType, sortByFirstName, getDepartmentSectionsForDate } from "@/lib/crew-utils";
-import {
-  getDraggedOrder,
-  setDraggedOrder,
-  getDraggedAppointment,
-  setDraggedAppointment,
-} from "@/lib/drag-context";
+import { useSchedulerDrag } from "@/lib/drag-context";
 import { Palmtree } from "lucide-react";
 import {
   format,
@@ -32,6 +27,9 @@ import {
   addDays,
   isSameDay,
 } from "date-fns";
+import { useCurrentActor } from "./AuthProvider";
+import { useToast } from "./Toast";
+import { addMinutesToTime, getNextAvailableStart, getSchedulingMode, timeDurationMinutes } from "@/lib/scheduling-policy";
 
 // Measure tech block labels (2-hour blocks)
 const MEASURE_BLOCK_LABELS: Record<string, string> = {
@@ -73,11 +71,14 @@ export default function CrewBlockView({
   const {
     crews,
     appointments,
+    rforceOrders,
     timeOffRequests,
     availabilityRules,
     availabilityExceptions,
     updateAppointment,
   } = useData();
+  useCurrentActor(); // keep hook call order stable
+  useToast(); // keep hook call order stable
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
@@ -86,6 +87,14 @@ export default function CrewBlockView({
     crewId: string;
     timeBlock?: TimeBlock;
     prefill?: RForceOrder;
+  } | null>(null);
+  // When dragging an existing appointment to a new crew/date, open modal for confirmation
+  const [moveConfirmAppt, setMoveConfirmAppt] = useState<Appointment | null>(null);
+  const [moveConfirmTarget, setMoveConfirmTarget] = useState<{
+    date: Date;
+    crewId: string;
+    startTime?: string;
+    endTime?: string;
   } | null>(null);
 
   // Sun–Sat week
@@ -234,9 +243,33 @@ export default function CrewBlockView({
                 setScheduleTarget({ date: day, crewId, timeBlock: block, prefill: order })
               }
               onAppointmentDrop={(appt, targetCrewId, targetDay) => {
-                // For block view, dropping an appointment opens it in edit/reschedule mode
-                // positioned at the target crew and day
-                setSelectedAppt(appt);
+                const dateStr = format(targetDay, "yyyy-MM-dd");
+                const existingEndTimes = appointments
+                  .filter((candidate) =>
+                    candidate.id !== appt.id &&
+                    candidate.crew_id === targetCrewId &&
+                    candidate.scheduled_date === dateStr &&
+                    candidate.status !== "cancelled" &&
+                    candidate.status !== "unscheduled" &&
+                    !!candidate.end_time
+                  )
+                  .map((candidate) => candidate.end_time!);
+                const nextStart = getSchedulingMode(appt.appointment_type) === "timed"
+                  ? getNextAvailableStart(existingEndTimes, appt.appointment_type)
+                  : undefined;
+                const duration = timeDurationMinutes(
+                  appt.start_time || "08:00",
+                  appt.end_time || "09:00"
+                );
+                setMoveConfirmAppt(appt);
+                setMoveConfirmTarget({
+                  date: targetDay,
+                  crewId: targetCrewId,
+                  startTime: nextStart,
+                  endTime: nextStart
+                    ? addMinutesToTime(nextStart, Math.max(duration, 30))
+                    : undefined,
+                });
               }}
               today={today}
             />
@@ -287,6 +320,22 @@ export default function CrewBlockView({
           timeBlock={scheduleTarget.timeBlock}
           prefill={scheduleTarget.prefill}
           onClose={() => setScheduleTarget(null)}
+        />
+      )}
+
+      {/* Confirmation modal for appointment drops — lets scheduler review/change the calculated time */}
+      {moveConfirmAppt && moveConfirmTarget && (
+        <ScheduleModal
+          date={moveConfirmTarget.date}
+          crewId={moveConfirmTarget.crewId}
+          editingAppointment={moveConfirmAppt}
+          rescheduleMode
+          initialStartTime={moveConfirmTarget.startTime}
+          initialEndTime={moveConfirmTarget.endTime}
+          onClose={() => {
+            setMoveConfirmAppt(null);
+            setMoveConfirmTarget(null);
+          }}
         />
       )}
     </div>
@@ -416,6 +465,7 @@ function CrewRow({
   onAppointmentDrop,
   today,
 }: CrewRowProps) {
+  const { draggedOrder, draggedAppointment, setDraggedOrder, setDraggedAppointment } = useSchedulerDrag();
   const crewColor = crew.color || "#1a73e8";
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
 
@@ -451,8 +501,8 @@ function CrewRow({
               isToday ? "bg-primary/5" : ""
             } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
             onDragOver={(e) => {
-              const order = getDraggedOrder();
-              const dragged = getDraggedAppointment();
+              const order = draggedOrder;
+              const dragged = draggedAppointment;
               if (!order && !dragged) return;
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
@@ -464,13 +514,13 @@ function CrewRow({
             onDrop={(e) => {
               e.preventDefault();
               setDragOverDay(null);
-              const order = getDraggedOrder();
+              const order = draggedOrder;
               if (order) {
                 onQueueDrop?.(order, crew.id, day, "full_day");
                 setDraggedOrder(null);
                 return;
               }
-              const dragged = getDraggedAppointment();
+              const dragged = draggedAppointment;
               if (dragged) {
                 onAppointmentDrop?.(dragged.appointment, crew.id, day);
                 setDraggedAppointment(null);
@@ -491,6 +541,9 @@ function CrewRow({
                     label={multiDayLabel(appt, day)}
                     crewColor={crewColor}
                     onClick={() => onAppointmentClick(appt)}
+                    sourceCrewId={crew.id}
+                    sourceDate={format(day, "yyyy-MM-dd")}
+                    sourceTimeBlock={appt.time_block || null}
                   />
                 ))}
               </div>
@@ -529,6 +582,7 @@ function MeasureCrewRows({
   onAppointmentDrop,
   today,
 }: MeasureCrewRowsProps) {
+  const { draggedOrder, draggedAppointment, setDraggedOrder, setDraggedAppointment } = useSchedulerDrag();
   const crewColor = crew.color || "#1a73e8";
   const blocks = MEASURE_TIME_BLOCKS; // "9-10", "10-12", "12-2", "2-4", "4-6"
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
@@ -616,8 +670,8 @@ function MeasureCrewRows({
                   isToday ? "bg-primary/5" : ""
                 } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
                 onDragOver={(e) => {
-                  const order = getDraggedOrder();
-                  const dragged = getDraggedAppointment();
+                  const order = draggedOrder;
+                  const dragged = draggedAppointment;
                   if (!order && !dragged) return;
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
@@ -629,13 +683,13 @@ function MeasureCrewRows({
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragOverCell(null);
-                  const order = getDraggedOrder();
+                  const order = draggedOrder;
                   if (order) {
                     onQueueDrop?.(order, crew.id, day, block as TimeBlock);
                     setDraggedOrder(null);
                     return;
                   }
-                  const dragged = getDraggedAppointment();
+                  const dragged = draggedAppointment;
                   if (dragged) {
                     onAppointmentDrop?.(dragged.appointment, crew.id, day);
                     setDraggedAppointment(null);
@@ -650,6 +704,9 @@ function MeasureCrewRows({
                     crewColor={crewColor}
                     onClick={() => onAppointmentClick(appt)}
                     small
+                    sourceCrewId={crew.id}
+                    sourceDate={dateStr}
+                    sourceTimeBlock={appt.time_block || null}
                   />
                 ))}
                 {blockAppts.map((appt) => (
@@ -660,6 +717,9 @@ function MeasureCrewRows({
                     crewColor={crewColor}
                     onClick={() => onAppointmentClick(appt)}
                     small
+                    sourceCrewId={crew.id}
+                    sourceDate={dateStr}
+                    sourceTimeBlock={appt.time_block || null}
                   />
                 ))}
               </td>
@@ -713,6 +773,7 @@ function HourlyCrewRows({
   onAppointmentDrop,
   today,
 }: HourlyCrewRowsProps) {
+  const { draggedOrder, draggedAppointment, setDraggedOrder, setDraggedAppointment } = useSchedulerDrag();
   const crewColor = crew.color || "#1a73e8";
   const hours = SERVICE_HOURS;
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
@@ -793,8 +854,8 @@ function HourlyCrewRows({
                   isToday ? "bg-primary/5" : ""
                 } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
                 onDragOver={(e) => {
-                  const order = getDraggedOrder();
-                  const dragged = getDraggedAppointment();
+                  const order = draggedOrder;
+                  const dragged = draggedAppointment;
                   if (!order && !dragged) return;
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
@@ -806,13 +867,13 @@ function HourlyCrewRows({
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragOverCell(null);
-                  const order = getDraggedOrder();
+                  const order = draggedOrder;
                   if (order) {
                     onQueueDrop?.(order, crew.id, day, hourBlock);
                     setDraggedOrder(null);
                     return;
                   }
-                  const dragged = getDraggedAppointment();
+                  const dragged = draggedAppointment;
                   if (dragged) {
                     onAppointmentDrop?.(dragged.appointment, crew.id, day);
                     setDraggedAppointment(null);
@@ -827,6 +888,9 @@ function HourlyCrewRows({
                     crewColor={crewColor}
                     onClick={() => onAppointmentClick(appt)}
                     small
+                    sourceCrewId={crew.id}
+                    sourceDate={dateStr}
+                    sourceTimeBlock={appt.time_block || null}
                   />
                 ))}
               </td>
@@ -846,6 +910,9 @@ interface BlockCellProps {
   crewColor: string;
   onClick: () => void;
   small?: boolean;
+  sourceCrewId?: string;
+  sourceDate?: string;
+  sourceTimeBlock?: TimeBlock | null;
 }
 
 function BlockCell({
@@ -854,7 +921,11 @@ function BlockCell({
   crewColor,
   onClick,
   small,
+  sourceCrewId,
+  sourceDate,
+  sourceTimeBlock,
 }: BlockCellProps) {
+  const { setDraggedAppointment } = useSchedulerDrag();
   const { unscheduleAppointment } = useData();
   const [unscheduling, setUnscheduling] = useState(false);
 
@@ -883,8 +954,31 @@ function BlockCell({
 
   return (
     <div
+      draggable
       onClick={onClick}
-      className={`group/block relative rounded px-1.5 cursor-pointer hover:shadow-sm transition-shadow text-white truncate ${
+      tabIndex={0}
+      aria-label={`Open ${appointment.customer_name} appointment`}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      onDragStart={(e) => {
+        setDraggedAppointment({
+          appointment,
+          sourceCrewId: sourceCrewId || "",
+          sourceDate: sourceDate || "",
+          sourceTimeBlock: sourceTimeBlock ?? null,
+        });
+        e.dataTransfer.effectAllowed = "move";
+        (e.currentTarget as HTMLElement).style.opacity = "0.4";
+      }}
+      onDragEnd={(e) => {
+        (e.currentTarget as HTMLElement).style.opacity = "1";
+        setDraggedAppointment(null);
+      }}
+      className={`group/block relative rounded px-1.5 cursor-grab active:cursor-grabbing hover:shadow-sm transition-shadow text-white truncate ${
         small ? "py-0 text-[10px] leading-snug" : "py-0.5 text-[11px] leading-tight"
       }`}
       style={{ backgroundColor: crewColor }}

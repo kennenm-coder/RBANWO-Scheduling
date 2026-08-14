@@ -3,39 +3,25 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
-import { CalendarDays, ListTodo, Users, Settings, AlertTriangle } from "lucide-react";
+import { CalendarDays, ListTodo, Users, Settings } from "lucide-react";
 import { useData } from "./DataProvider";
 import { findUnmatchedNames } from "@/lib/unmatched-resources";
-import { detectFlags } from "@/lib/flags";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: CalendarDays },
   { href: "/queue", label: "Queue", icon: ListTodo },
-  { href: "/issues", label: "Issues", icon: AlertTriangle },
   { href: "/resources", label: "Resources", icon: Users },
   { href: "/admin", label: "Admin", icon: Settings },
 ];
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { crews, appointments, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions } = useData();
+  const { crews, rforceOrders, timeOffRequests } = useData();
 
   const unmatchedCount = useMemo(
     () => findUnmatchedNames(crews, rforceOrders, timeOffRequests).length,
     [crews, rforceOrders, timeOffRequests]
   );
-
-  const flagCount = useMemo(() => {
-    const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions);
-    const resolvedKeys = new Set(flagResolutions.map((r) => r.flag_key));
-    // Count only actionable flags (open state, not info severity)
-    const withState = allFlags.map((f) => {
-      if (f.autoClears) return f;
-      if (resolvedKeys.has(f.id)) return { ...f, state: "waiting_for_import" as const };
-      return f;
-    });
-    return withState.filter((f) => f.state === "open" && f.severity !== "info").length;
-  }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions]);
 
   return (
     <nav className="sticky bottom-0 z-40 bg-background border-t border-border safe-area-bottom">
@@ -45,9 +31,7 @@ export default function BottomNav() {
           const badge =
             href === "/resources" && unmatchedCount > 0
               ? unmatchedCount
-              : href === "/issues" && flagCount > 0
-                ? flagCount
-                : 0;
+              : 0;
           return (
             <Link
               key={href}

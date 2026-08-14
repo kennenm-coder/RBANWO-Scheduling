@@ -21,18 +21,18 @@ import {
 import {
   getAppointmentsForCrewAndDay,
   getRForceDisplayItems,
-  checkDiscrepancy,
   timeBlockStartEnd,
 } from "@/lib/calendar-utils";
-import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
-import { onSchedulerEditedLinkedAppointment } from "@/lib/sync-transitions";
+import { deriveRForceCalendarStatus } from "@/lib/rforce-calendar-status";
+import { getTimeOffForDate } from "@/lib/store";
 import { useCurrentActor } from "./AuthProvider";
 import { crewHasType, sortByFirstName, getEligibleCrews, getDepartmentSectionsForDate } from "@/lib/crew-utils";
+import { executeScheduleMove } from "@/lib/schedule-command";
 import RForceDetailSheet from "./RForceDetailSheet";
 import { Palmtree, MapPinned, Ban } from "lucide-react";
 import { format } from "date-fns";
 import { getCrewAvailability } from "@/lib/availability";
-import { getDraggedAppointment, setDraggedAppointment, getDraggedOrder, setDraggedOrder } from "@/lib/drag-context";
+import { useSchedulerDrag } from "@/lib/drag-context";
 import { useToast } from "./Toast";
 import dynamic from "next/dynamic";
 
@@ -86,6 +86,23 @@ export default function CrewLaneDayView({
     [rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings]
   );
 
+  // New rForce adapter — derives mismatch status for linked appointments
+  const rforceStatusByWO = useMemo(() => {
+    const items = deriveRForceCalendarStatus(rforceOrders, appointments, activeLinks, crews, resourceMappings);
+    const map = new Map<string, boolean>();
+    for (const item of items) {
+      if (item.status === "mismatch") {
+        map.set(item.rforceOrder.work_order_number.trim().toLowerCase(), true);
+      }
+    }
+    return map;
+  }, [rforceOrders, appointments, activeLinks, crews, resourceMappings]);
+
+  function hasMismatch(appt: Appointment): boolean {
+    if (!appt.work_order_number) return false;
+    return rforceStatusByWO.get(appt.work_order_number.trim().toLowerCase()) === true;
+  }
+
   function nameMatchesTimeOff(name: string): boolean {
     const lower = name.toLowerCase();
     if (offNames.has(lower)) return true;
@@ -121,75 +138,33 @@ export default function CrewLaneDayView({
     const appt = appointments.find((a) => a.id === appointmentId);
     if (!appt) return;
 
-    const crewChanged = appt.crew_id !== targetCrewId;
-    const timeChanged = startTime && (startTime !== appt.start_time || endTime !== appt.end_time);
-    if (!crewChanged && !timeChanged) return;
+    const result = await executeScheduleMove(
+      {
+        appointmentId: appt.id,
+        expectedVersion: appt.version,
+        crewId: targetCrewId,
+        scheduledDate: dateStr,
+        startTime: startTime || null,
+        endTime: endTime || null,
+        timeBlock: appt.time_block,
+      },
+      appt,
+      appointments,
+      crews,
+      rforceOrders,
+      updateAppointment,
+      { id: actorId, name: actorName }
+    );
 
-    const targetCrew = crews.find((c) => c.id === targetCrewId);
-    if (!targetCrew) return;
-
-    const eligible = getEligibleCrews(crews, appt.appointment_type);
-    if (!eligible.find((c) => c.id === targetCrewId)) {
-      showToast(`${targetCrew.name} cannot handle ${appt.appointment_type.replace(/_/g, " ")} appointments`, "error");
-      return;
-    }
-
-    let manualOverride = appt.manual_override;
-    let overrideSource = appt.override_source;
-
-    if (appt.work_order_number) {
-      const rf = rforceOrders.find((r) => r.work_order_number === appt.work_order_number);
-      if (rf && rf.scheduled_start) {
-        const rfDate = rf.scheduled_start.slice(0, 10);
-        const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
-        if ((crewChanged && rfResource && targetCrew.name.toLowerCase() !== rfResource.toLowerCase()) || timeChanged) {
-          manualOverride = true;
-          overrideSource = {
-            crew_name: rfResource || undefined,
-            scheduled_date: rfDate,
-            time_block: appt.time_block || undefined,
-          };
-        } else if (!crewChanged || (rfResource && targetCrew.name.toLowerCase() === rfResource.toLowerCase())) {
-          manualOverride = false;
-          overrideSource = null;
-        }
-      }
-    }
-
-    const updates: Partial<Appointment> = {};
-    if (crewChanged) updates.crew_id = targetCrewId;
-    if (startTime) updates.start_time = startTime;
-    if (endTime) updates.end_time = endTime;
-    if (manualOverride !== undefined) updates.manual_override = manualOverride;
-    if (overrideSource !== undefined) updates.override_source = overrideSource;
-
-    try {
-      await updateAppointment(appt.id, appt.version, updates);
-
-      createAppointmentEvent({
-        appointment_id: appt.id,
-        action: "drag_moved",
-        actor_id: actorId,
-        actor_name_snapshot: actorName,
-        before_state: { crew_id: appt.crew_id, start_time: appt.start_time, end_time: appt.end_time },
-        after_state: { crew_id: targetCrewId, start_time: startTime || appt.start_time, end_time: endTime || appt.end_time },
-        reason: null,
-      });
-
-      // If linked and in_sync, transition to waiting_for_import
-      onSchedulerEditedLinkedAppointment(appt);
-
+    if (result.ok) {
+      const targetCrew = crews.find((c) => c.id === targetCrewId);
       const parts: string[] = [];
-      if (crewChanged) parts.push(targetCrew.name);
-      if (timeChanged) parts.push(`${startTime}–${endTime}`);
-      showToast(`Moved to ${parts.join(", ")}`, "success");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      if (msg === "VERSION_CONFLICT") {
-        showToast("Someone else just updated this appointment — please try again", "warning");
-      } else {
-        showToast(`Failed to move: ${msg}`, "error");
-      }
+      if (appt.crew_id !== targetCrewId && targetCrew) parts.push(targetCrew.name);
+      if (startTime && startTime !== appt.start_time) parts.push(`${startTime}–${endTime}`);
+      showToast(`Moved to ${parts.join(", ") || "new position"}`, "success");
+    } else {
+      const severity = result.error.code === "VERSION_CONFLICT" ? "warning" : "error";
+      showToast(result.error.message, severity);
     }
   }
 
@@ -219,6 +194,7 @@ export default function CrewLaneDayView({
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
             onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
+            hasMismatch={hasMismatch}
           />
         ))}
 
@@ -341,6 +317,7 @@ function CrewSection({
   onDismissRForce,
   onAppointmentDrop,
   onQueueDrop,
+  hasMismatch,
 }: {
   title: string;
   crews: Crew[];
@@ -359,7 +336,9 @@ function CrewSection({
   onDismissRForce: (workOrderNumber: string, rforceDate: string, rforceStartTime?: string) => Promise<void>;
   onAppointmentDrop?: (appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string) => void;
+  hasMismatch: (appt: Appointment) => boolean;
 }) {
+  const { draggedAppointment, draggedOrder, setDraggedAppointment, setDraggedOrder } = useSchedulerDrag();
   const [showMap, setShowMap] = useState(false);
   const [dragOverCrewId, setDragOverCrewId] = useState<string | null>(null);
 
@@ -438,8 +417,8 @@ function CrewSection({
               const twoLayer = hasRForceContent;
 
               function handleRowDragOver(e: React.DragEvent) {
-                const dragged = getDraggedAppointment();
-                const order = getDraggedOrder();
+                const dragged = draggedAppointment;
+                const order = draggedOrder;
                 if (!dragged && !order) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
@@ -451,7 +430,7 @@ function CrewSection({
               function handleRowDrop(e: React.DragEvent) {
                 e.preventDefault();
                 setDragOverCrewId(null);
-                const dragged = getDraggedAppointment();
+                const dragged = draggedAppointment;
                 if (dragged) {
                   // Calculate drop time from mouse X position on the timeline
                   const rect = e.currentTarget.getBoundingClientRect();
@@ -480,7 +459,7 @@ function CrewSection({
                 }
 
                 // Queue item drop — open ScheduleModal prefilled with rForce order
-                const order = getDraggedOrder();
+                const order = draggedOrder;
                 if (order) {
                   onQueueDrop?.(order, crew.id);
                   setDraggedOrder(null);
@@ -641,7 +620,7 @@ function CrewSection({
                                   appointment={a}
                                   crew={crew}
                                   compact={false}
-                                  hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
+                                  hasDiscrepancy={!!discItem || hasMismatch(a)}
                                   orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                                   accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
                                   isLinked={!!a.work_order_number}
@@ -734,7 +713,7 @@ function CrewSection({
                                 appointment={a}
                                 crew={crew}
                                 compact={false}
-                                hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
+                                hasDiscrepancy={!!discItem || hasMismatch(a)}
                                 orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                                 accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
                                 isLinked={!!a.work_order_number}

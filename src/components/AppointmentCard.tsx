@@ -5,7 +5,7 @@ import { Appointment, Crew } from "@/lib/types";
 import { typeLabel, formatProductBreakdown } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { useData } from "./DataProvider";
-import { MapPin, Unlink, AlertTriangle, CheckCircle, Undo2 } from "lucide-react";
+import { MapPin, Unlink, AlertTriangle, CheckCircle, Undo2, Users } from "lucide-react";
 
 interface Props {
   appointment: Appointment;
@@ -60,11 +60,21 @@ export default function AppointmentCard({
     const ter = allCrews.find((c) => c.id === appointment.tertiary_crew_id);
     if (ter) helpers.push(ter.name.split(" ")[0]);
   }
+  // Parse additional crew members from notes "[Resources: Name, Name]"
+  const additionalMembers = appointment.notes?.match(/^\[Resources: ([^\]]*)\]/)?.[1] || "";
 
   return (
     <div
       onClick={onClick}
-      className="group/card relative rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-white text-xs leading-tight overflow-hidden"
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `Open ${appointment.customer_name} appointment` : undefined}
+      onKeyDown={(event) => {
+        if (onClick && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      className={`group/card relative rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-white text-xs leading-tight overflow-hidden ${hasDiscrepancy ? "border-l-4 border-amber-400" : ""}`}
       style={{ backgroundColor: bgColor }}
     >
       {/* Unschedule button — visible on hover */}
@@ -77,6 +87,12 @@ export default function AppointmentCard({
       >
         <Undo2 size={12} className={unscheduling ? "animate-spin" : ""} />
       </button>
+      {hasDiscrepancy && (
+        <div className="flex items-start gap-1 bg-amber-400/30 text-amber-100 rounded px-1.5 py-0.5 mb-1 text-[10px] leading-snug font-semibold">
+          <AlertTriangle size={10} className="shrink-0 mt-0.5" />
+          <span>rForce mismatch — data changed since scheduling</span>
+        </div>
+      )}
       {orderAlerts && (
         <div className="flex items-start gap-1 bg-yellow-400/30 text-yellow-100 rounded px-1.5 py-0.5 mb-1 text-[10px] leading-snug">
           <AlertTriangle size={10} className="shrink-0 mt-0.5" />
@@ -85,9 +101,6 @@ export default function AppointmentCard({
       )}
       <div className="font-semibold truncate flex items-center gap-1 pr-5">
         {appointment.customer_name}
-        {hasDiscrepancy && (
-          <AlertTriangle size={10} className="shrink-0 text-yellow-200" />
-        )}
         {!appointment.work_order_number && (
           <Unlink size={10} className="shrink-0 opacity-70" />
         )}
@@ -101,7 +114,9 @@ export default function AppointmentCard({
       {compact ? (
         <div className="truncate opacity-85 mt-0.5">
           {city}
-          {helpers.length > 0 && <span className="opacity-70"> +{helpers.join(",")}</span>}
+          {(helpers.length > 0 || additionalMembers) && (
+            <span className="opacity-70"> +{[...helpers, ...(additionalMembers ? [additionalMembers] : [])].join(", ")}</span>
+          )}
         </div>
       ) : (
         <>
@@ -119,8 +134,15 @@ export default function AppointmentCard({
               </span>
             )}
           </div>
-          {helpers.length > 0 && (
-            <div className="mt-0.5 opacity-80">+{helpers.join(", ")}</div>
+          {(helpers.length > 0 || additionalMembers) && (
+            <div className="mt-0.5 flex items-center gap-1 opacity-85 text-[10px]">
+              <Users size={9} className="shrink-0" />
+              <span className="truncate">
+                {helpers.length > 0 && `+${helpers.join(", ")}`}
+                {helpers.length > 0 && additionalMembers && " · "}
+                {additionalMembers}
+              </span>
+            </div>
           )}
           {appointment.duration_days > 1 && (
             <div className="mt-0.5 opacity-80">
