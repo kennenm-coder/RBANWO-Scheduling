@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
-import { CalendarDays, ListTodo, Users, Settings } from "lucide-react";
+import { CalendarDays, ListTodo, Users, Settings, AlertTriangle } from "lucide-react";
 import { useData } from "./DataProvider";
 import { findUnmatchedNames } from "@/lib/unmatched-resources";
+import { deriveIssues } from "@/lib/issues";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: CalendarDays },
+  { href: "/issues", label: "Issues", icon: AlertTriangle },
   { href: "/queue", label: "Queue", icon: ListTodo },
   { href: "/resources", label: "Resources", icon: Users },
   { href: "/admin", label: "Admin", icon: Settings },
@@ -16,11 +18,16 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { crews, rforceOrders, timeOffRequests } = useData();
+  const { crews, rforceOrders, appointments, activeLinks, resourceMappings, timeOffRequests } = useData();
 
   const unmatchedCount = useMemo(
     () => findUnmatchedNames(crews, rforceOrders, timeOffRequests).length,
     [crews, rforceOrders, timeOffRequests]
+  );
+
+  const issueCount = useMemo(
+    () => deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings).length,
+    [rforceOrders, appointments, activeLinks, crews, resourceMappings]
   );
 
   return (
@@ -31,7 +38,9 @@ export default function BottomNav() {
           const badge =
             href === "/resources" && unmatchedCount > 0
               ? unmatchedCount
-              : 0;
+              : href === "/issues" && issueCount > 0
+                ? issueCount
+                : 0;
           return (
             <Link
               key={href}
