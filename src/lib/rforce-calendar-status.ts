@@ -112,8 +112,9 @@ function detectMismatch(
     }
   }
 
-  // Time mismatch
-  if (rf.scheduled_start && appt.start_time) {
+  // Time mismatch — skip for full_day appointments since they use default
+  // 08:00–16:00 and don't track specific rForce times
+  if (rf.scheduled_start && appt.start_time && appt.time_block !== "full_day") {
     const rfTime = rf.scheduled_start.slice(11, 16);
     if (rfTime && appt.start_time && rfTime !== appt.start_time) {
       details.time = { app: appt.start_time, rforce: rfTime };
