@@ -24,6 +24,7 @@ export default function ApprovalCard({
   onClick,
 }: Props) {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const borderColor = crew?.color || "#888";
   const city = parseCity(rforceOrder.address || "");
 
@@ -32,6 +33,13 @@ export default function ApprovalCard({
     setLoading(true);
     try {
       await onApprove();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("DUPLICATE_WO")) {
+        setError("Already exists");
+      } else {
+        setError(msg.slice(0, 60));
+      }
     } finally {
       setLoading(false);
     }
@@ -42,6 +50,9 @@ export default function ApprovalCard({
     setLoading(true);
     try {
       await onDismiss();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg.slice(0, 60));
     } finally {
       setLoading(false);
     }
@@ -65,6 +76,9 @@ export default function ApprovalCard({
         </div>
         {city && (
           <div className="truncate opacity-70 text-foreground/70 text-[10px]">{city}</div>
+        )}
+        {error && (
+          <div className="text-[8px] text-red-500 truncate mt-0.5">{error}</div>
         )}
         <div className="flex gap-1 mt-1">
           <button
@@ -120,6 +134,9 @@ export default function ApprovalCard({
           </span>
         )}
       </div>
+      {error && (
+        <div className="text-[9px] text-red-500 mt-1">{error}</div>
+      )}
       <div className="flex gap-2 mt-2">
         <button
           onClick={handleApprove}
