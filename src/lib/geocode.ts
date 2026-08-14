@@ -82,9 +82,77 @@ const STATE_BOUNDS: Record<string, { latMin: number; latMax: number; lngMin: num
   KY: { latMin: 36.5, latMax: 39.2, lngMin: -89.6, lngMax: -81.9 },
 };
 
+/** Map full state names → 2-letter codes so "Ohio 43604" works the same as "OH 43604" */
+const STATE_NAME_TO_ABBR: Record<string, string> = {
+  ohio: "OH",
+  michigan: "MI",
+  indiana: "IN",
+  pennsylvania: "PA",
+  "west virginia": "WV",
+  kentucky: "KY",
+  illinois: "IL",
+  "new york": "NY",
+  virginia: "VA",
+  tennessee: "TN",
+  wisconsin: "WI",
+  minnesota: "MN",
+};
+
 function extractState(address: string): string | null {
-  const match = address.match(/,\s*(\w{2})\s+\d{5}/);
-  return match ? match[1].toUpperCase() : null;
+  // Try 2-letter abbreviation first: ", OH 43604"
+  const abbrMatch = address.match(/,\s*(\w{2})\s+\d{5}/);
+  if (abbrMatch) return abbrMatch[1].toUpperCase();
+
+  // Try full state name: ", Ohio 43604" or ", West Virginia 25301"
+  const nameMatch = address.match(/,\s*([\w\s]+?)\s+\d{5}/);
+  if (nameMatch) {
+    const name = nameMatch[1].trim().toLowerCase();
+    const abbr = STATE_NAME_TO_ABBR[name];
+    if (abbr) return abbr;
+  }
+
+  return null;
+}
+
+/**
+ * Service area bounding box — the rough rectangle covering all states
+ * we operate in. Coordinates outside this box are definitely wrong.
+ */
+const SERVICE_AREA = { latMin: 36.0, latMax: 49.0, lngMin: -91.0, lngMax: -74.0 };
+
+/**
+ * Validate that coordinates are plausible:
+ * 1. Not zero/null (0,0 is the Gulf of Guinea — definitely wrong)
+ * 2. Within the service area bounding box
+ * 3. If the address names a known state, within that state's bounds
+ */
+export function validateCoordinates(
+  lat: number,
+  lng: number,
+  address?: string | null
+): { valid: boolean; reason?: string } {
+  // Reject (0,0) or very small values that look like defaults
+  if (lat === 0 && lng === 0) return { valid: false, reason: "Coordinates are 0,0 (default/missing)" };
+  if (Math.abs(lat) < 1 && Math.abs(lng) < 1) return { valid: false, reason: "Coordinates near origin" };
+
+  // Must be within the service area
+  if (lat < SERVICE_AREA.latMin || lat > SERVICE_AREA.latMax ||
+      lng < SERVICE_AREA.lngMin || lng > SERVICE_AREA.lngMax) {
+    return { valid: false, reason: "Outside service area" };
+  }
+
+  // If we can identify the state from the address, check state bounds
+  if (address) {
+    const state = extractState(address);
+    if (state && STATE_BOUNDS[state]) {
+      const b = STATE_BOUNDS[state];
+      if (lat < b.latMin || lat > b.latMax || lng < b.lngMin || lng > b.lngMax) {
+        return { valid: false, reason: `Outside ${state} bounds` };
+      }
+    }
+  }
+
+  return { valid: true };
 }
 
 function isResultInState(geo: GeoResult, state: string): boolean {
@@ -157,12 +225,16 @@ export async function clearAndReGeocode(address: string): Promise<GeoResult | nu
   return geocodeAddress(address);
 }
 
-export async function manualCorrectGeocode(address: string, lat: number, lng: number): Promise<void> {
+export async function manualCorrectGeocode(
+  address: string,
+  lat: number,
+  lng: number,
+): Promise<{ ok: boolean; error?: string }> {
   const sb = getSupabase();
-  if (!sb) return;
+  if (!sb) return { ok: false, error: "No database connection" };
   const hash = addressHash(address);
   // All columns guaranteed by the authoritative schema
-  await sb.from("sched_geocode_cache").upsert({
+  const { error } = await sb.from("sched_geocode_cache").upsert({
     address_hash: hash,
     address_original: address,
     lat,
@@ -174,24 +246,27 @@ export async function manualCorrectGeocode(address: string, lat: number, lng: nu
     source: "manual",
     updated_at: new Date().toISOString(),
   });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 /**
  * Update the latitude/longitude on a work_orders row in Supabase.
- * Called when a user manually corrects a pin's location so the
- * database coordinates stay accurate for future map loads.
+ * Returns success/failure so the UI can show accurate feedback.
  */
 export async function updateWorkOrderCoords(
   workOrderNumber: string,
   lat: number,
   lng: number,
-): Promise<void> {
+): Promise<{ ok: boolean; error?: string }> {
   const sb = getSupabase();
-  if (!sb) return;
-  await sb
+  if (!sb) return { ok: false, error: "No database connection" };
+  const { error } = await sb
     .from("work_orders")
     .update({ latitude: lat, longitude: lng })
     .eq("work_order_number", workOrderNumber);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 /**
@@ -218,7 +293,7 @@ export async function geocodeForComparison(address: string): Promise<GeoResult |
   }
 }
 
-export { extractState, isResultInState, STATE_BOUNDS };
+export { extractState, isResultInState, STATE_BOUNDS, SERVICE_AREA };
 
 async function bulkCacheLookup(addresses: string[]): Promise<Map<string, GeoResult>> {
   const results = new Map<string, GeoResult>();

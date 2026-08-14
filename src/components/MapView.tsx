@@ -11,13 +11,15 @@ import {
   manualCorrectGeocode,
   geocodeForComparison,
   updateWorkOrderCoords,
+  validateCoordinates,
+  getCachedGeocode,
   GeoResult,
   GeoPrecision,
 } from "@/lib/geocode";
 import { getRForceItemsForDay, typeLabel, formatProductBreakdown, RForceCalendarItem } from "@/lib/calendar-utils";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { Appointment, RForceOrder } from "@/lib/types";
-import { format } from "date-fns";
+import { format, parseISO, addDays } from "date-fns";
 import {
   Loader2,
   ExternalLink,
@@ -32,6 +34,7 @@ import {
   ShieldAlert,
   CheckCircle2,
   AlertTriangle,
+  XCircle,
 } from "lucide-react";
 
 // ── Types ──
@@ -77,6 +80,32 @@ function formatDistance(meters: number): string {
   if (meters < 1000) return `${Math.round(meters / 10) * 10}m`;
   const miles = meters / 1609.344;
   return miles < 10 ? `${miles.toFixed(1)} mi` : `${Math.round(miles)} mi`;
+}
+
+/**
+ * Check if a given date falls within a multi-day appointment's span.
+ * Issue #6: multi-day installations should appear on continuation days.
+ */
+function appointmentOverlapsDate(appt: Appointment, dateStr: string): boolean {
+  if (!appt.scheduled_date || appt.status === "cancelled") return false;
+  // Direct match
+  if (appt.scheduled_date === dateStr) return true;
+  // Multi-day: check if dateStr falls within the span
+  if (appt.duration_days > 1) {
+    const target = parseISO(dateStr);
+    const start = parseISO(appt.scheduled_date);
+    for (let d = 1; d < appt.duration_days; d++) {
+      const spanned = addDays(start, d);
+      if (
+        spanned.getFullYear() === target.getFullYear() &&
+        spanned.getMonth() === target.getMonth() &&
+        spanned.getDate() === target.getDate()
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function crewMarkerIcon(color: string, label?: string | number, precision?: GeoPrecision, source?: GeoSource): L.DivIcon {
@@ -161,7 +190,7 @@ function sourceColor(source: GeoSource): string {
   }
 }
 
-// ── Marker popup with verify / correct flow ──
+// ── Marker popup with verify / correct / error flow ──
 
 function MarkerWithPopup({
   item: m,
@@ -173,8 +202,8 @@ function MarkerWithPopup({
   item: MapItem;
   order?: number;
   onReGeocode: () => Promise<void>;
-  onCorrect: (lat: number, lng: number) => Promise<void>;
-  onAcceptVerified: (geo: GeoResult) => Promise<void>;
+  onCorrect: (lat: number, lng: number) => Promise<{ ok: boolean; error?: string }>;
+  onAcceptVerified: (geo: GeoResult) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [correcting, setCorrecting] = useState(false);
   const [reGeocoding, setReGeocoding] = useState(false);
@@ -183,9 +212,14 @@ function MarkerWithPopup({
   const [acceptingVerified, setAcceptingVerified] = useState(false);
   const [latInput, setLatInput] = useState("");
   const [lngInput, setLngInput] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
 
   const isApprox = m.geo.precision === "zip" || m.geo.precision === "unknown";
+
+  const showFeedback = useCallback((type: "success" | "error", msg: string) => {
+    setFeedback({ type, msg });
+    if (type === "success") setTimeout(() => setFeedback(null), 3000);
+  }, []);
 
   const handleVerify = useCallback(async () => {
     setVerifying(true);
@@ -201,12 +235,15 @@ function MarkerWithPopup({
   const handleAcceptVerified = useCallback(async () => {
     if (!verifyResult) return;
     setAcceptingVerified(true);
-    await onAcceptVerified(verifyResult.geocoded);
+    const result = await onAcceptVerified(verifyResult.geocoded);
     setVerifyResult(null);
     setAcceptingVerified(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }, [verifyResult, onAcceptVerified]);
+    if (result.ok) {
+      showFeedback("success", "Location updated & saved to database");
+    } else {
+      showFeedback("error", `Save failed: ${result.error || "Unknown error"}`);
+    }
+  }, [verifyResult, onAcceptVerified, showFeedback]);
 
   return (
     <Marker
@@ -232,13 +269,11 @@ function MarkerWithPopup({
 
           {/* Source + precision badges */}
           <div className="flex items-center gap-3 mt-2 py-1.5 px-2 bg-gray-50 rounded border border-gray-100">
-            {/* Source */}
             <div className={`flex items-center gap-1 text-[10px] ${sourceColor(m.geoSource)}`}>
               {sourceIcon(m.geoSource)}
               <span className="font-medium">{sourceLabel(m.geoSource)}</span>
             </div>
             <div className="text-gray-300">|</div>
-            {/* Precision */}
             <div className={`flex items-center gap-1 text-[10px] ${
               isApprox ? "text-amber-600" : "text-green-600"
             }`}>
@@ -252,11 +287,15 @@ function MarkerWithPopup({
             {m.geo.lat.toFixed(6)}, {m.geo.lng.toFixed(6)}
           </div>
 
-          {/* Saved confirmation */}
-          {saved && (
-            <div className="flex items-center gap-1 mt-1.5 text-[10px] text-green-600 bg-green-50 rounded px-2 py-1">
-              <CheckCircle2 size={10} />
-              Location updated & saved to database
+          {/* Feedback (success or error) */}
+          {feedback && (
+            <div className={`flex items-center gap-1 mt-1.5 text-[10px] rounded px-2 py-1 ${
+              feedback.type === "success"
+                ? "text-green-600 bg-green-50"
+                : "text-red-600 bg-red-50"
+            }`}>
+              {feedback.type === "success" ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
+              {feedback.msg}
             </div>
           )}
 
@@ -287,7 +326,7 @@ function MarkerWithPopup({
             <div className="text-[10px] font-medium text-gray-500 mb-1.5">Location tools</div>
             <div className="flex gap-1.5 flex-wrap">
               {/* Verify button — compare database vs geocoder */}
-              {m.geoSource === "database" && !verifyResult && (
+              {(m.geoSource === "database" || m.geoSource === "manual") && !verifyResult && (
                 <button
                   onClick={handleVerify}
                   disabled={verifying}
@@ -322,6 +361,7 @@ function MarkerWithPopup({
                     setLngInput(m.geo.lng.toFixed(6));
                     setCorrecting(true);
                     setVerifyResult(null);
+                    setFeedback(null);
                   }}
                   className="text-[10px] px-2 py-1 bg-gray-100 text-gray-700 rounded border border-gray-200 hover:bg-gray-200 flex items-center gap-1"
                 >
@@ -448,11 +488,22 @@ function MarkerWithPopup({
                   onClick={async () => {
                     const lat = parseFloat(latInput);
                     const lng = parseFloat(lngInput);
-                    if (!isNaN(lat) && !isNaN(lng)) {
-                      await onCorrect(lat, lng);
-                      setCorrecting(false);
-                      setSaved(true);
-                      setTimeout(() => setSaved(false), 2000);
+                    if (isNaN(lat) || isNaN(lng)) {
+                      showFeedback("error", "Enter valid numbers");
+                      return;
+                    }
+                    // Validate before saving
+                    const check = validateCoordinates(lat, lng, m.address);
+                    if (!check.valid) {
+                      showFeedback("error", check.reason || "Invalid coordinates");
+                      return;
+                    }
+                    const result = await onCorrect(lat, lng);
+                    setCorrecting(false);
+                    if (result.ok) {
+                      showFeedback("success", "Location updated & saved to database");
+                    } else {
+                      showFeedback("error", `Save failed: ${result.error || "Unknown error"}`);
                     }
                   }}
                   className="text-[10px] px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
@@ -481,13 +532,28 @@ function MarkerWithPopup({
 
 // ── Helpers to extract pre-computed coordinates ──
 
+/**
+ * Build a GeoResult from a work order's latitude/longitude.
+ * Issue #2: Validates coordinates against service-area bounds
+ * and the address's state before accepting them as "rooftop".
+ * Returns null if coordinates are missing or fail validation.
+ */
 function geoFromOrder(order: RForceOrder): GeoResult | null {
-  if (order.latitude != null && order.longitude != null) {
-    return { lat: order.latitude, lng: order.longitude, precision: "rooftop" };
+  if (order.latitude == null || order.longitude == null) return null;
+
+  const check = validateCoordinates(order.latitude, order.longitude, order.address);
+  if (!check.valid) {
+    // Invalid coordinates — fall through to geocoding
+    return null;
   }
-  return null;
+
+  return { lat: order.latitude, lng: order.longitude, precision: "rooftop" };
 }
 
+/**
+ * Find the linked rForce order for an appointment (by work_order_number)
+ * and return its pre-computed coordinates if available and valid.
+ */
 function geoFromLinkedOrder(
   appt: Appointment,
   rforceOrders: RForceOrder[]
@@ -497,20 +563,44 @@ function geoFromLinkedOrder(
   return rf ? geoFromOrder(rf) : null;
 }
 
+/**
+ * Issue #5: Check the geocode cache for provenance.
+ * If the address has a manual_override entry whose coordinates match,
+ * we know a user corrected it (even though it now comes from the database).
+ */
+async function detectProvenance(
+  address: string,
+  dbLat: number,
+  dbLng: number,
+): Promise<GeoSource> {
+  try {
+    const cached = await getCachedGeocode(address);
+    if (cached?.manualOverride) {
+      // If the cached manual coords are very close to the DB coords,
+      // the DB was updated from a manual correction
+      const dist = haversineMeters(dbLat, dbLng, cached.lat, cached.lng);
+      if (dist < 10) return "manual";
+    }
+  } catch {
+    // Cache lookup failed — default to database
+  }
+  return "database";
+}
+
 // ── Main component ──
 
 export default function MapView({ date }: Props) {
   const { crews, appointments, rforceOrders } = useData();
   const [geocodedExtras, setGeocodedExtras] = useState<Map<string, GeoResult>>(new Map());
   const [overrides, setOverrides] = useState<Map<string, { geo: GeoResult; source: GeoSource }>>(new Map());
+  const [provenanceMap, setProvenanceMap] = useState<Map<string, GeoSource>>(new Map());
   const [geocodingCount, setGeocodingCount] = useState(0);
 
   const dateStr = format(date, "yyyy-MM-dd");
 
+  // Issue #6: Include multi-day appointments that span into this date
   const dayAppointments = useMemo(() => {
-    return appointments.filter(
-      (a) => a.scheduled_date === dateStr && a.status !== "cancelled"
-    );
+    return appointments.filter((a) => appointmentOverlapsDate(a, dateStr));
   }, [appointments, dateStr]);
 
   const dayRForceItems = useMemo(
@@ -518,7 +608,7 @@ export default function MapView({ date }: Props) {
     [rforceOrders, appointments, crews, date]
   );
 
-  // ── Phase 1: Build map items instantly from pre-computed coordinates ──
+  // ── Phase 1: Build map items from pre-computed coordinates ──
 
   const { instantItems, needsGeocoding } = useMemo(() => {
     const instant: MapItem[] = [];
@@ -579,6 +669,27 @@ export default function MapView({ date }: Props) {
     return { instantItems: instant, needsGeocoding: needsGeo };
   }, [dayAppointments, dayRForceItems, rforceOrders, crews]);
 
+  // Issue #5: Detect provenance for database-sourced items
+  useEffect(() => {
+    if (instantItems.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      const results = new Map<string, GeoSource>();
+      for (const item of instantItems) {
+        if (cancelled) break;
+        if (item.geoSource !== "database") continue;
+        const prov = await detectProvenance(item.address, item.geo.lat, item.geo.lng);
+        if (prov !== "database") results.set(item.id, prov);
+      }
+      if (!cancelled && results.size > 0) {
+        setProvenanceMap(results);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [instantItems]);
+
   // ── Phase 2: Background-geocode items missing coordinates ──
 
   useEffect(() => {
@@ -604,16 +715,18 @@ export default function MapView({ date }: Props) {
     return () => { cancelled = true; };
   }, [dateStr, needsGeocoding]);
 
-  // ── Merge all sources into final list, applying overrides ──
+  // ── Merge all sources, applying overrides and provenance ──
 
   const mapItems: MapItem[] = useMemo(() => {
-    // Start with instant items, apply any overrides
     const items = instantItems.map((m) => {
       const ov = overrides.get(m.id);
-      return ov ? { ...m, geo: ov.geo, geoSource: ov.source } : m;
+      if (ov) return { ...m, geo: ov.geo, geoSource: ov.source };
+      // Apply detected provenance
+      const prov = provenanceMap.get(m.id);
+      if (prov) return { ...m, geoSource: prov };
+      return m;
     });
 
-    // Add geocoded extras
     for (const item of needsGeocoding) {
       const ov = overrides.get(item.id);
       const geo = ov?.geo ?? geocodedExtras.get(item.id);
@@ -659,7 +772,7 @@ export default function MapView({ date }: Props) {
       }
     }
     return items;
-  }, [instantItems, needsGeocoding, geocodedExtras, overrides, crews]);
+  }, [instantItems, needsGeocoding, geocodedExtras, overrides, provenanceMap, crews]);
 
   const crewOrder = useMemo(() => {
     const order = new Map<string, number>();
@@ -676,12 +789,56 @@ export default function MapView({ date }: Props) {
   const totalItems = dayAppointments.length + dayRForceItems.length;
   const defaultCenter: [number, number] = [41.65, -83.54];
 
-  // Stats for legend
   const sourceStats = useMemo(() => {
     const stats = { database: 0, geocoded: 0, manual: 0 };
     for (const m of mapItems) stats[m.geoSource]++;
     return stats;
   }, [mapItems]);
+
+  // ── Save handlers with error propagation (Issue #4) ──
+
+  const handleCorrect = useCallback(
+    async (itemId: string, address: string, workOrderNumber: string | null, lat: number, lng: number): Promise<{ ok: boolean; error?: string }> => {
+      const cacheResult = await manualCorrectGeocode(address, lat, lng);
+      if (!cacheResult.ok) return cacheResult;
+
+      if (workOrderNumber) {
+        const dbResult = await updateWorkOrderCoords(workOrderNumber, lat, lng);
+        if (!dbResult.ok) return dbResult;
+      }
+
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        next.set(itemId, {
+          geo: { lat, lng, precision: "rooftop", manualOverride: true },
+          source: "manual",
+        });
+        return next;
+      });
+      return { ok: true };
+    },
+    []
+  );
+
+  const handleAcceptVerified = useCallback(
+    async (itemId: string, address: string, workOrderNumber: string | null, geo: GeoResult): Promise<{ ok: boolean; error?: string }> => {
+      const cacheResult = await manualCorrectGeocode(address, geo.lat, geo.lng);
+      if (!cacheResult.ok) return cacheResult;
+
+      if (workOrderNumber) {
+        const dbResult = await updateWorkOrderCoords(workOrderNumber, geo.lat, geo.lng);
+        if (!dbResult.ok) return dbResult;
+      }
+
+      setOverrides((prev) => {
+        const next = new Map(prev);
+        next.set(itemId, { geo: { ...geo, precision: "rooftop" }, source: "manual" });
+        return next;
+      });
+      return { ok: true };
+    },
+    []
+  );
 
   if (totalItems === 0) {
     return (
@@ -737,35 +894,12 @@ export default function MapView({ date }: Props) {
                 });
               }
             }}
-            onCorrect={async (lat, lng) => {
-              // Save to geocode cache
-              await manualCorrectGeocode(m.address, lat, lng);
-              // Save to work_orders table if this is an rForce item
-              if (m.workOrderNumber) {
-                await updateWorkOrderCoords(m.workOrderNumber, lat, lng);
-              }
-              // Update local state
-              setOverrides((prev) => {
-                const next = new Map(prev);
-                next.set(m.id, {
-                  geo: { lat, lng, precision: "rooftop", manualOverride: true },
-                  source: "manual",
-                });
-                return next;
-              });
-            }}
-            onAcceptVerified={async (geo) => {
-              // Save geocoder result to both caches
-              await manualCorrectGeocode(m.address, geo.lat, geo.lng);
-              if (m.workOrderNumber) {
-                await updateWorkOrderCoords(m.workOrderNumber, geo.lat, geo.lng);
-              }
-              setOverrides((prev) => {
-                const next = new Map(prev);
-                next.set(m.id, { geo: { ...geo, precision: "rooftop" }, source: "manual" });
-                return next;
-              });
-            }}
+            onCorrect={(lat, lng) =>
+              handleCorrect(m.id, m.address, m.workOrderNumber ?? null, lat, lng)
+            }
+            onAcceptVerified={(geo) =>
+              handleAcceptVerified(m.id, m.address, m.workOrderNumber ?? null, geo)
+            }
           />
         ))}
       </MapContainer>
@@ -820,7 +954,7 @@ export default function MapView({ date }: Props) {
           )}
         </div>
 
-        {/* Accuracy legend if any approximate pins */}
+        {/* Accuracy legend */}
         {mapItems.some((m) => m.geo.precision === "zip" || m.geo.precision === "unknown") && (
           <div className="border-t border-border mt-1.5 pt-1.5">
             <div className="text-[10px] text-muted font-medium mb-1">Accuracy</div>

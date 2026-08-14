@@ -5,11 +5,11 @@ import { useEffect, useState, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
-import { geocodeFastZip, geocodeBatch, GeoResult, GeoPrecision } from "@/lib/geocode";
-import { getRForceItemsForDay, getAppointmentsForCrewAndDay } from "@/lib/calendar-utils";
+import { geocodeAddress, validateCoordinates, GeoResult, GeoPrecision } from "@/lib/geocode";
+import { getRForceItemsForDay } from "@/lib/calendar-utils";
 import { mapsHref } from "@/lib/salesforce";
-import { Crew } from "@/lib/types";
-import { format } from "date-fns";
+import { Appointment, Crew, RForceOrder } from "@/lib/types";
+import { format, parseISO, addDays } from "date-fns";
 import { Loader2, Navigation } from "lucide-react";
 
 function crewMarkerIcon(color: string, label?: string | number, precision?: GeoPrecision): L.DivIcon {
@@ -65,18 +65,44 @@ interface MapItem {
   geo: GeoResult;
 }
 
+/** Same multi-day check as MapView — appointments span into continuation days */
+function appointmentOverlapsDate(appt: Appointment, dateStr: string): boolean {
+  if (!appt.scheduled_date || appt.status === "cancelled") return false;
+  if (appt.scheduled_date === dateStr) return true;
+  if (appt.duration_days > 1) {
+    const target = parseISO(dateStr);
+    const start = parseISO(appt.scheduled_date);
+    for (let d = 1; d < appt.duration_days; d++) {
+      const spanned = addDays(start, d);
+      if (
+        spanned.getFullYear() === target.getFullYear() &&
+        spanned.getMonth() === target.getMonth() &&
+        spanned.getDate() === target.getDate()
+      ) return true;
+    }
+  }
+  return false;
+}
+
+/** Validated geo from pre-computed coordinates — same as MapView */
+function geoFromOrder(order: RForceOrder): GeoResult | null {
+  if (order.latitude == null || order.longitude == null) return null;
+  const check = validateCoordinates(order.latitude, order.longitude, order.address);
+  if (!check.valid) return null;
+  return { lat: order.latitude, lng: order.longitude, precision: "rooftop" };
+}
+
 export default function SectionMap({ date, crews }: Props) {
   const { appointments, rforceOrders } = useData();
-  const [geoCache, setGeoCache] = useState<Map<string, GeoResult>>(new Map());
-  const [loading, setLoading] = useState(true);
-  const [refining, setRefining] = useState(false);
+  const [geocodedExtras, setGeocodedExtras] = useState<Map<string, GeoResult>>(new Map());
+  const [geocodingCount, setGeocodingCount] = useState(0);
 
   const dateStr = format(date, "yyyy-MM-dd");
   const crewIds = useMemo(() => new Set(crews.map((c) => c.id)), [crews]);
 
   const dayAppointments = useMemo(() => {
     return appointments.filter(
-      (a) => a.scheduled_date === dateStr && a.status !== "cancelled" && a.crew_id != null && crewIds.has(a.crew_id)
+      (a) => appointmentOverlapsDate(a, dateStr) && a.crew_id != null && crewIds.has(a.crew_id)
     );
   }, [appointments, dateStr, crewIds]);
 
@@ -85,56 +111,24 @@ export default function SectionMap({ date, crews }: Props) {
     [rforceOrders, appointments, crews, date, crewIds]
   );
 
-  const allAddresses = useMemo(() => {
-    const addrs: string[] = [];
-    for (const a of dayAppointments) {
-      if (a.address) addrs.push(a.address);
-    }
-    for (const rf of dayRForceItems) {
-      if (rf.rforceOrder.address) addrs.push(rf.rforceOrder.address);
-    }
-    return [...new Set(addrs)];
-  }, [dayAppointments, dayRForceItems]);
+  // Phase 1: instant items from database coordinates
+  const { instantItems, needsGeocoding } = useMemo(() => {
+    const instant: MapItem[] = [];
+    const needsGeo: { id: string; address: string }[] = [];
 
-  useEffect(() => {
-    if (allAddresses.length === 0) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setRefining(false);
-
-    geocodeFastZip(allAddresses).then((fastResults) => {
-      if (cancelled) return;
-      setGeoCache(new Map(fastResults));
-      setLoading(false);
-      setRefining(true);
-
-      geocodeBatch(allAddresses).then((preciseResults) => {
-        if (!cancelled) {
-          setGeoCache((prev) => {
-            const merged = new Map(prev);
-            for (const [addr, geo] of preciseResults) {
-              merged.set(addr, geo);
-            }
-            return merged;
-          });
-          setRefining(false);
-        }
-      });
-    });
-
-    return () => { cancelled = true; };
-  }, [dateStr, allAddresses]);
-
-  const mapItems: MapItem[] = useMemo(() => {
-    const items: MapItem[] = [];
     for (const appt of dayAppointments) {
-      const geo = geoCache.get(appt.address);
       const crew = crews.find((c) => c.id === appt.crew_id);
-      if (geo && crew) {
-        items.push({
+      if (!crew || !appt.address) continue;
+
+      // Try linked rForce order coordinates
+      let geo: GeoResult | null = null;
+      if (appt.work_order_number) {
+        const rf = rforceOrders.find((r) => r.work_order_number === appt.work_order_number);
+        if (rf) geo = geoFromOrder(rf);
+      }
+
+      if (geo) {
+        instant.push({
           id: appt.id,
           customerName: appt.customer_name,
           address: appt.address,
@@ -144,13 +138,18 @@ export default function SectionMap({ date, crews }: Props) {
           crewId: crew.id,
           geo,
         });
+      } else {
+        needsGeo.push({ id: appt.id, address: appt.address });
       }
     }
+
     for (const rf of dayRForceItems) {
-      const geo = geoCache.get(rf.rforceOrder.address || "");
       const crew = crews.find((c) => c.id === rf.crewId);
-      if (geo && crew) {
-        items.push({
+      if (!crew) continue;
+
+      const geo = geoFromOrder(rf.rforceOrder);
+      if (geo) {
+        instant.push({
           id: rf.rforceOrder.work_order_number,
           customerName: rf.rforceOrder.customer_name || "Unknown",
           address: rf.rforceOrder.address || "",
@@ -160,10 +159,81 @@ export default function SectionMap({ date, crews }: Props) {
           crewId: crew.id,
           geo,
         });
+      } else if (rf.rforceOrder.address) {
+        needsGeo.push({ id: rf.rforceOrder.work_order_number, address: rf.rforceOrder.address });
+      }
+    }
+
+    return { instantItems: instant, needsGeocoding: needsGeo };
+  }, [dayAppointments, dayRForceItems, rforceOrders, crews]);
+
+  // Phase 2: background geocode the rest
+  useEffect(() => {
+    if (needsGeocoding.length === 0) return;
+    let cancelled = false;
+    setGeocodingCount(needsGeocoding.length);
+
+    (async () => {
+      for (const item of needsGeocoding) {
+        if (cancelled) break;
+        const geo = await geocodeAddress(item.address);
+        if (geo && !cancelled) {
+          setGeocodedExtras((prev) => {
+            const next = new Map(prev);
+            next.set(item.id, geo);
+            return next;
+          });
+        }
+      }
+      if (!cancelled) setGeocodingCount(0);
+    })();
+
+    return () => { cancelled = true; };
+  }, [dateStr, needsGeocoding]);
+
+  // Merge
+  const mapItems: MapItem[] = useMemo(() => {
+    const items = [...instantItems];
+    for (const item of needsGeocoding) {
+      const geo = geocodedExtras.get(item.id);
+      if (!geo) continue;
+      // Find the original appointment or rForce item to build a full MapItem
+      const appt = dayAppointments.find((a) => a.id === item.id);
+      if (appt) {
+        const crew = crews.find((c) => c.id === appt.crew_id);
+        if (crew) {
+          items.push({
+            id: appt.id,
+            customerName: appt.customer_name,
+            address: appt.address,
+            type: appt.appointment_type,
+            crewName: crew.name,
+            crewColor: crew.color,
+            crewId: crew.id,
+            geo,
+          });
+        }
+      } else {
+        const rf = dayRForceItems.find((r) => r.rforceOrder.work_order_number === item.id);
+        if (rf) {
+          const crew = crews.find((c) => c.id === rf.crewId);
+          if (crew) {
+            items.push({
+              id: rf.rforceOrder.work_order_number,
+              customerName: rf.rforceOrder.customer_name || "Unknown",
+              address: rf.rforceOrder.address || "",
+              type: rf.rforceOrder.work_order_type || "Unknown",
+              crewName: crew.name,
+              crewColor: crew.color,
+              crewId: crew.id,
+              geo,
+            });
+          }
+        }
       }
     }
     return items;
-  }, [dayAppointments, dayRForceItems, geoCache, crews]);
+  }, [instantItems, needsGeocoding, geocodedExtras, dayAppointments, dayRForceItems, crews]);
 
   const crewOrder = useMemo(() => {
     const order = new Map<string, number>();
@@ -179,7 +249,7 @@ export default function SectionMap({ date, crews }: Props) {
   const positions: [number, number][] = mapItems.map((m) => [m.geo.lat, m.geo.lng]);
   const defaultCenter: [number, number] = [41.65, -83.54];
 
-  if (loading) {
+  if (instantItems.length === 0 && geocodingCount > 0) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 size={20} className="animate-spin text-primary" />
@@ -187,7 +257,7 @@ export default function SectionMap({ date, crews }: Props) {
     );
   }
 
-  if (mapItems.length === 0) {
+  if (mapItems.length === 0 && geocodingCount === 0) {
     return (
       <div className="flex items-center justify-center h-full text-muted text-xs">
         No geocoded items
@@ -197,10 +267,12 @@ export default function SectionMap({ date, crews }: Props) {
 
   return (
     <div className="h-full w-full relative">
-      {refining && (
-        <div className="absolute top-1 left-1 right-1 bg-amber-50/90 dark:bg-amber-900/40 border border-amber-300/60 dark:border-amber-700/50 rounded px-2 py-1 z-[1000] flex items-center gap-1.5">
-          <Loader2 size={10} className="animate-spin text-amber-600" />
-          <span className="text-[9px] text-amber-700 dark:text-amber-300">Refining locations...</span>
+      {geocodingCount > 0 && (
+        <div className="absolute top-1 left-1 right-1 bg-blue-50/90 dark:bg-blue-900/40 border border-blue-300/60 dark:border-blue-700/50 rounded px-2 py-1 z-[1000] flex items-center gap-1.5">
+          <Loader2 size={10} className="animate-spin text-blue-600" />
+          <span className="text-[9px] text-blue-700 dark:text-blue-300">
+            Geocoding {geocodingCount} address{geocodingCount !== 1 ? "es" : ""}...
+          </span>
         </div>
       )}
       <MapContainer

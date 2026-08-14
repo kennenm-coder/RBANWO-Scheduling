@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { addDays, subDays, startOfWeek, addWeeks, subWeeks, parseISO, format } from "date-fns";
 import { useSearchParams } from "next/navigation";
 import { useSwipe } from "@/hooks/useSwipe";
@@ -13,9 +13,8 @@ import CrewLaneWeekView from "@/components/CrewLaneWeekView";
 import CrewBlockView from "@/components/CrewBlockView";
 import UnscheduledQueue from "@/components/UnscheduledQueue";
 import { ViewMode, AppointmentType } from "@/lib/types";
-import IssueCenter from "@/components/IssueCenter";
-import { detectFlags } from "@/lib/flags";
 import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff, ExternalLink } from "lucide-react";
+import { SchedulerDragProvider } from "@/lib/drag-context";
 
 const DUCK_FORCE_PTO_URL = "https://betterthengooglecal-5taw.vercel.app/time-off?from=scheduler";
 
@@ -28,7 +27,7 @@ function getSavedView(): ViewMode {
 }
 
 export default function CalendarPage() {
-  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions } = useData();
+  const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions } = useData();
   const searchParams = useSearchParams();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("week");
@@ -36,20 +35,7 @@ export default function CalendarPage() {
   const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [issuesOpen, setIssuesOpen] = useState(false);
   const [showRForce, setShowRForce] = useState(false);
-
-  const flagCount = useMemo(() => {
-    const allFlags = detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions);
-    const resolvedKeys = new Set(flagResolutions.map((r) => r.flag_key));
-    // Apply resolutions to get correct states, then count only actionable
-    const withState = allFlags.map((f) => {
-      if (f.autoClears) return f;
-      if (resolvedKeys.has(f.id)) return { ...f, state: "waiting_for_import" as const };
-      return f;
-    });
-    return withState.filter((f) => f.state === "open" && f.severity !== "info").length;
-  }, [appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions]);
 
   const initializedRef = useRef(false);
 
@@ -175,6 +161,7 @@ export default function CalendarPage() {
   }
 
   return (
+    <SchedulerDragProvider>
     <div className="flex h-full">
       {/* Side rail: Queue toggle + Time Off */}
       <div className="shrink-0 w-8 flex flex-col bg-surface border-r border-border z-20">
@@ -238,19 +225,20 @@ export default function CalendarPage() {
             setCurrentDate(date);
             // Keep current view but ensure the date is visible
           }}
-          flagCount={flagCount}
-          onFlagsClick={() => setIssuesOpen(true)}
           showRForce={showRForce}
           onToggleRForce={handleToggleRForce}
         />
 
-        <WeekSummary
-          currentDate={currentDate}
-          onDayClick={(date) => {
-            setCurrentDate(date);
-            handleViewChange("day");
-          }}
-        />
+        {/* Hide WeekSummary in week view — the table headers already show days */}
+        {viewMode !== "week" && (
+          <WeekSummary
+            currentDate={currentDate}
+            onDayClick={(date) => {
+              setCurrentDate(date);
+              handleViewChange("day");
+            }}
+          />
+        )}
 
         <FilterPanel value={filterType} onChange={setFilterType} />
 
@@ -289,16 +277,7 @@ export default function CalendarPage() {
           )}
         </div>
       </div>
-      {issuesOpen && (
-        <IssueCenter
-          onClose={() => setIssuesOpen(false)}
-          onNavigate={(date) => {
-            setCurrentDate(parseISO(date));
-            handleViewChange("day");
-            setIssuesOpen(false);
-          }}
-        />
-      )}
     </div>
+    </SchedulerDragProvider>
   );
 }

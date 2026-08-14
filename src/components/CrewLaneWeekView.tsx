@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
@@ -21,20 +21,21 @@ import {
   getWeekDays,
   getAppointmentsForCrewAndDay,
   getRForceDisplayItems,
-  checkDiscrepancy,
   MEASURE_TIME_BLOCKS,
   timeBlockStartEnd,
   appointmentSpansBlock,
 } from "@/lib/calendar-utils";
-import { getTimeOffForDate, createAppointmentEvent } from "@/lib/store";
-import { onSchedulerEditedLinkedAppointment } from "@/lib/sync-transitions";
+import { deriveRForceCalendarStatus } from "@/lib/rforce-calendar-status";
+import { getTimeOffForDate } from "@/lib/store";
+import { executeScheduleMove } from "@/lib/schedule-command";
 import { useCurrentActor } from "./AuthProvider";
-import { getDepartmentSectionsForDate, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType, getEligibleCrews } from "@/lib/crew-utils";
+import { getDepartmentSectionsForDate, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences } from "@/lib/preferences";
 import { format, isToday, parseISO, addDays } from "date-fns";
-import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban } from "lucide-react";
-import { getDraggedOrder, setDraggedOrder, getDraggedAppointment, setDraggedAppointment, getResizingAppointment, setResizingAppointment } from "@/lib/drag-context";
+import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle } from "lucide-react";
+import { useSchedulerDrag } from "@/lib/drag-context";
+import { getSchedulingMode } from "@/lib/scheduling-policy";
 import { useToast } from "./Toast";
 import { getAllCrewsAvailabilityForWeek, CrewDayAvailability } from "@/lib/availability";
 
@@ -74,6 +75,11 @@ export default function CrewLaneWeekView({
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
+  const [dropConfirmTarget, setDropConfirmTarget] = useState<{
+    appointment: Appointment;
+    date: string;
+    crewId: string;
+  } | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     date: Date;
     crewId: string;
@@ -119,6 +125,23 @@ export default function CrewLaneWeekView({
     }
     return map;
   }, [days, rforceOrders, appointments, activeLinks, crews, dismissals, resourceMappings]);
+
+  // New rForce adapter — derives mismatch status for linked appointments
+  const rforceStatusByWO = useMemo(() => {
+    const items = deriveRForceCalendarStatus(rforceOrders, appointments, activeLinks, crews, resourceMappings);
+    const map = new Map<string, boolean>();
+    for (const item of items) {
+      if (item.status === "mismatch") {
+        map.set(item.rforceOrder.work_order_number.trim().toLowerCase(), true);
+      }
+    }
+    return map;
+  }, [rforceOrders, appointments, activeLinks, crews, resourceMappings]);
+
+  function hasMismatch(appt: Appointment): boolean {
+    if (!appt.work_order_number) return false;
+    return rforceStatusByWO.get(appt.work_order_number.trim().toLowerCase()) === true;
+  }
 
   function nameMatchesDay(name: string, dateStr: string): boolean {
     const offNames = offByDay.get(dateStr);
@@ -194,86 +217,37 @@ export default function CrewLaneWeekView({
     const appt = appointments.find((a) => a.id === appointmentId);
     if (!appt) return;
 
-    if (appt.crew_id === targetCrewId && appt.scheduled_date === targetDate && appt.time_block === targetTimeBlock) return;
-
-    const targetCrew = crews.find((c) => c.id === targetCrewId);
-    if (!targetCrew) return;
-
-    const eligible = getEligibleCrews(crews, appt.appointment_type);
-    if (!eligible.find((c) => c.id === targetCrewId)) {
-      showToast(`${targetCrew.name} cannot handle ${appt.appointment_type.replace(/_/g, " ")} appointments`, "error");
+    // A generic Week cell does not communicate an exact time. Timed work must
+    // be reviewed rather than silently receiving a default or stale time.
+    if (targetTimeBlock === null && getSchedulingMode(appt.appointment_type) === "timed") {
+      setDropConfirmTarget({ appointment: appt, date: targetDate, crewId: targetCrewId });
       return;
     }
 
-    const existing = appointments.filter(
-      (a) => a.id !== appt.id && a.status !== "cancelled" && a.crew_id === targetCrewId && a.scheduled_date === targetDate
+    const result = await executeScheduleMove(
+      {
+        appointmentId: appt.id,
+        expectedVersion: appt.version,
+        crewId: targetCrewId,
+        scheduledDate: targetDate,
+        timeBlock: targetTimeBlock,
+        startTime: appt.start_time,
+        endTime: appt.end_time,
+      },
+      appt,
+      appointments,
+      crews,
+      rforceOrders,
+      updateAppointment,
+      { id: actorId, name: actorName }
     );
-    if (targetTimeBlock && targetTimeBlock !== "full_day") {
-      const conflict = existing.find((a) => a.time_block === targetTimeBlock);
-      if (conflict) {
-        showToast(`${targetCrew.name} already has an appointment in that time block`, "error");
-        return;
-      }
-    }
 
-    const times = targetTimeBlock ? timeBlockStartEnd(targetTimeBlock) : { start: "08:00", end: "17:00" };
-
-    let manualOverride = appt.manual_override;
-    let overrideSource = appt.override_source;
-
-    if (appt.work_order_number) {
-      const rf = rforceOrders.find((r) => r.work_order_number === appt.work_order_number);
-      if (rf && rf.scheduled_start) {
-        const rfDate = rf.scheduled_start.slice(0, 10);
-        const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
-        if (targetDate !== rfDate || (rfResource && targetCrew.name.toLowerCase() !== rfResource.toLowerCase())) {
-          manualOverride = true;
-          overrideSource = {
-            crew_name: rfResource || undefined,
-            scheduled_date: rfDate,
-            time_block: appt.time_block || undefined,
-          };
-        } else {
-          manualOverride = false;
-          overrideSource = null;
-        }
-      }
-    }
-
-    try {
-      await updateAppointment(appt.id, appt.version, {
-        crew_id: targetCrewId,
-        scheduled_date: targetDate,
-        time_block: targetTimeBlock,
-        start_time: times.start,
-        end_time: times.end,
-        manual_override: manualOverride,
-        override_source: overrideSource,
-      });
-
-      createAppointmentEvent({
-        appointment_id: appt.id,
-        action: "drag_moved",
-        actor_id: actorId,
-        actor_name_snapshot: actorName,
-        before_state: { crew_id: appt.crew_id, scheduled_date: appt.scheduled_date, time_block: appt.time_block },
-        after_state: { crew_id: targetCrewId, scheduled_date: targetDate, time_block: targetTimeBlock },
-        reason: null,
-      });
-
-      // If linked and in_sync, transition to waiting_for_import
-      onSchedulerEditedLinkedAppointment(appt);
-
-      showToast(`Moved to ${targetCrew.name} on ${targetDate}`, "success");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      if (msg === "VERSION_CONFLICT") {
-        showToast("Someone else just updated this appointment — please try again", "warning");
-      } else if (msg === "DOUBLE_BOOK") {
-        showToast("That slot is already booked", "error");
-      } else {
-        showToast(`Failed to move: ${msg}`, "error");
-      }
+    if (result.ok) {
+      const targetCrew = crews.find((c) => c.id === targetCrewId);
+      showToast(`Moved to ${targetCrew?.name || "crew"} on ${targetDate}`, "success");
+    } else {
+      const severity = result.error.code === "VERSION_CONFLICT" ? "warning" : "error";
+      showToast(result.error.message, severity);
     }
   }
 
@@ -306,24 +280,27 @@ export default function CrewLaneWeekView({
     const endTimes = newEnd ? timeBlockStartEnd(newEnd) : timeBlockStartEnd(appt.time_block);
 
     try {
-      await updateAppointment(appt.id, appt.version, {
-        time_block_end: newEnd,
-        end_time: endTimes.end,
-      });
-
-      createAppointmentEvent({
-        appointment_id: appt.id,
-        action: "drag_resized",
-        actor_id: actorId,
-        actor_name_snapshot: actorName,
-        before_state: { time_block: appt.time_block, time_block_end: appt.time_block_end },
-        after_state: { time_block: appt.time_block, time_block_end: newEnd },
-        reason: null,
-      });
-
-      // If linked and in_sync, transition to waiting_for_import
-      onSchedulerEditedLinkedAppointment(appt);
-
+      const result = await executeScheduleMove(
+        {
+          appointmentId: appt.id,
+          expectedVersion: appt.version,
+          crewId: appt.crew_id!,
+          scheduledDate: appt.scheduled_date!,
+          timeBlock: appt.time_block,
+          timeBlockEnd: newEnd,
+          startTime: appt.start_time,
+          endTime: endTimes.end,
+          additionalUpdates: { end_time: endTimes.end },
+          auditAction: "drag_resized",
+        },
+        appt,
+        appointments,
+        crews,
+        rforceOrders,
+        updateAppointment,
+        { id: actorId, name: actorName }
+      );
+      if (!result.ok) throw new Error(result.error.message);
       showToast(newEnd ? `Extended to ${newEnd}` : "Shrunk to single block", "success");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Unknown error";
@@ -333,179 +310,181 @@ export default function CrewLaneWeekView({
 
   return (
     <div className="flex-1 overflow-auto">
-      {filteredSections.map((section) => {
-        const isCollapsed = collapsedSections.has(section.key);
-        const isMeasure = section.filterType === "tech_measure" && !section.key.includes("mgmt");
+      <div
+        className="grid min-w-[1120px]"
+        style={{ gridTemplateColumns: '140px repeat(7, minmax(120px, 1fr))' }}
+      >
+        {/* Sticky header row — shared across all departments */}
+        <div className="px-1 py-0.5 text-[9px] text-muted font-medium text-left border-b border-border sticky left-0 top-0 bg-background z-20">
+          Crew
+        </div>
+        {days.map((day) => {
+          const today = isToday(day);
+          return (
+            <div
+              key={day.toISOString()}
+              className={`px-0.5 py-0.5 text-[9px] font-medium text-center border-b border-border cursor-pointer hover:bg-primary-light sticky top-0 bg-background z-10 ${today ? "bg-primary-light" : ""}`}
+              onClick={() => onDayClick(day)}
+            >
+              <span className={today ? "text-primary font-bold" : ""}>
+                {format(day, "EEE")}
+              </span>{" "}
+              <span className="text-muted">{format(day, "M/d")}</span>
+            </div>
+          );
+        })}
 
-        let sectionJobCount = 0;
-        let sectionConflictCount = 0;
-        for (const crew of section.crews) {
-          for (const day of days) {
-            const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
-            sectionJobCount += cellAppts.length;
-            const dateStr = format(day, "yyyy-MM-dd");
-            const dayRForce = rforceByDay.get(dateStr) || [];
-            sectionJobCount += dayRForce.filter((r) => r.crewId === crew.id && (r.displayMode === "approval" || (showRForce && (r.displayMode === "regular" || r.displayMode === "synced")))).length;
-            if (isCrewOffOnDay(crew, day) && cellAppts.length > 0) {
-              sectionConflictCount++;
+        {/* Department sections — all share the same column geometry */}
+        {filteredSections.map((section) => {
+          const isCollapsed = collapsedSections.has(section.key);
+          const isMeasure = section.filterType === "tech_measure" && !section.key.includes("mgmt");
+
+          let sectionJobCount = 0;
+          let sectionConflictCount = 0;
+          for (const crew of section.crews) {
+            for (const day of days) {
+              const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
+              sectionJobCount += cellAppts.length;
+              const dateStr = format(day, "yyyy-MM-dd");
+              const dayRForce = rforceByDay.get(dateStr) || [];
+              sectionJobCount += dayRForce.filter((r) => r.crewId === crew.id && (r.displayMode === "approval" || (showRForce && (r.displayMode === "regular" || r.displayMode === "synced")))).length;
+              if (isCrewOffOnDay(crew, day) && cellAppts.length > 0) {
+                sectionConflictCount++;
+              }
             }
           }
-        }
 
-        return (
-          <div key={section.key}>
-            <button
-              onClick={() => toggleSection(section.key)}
-              className="w-full flex items-center gap-1.5 px-2 py-1 bg-surface sticky top-0 z-10 hover:bg-border/50 transition-colors"
-            >
-              {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-              <span className="text-[10px] font-semibold text-muted uppercase tracking-wider">
-                {section.title}
-              </span>
-              <span className="text-[9px] text-muted">
-                {sectionJobCount}
-              </span>
-              {sectionConflictCount > 0 && (
-                <span className="text-[9px] bg-danger text-white px-1 rounded-full">
-                  {sectionConflictCount}
+          return (
+            <Fragment key={section.key}>
+              {/* Section header — spans all 8 columns */}
+              <button
+                onClick={() => toggleSection(section.key)}
+                className="w-full flex items-center gap-1.5 px-2 py-1 bg-surface sticky top-0 z-10 hover:bg-border/50 transition-colors"
+                style={{ gridColumn: '1 / -1' }}
+              >
+                {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                <span className="text-[10px] font-semibold text-muted uppercase tracking-wider">
+                  {section.title}
                 </span>
-              )}
-            </button>
+                <span className="text-[9px] text-muted">
+                  {sectionJobCount}
+                </span>
+                {sectionConflictCount > 0 && (
+                  <span className="text-[9px] bg-danger text-white px-1 rounded-full">
+                    {sectionConflictCount}
+                  </span>
+                )}
+              </button>
 
-            {!isCollapsed && (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse min-w-[800px]">
-                  <thead>
-                    <tr>
-                      <th className="w-28 px-1 py-0.5 text-[9px] text-muted font-medium text-left border-b border-border sticky left-0 bg-background z-10">
-                        Crew
-                      </th>
-                      {days.map((day) => {
-                        const today = isToday(day);
+              {/* Crew rows — each crew occupies 1 grid row (name cell + 7 day cells) */}
+              {!isCollapsed && section.crews.map((crew) => {
+                const showTimeLanes = isMeasure || (isDualRole(crew) && crewHasType(crew, "measure_tech"));
+
+                return (
+                  <Fragment key={crew.id}>
+                    {/* Crew name cell — sticky left */}
+                    <div className="px-1 py-0.5 text-[10px] font-medium border-b border-border sticky left-0 bg-background z-[5]">
+                      <div className="flex items-center gap-1">
+                        <div
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: crew.color }}
+                        />
+                        <span className="truncate leading-tight">{crew.name}</span>
+                      </div>
+                    </div>
+                    {/* 7 day cells */}
+                    {days.map((day) => {
+                      const off = isCrewOffOnDay(crew, day);
+                      const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
+                      const dateStr = format(day, "yyyy-MM-dd");
+                      const dayItems = rforceByDay.get(dateStr) || [];
+                      const cellDisplayItems = dayItems.filter((r) => r.crewId === crew.id);
+                      const hasConflict = off && cellAppts.length > 0;
+                      const crewObj = crews.find((c) => c.id === crew.id);
+                      const dayAvail = crewAvailability.get(crew.id)?.get(dateStr);
+
+                      if (showTimeLanes) {
+                        const blockedFromOtherSections = !isMeasure
+                          ? getBlockedTimeBlocks(crew.id, appointments, dateStr)
+                          : new Set<TimeBlock>();
+
                         return (
-                          <th
+                          <MeasureTimeLaneCell
                             key={day.toISOString()}
-                            className={`px-0.5 py-0.5 text-[9px] font-medium text-center border-b border-border min-w-[100px] cursor-pointer hover:bg-primary-light ${today ? "bg-primary-light" : ""}`}
-                            onClick={() => onDayClick(day)}
-                          >
-                            <span className={today ? "text-primary font-bold" : ""}>
-                              {format(day, "EEE")}
-                            </span>
-                            {" "}
-                            <span className="text-muted">{format(day, "M/d")}</span>
-                          </th>
+                            crew={crew}
+                            day={day}
+                            off={off}
+                            hasConflict={hasConflict}
+                            cellAppts={cellAppts}
+                            cellDisplayItems={cellDisplayItems}
+                            rforceOrders={rforceOrders}
+                            searchQuery={searchQuery}
+                            crewObj={crewObj}
+                            blockedBlocks={blockedFromOtherSections}
+                            sectionType={section.filterType}
+                            timeOffColor={timeOffColor}
+                            availability={dayAvail}
+                            showRForce={showRForce}
+                            onCardClick={setSelectedAppt}
+                            onRForceClick={(order, item) => setSelectedRForce({ order, crew: crewObj, displayItem: item })}
+                            onSchedule={(block) =>
+                              setScheduleTarget({ date: day, crewId: crew.id, timeBlock: block })
+                            }
+                            getMultiDayLabel={getMultiDayLabel}
+                            onAppointmentDrop={(apptId, srcCrewId, srcDate, srcBlock, targetBlock) =>
+                              handleAppointmentDrop(apptId, srcCrewId, srcDate, srcBlock, crew.id, format(day, "yyyy-MM-dd"), targetBlock)
+                            }
+                            onResizeDrop={handleResizeDrop}
+                            onQueueDrop={(order) =>
+                              setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
+                            }
+                            onApproveRForce={approveRForce}
+                            onDismissRForce={dismissRForce}
+                            hasMismatch={hasMismatch}
+                          />
                         );
-                      })}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {section.crews.map((crew) => {
-                      const showTimeLanes = isMeasure || (isDualRole(crew) && crewHasType(crew, "measure_tech"));
+                      }
 
                       return (
-                        <tr key={crew.id}>
-                          <td className="px-1 py-0.5 text-[10px] font-medium border-b border-border sticky left-0 bg-background z-10">
-                            <div className="flex items-center gap-1">
-                              <div
-                                className="w-2 h-2 rounded-full shrink-0"
-                                style={{ backgroundColor: crew.color }}
-                              />
-                              <span className="truncate leading-tight">{crew.name}</span>
-                            </div>
-                          </td>
-                          {days.map((day) => {
-                            const off = isCrewOffOnDay(crew, day);
-                            const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
-                            const dateStr = format(day, "yyyy-MM-dd");
-                            const dayItems = rforceByDay.get(dateStr) || [];
-                            const cellDisplayItems = dayItems.filter((r) => r.crewId === crew.id);
-                            const hasConflict = off && cellAppts.length > 0;
-                            const crewObj = crews.find((c) => c.id === crew.id);
-                            const dayAvail = crewAvailability.get(crew.id)?.get(dateStr);
-
-                            if (showTimeLanes) {
-                              const blockedFromOtherSections = !isMeasure
-                                ? getBlockedTimeBlocks(crew.id, appointments, dateStr)
-                                : new Set<TimeBlock>();
-
-                              return (
-                                <MeasureTimeLaneCell
-                                  key={day.toISOString()}
-                                  crew={crew}
-                                  day={day}
-                                  off={off}
-                                  hasConflict={hasConflict}
-                                  cellAppts={cellAppts}
-                                  cellDisplayItems={cellDisplayItems}
-                                  rforceOrders={rforceOrders}
-                                  searchQuery={searchQuery}
-                                  crewObj={crewObj}
-                                  blockedBlocks={blockedFromOtherSections}
-                                  sectionType={section.filterType}
-                                  timeOffColor={timeOffColor}
-                                  availability={dayAvail}
-                                  showRForce={showRForce}
-                                  onCardClick={setSelectedAppt}
-                                  onRForceClick={(order, item) => setSelectedRForce({ order, crew: crewObj, displayItem: item })}
-                                  onSchedule={(block) =>
-                                    setScheduleTarget({ date: day, crewId: crew.id, timeBlock: block })
-                                  }
-                                  getMultiDayLabel={getMultiDayLabel}
-                                  onAppointmentDrop={(apptId, srcCrewId, srcDate, srcBlock, targetBlock) =>
-                                    handleAppointmentDrop(apptId, srcCrewId, srcDate, srcBlock, crew.id, format(day, "yyyy-MM-dd"), targetBlock)
-                                  }
-                                  onResizeDrop={handleResizeDrop}
-                                  onQueueDrop={(order) =>
-                                    setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
-                                  }
-                                  onApproveRForce={approveRForce}
-                                  onDismissRForce={dismissRForce}
-                                />
-                              );
-                            }
-
-                            return (
-                              <StandardCell
-                                key={day.toISOString()}
-                                crew={crew}
-                                day={day}
-                                off={off}
-                                hasConflict={hasConflict}
-                                cellAppts={cellAppts}
-                                cellDisplayItems={cellDisplayItems}
-                                rforceOrders={rforceOrders}
-                                searchQuery={searchQuery}
-                                crewObj={crewObj}
-                                timeOffColor={timeOffColor}
-                                availability={dayAvail}
-                                showRForce={showRForce}
-                                onCardClick={setSelectedAppt}
-                                onRForceClick={(order, item) => setSelectedRForce({ order, crew: crewObj, displayItem: item })}
-                                onSchedule={() =>
-                                  setScheduleTarget({ date: day, crewId: crew.id })
-                                }
-                                getMultiDayLabel={getMultiDayLabel}
-                                onDrop={(order) =>
-                                  setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
-                                }
-                                onAppointmentDrop={(apptId, srcCrewId, srcDate, srcBlock) =>
-                                  handleAppointmentDrop(apptId, srcCrewId, srcDate, srcBlock, crew.id, format(day, "yyyy-MM-dd"), null)
-                                }
-                                onApproveRForce={approveRForce}
-                                onDismissRForce={dismissRForce}
-                              />
-                            );
-                          })}
-                        </tr>
+                        <StandardCell
+                          key={day.toISOString()}
+                          crew={crew}
+                          day={day}
+                          off={off}
+                          hasConflict={hasConflict}
+                          cellAppts={cellAppts}
+                          cellDisplayItems={cellDisplayItems}
+                          rforceOrders={rforceOrders}
+                          searchQuery={searchQuery}
+                          crewObj={crewObj}
+                          timeOffColor={timeOffColor}
+                          availability={dayAvail}
+                          showRForce={showRForce}
+                          onCardClick={setSelectedAppt}
+                          onRForceClick={(order, item) => setSelectedRForce({ order, crew: crewObj, displayItem: item })}
+                          onSchedule={() =>
+                            setScheduleTarget({ date: day, crewId: crew.id })
+                          }
+                          getMultiDayLabel={getMultiDayLabel}
+                          onDrop={(order) =>
+                            setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
+                          }
+                          onAppointmentDrop={(apptId, srcCrewId, srcDate, srcBlock) =>
+                            handleAppointmentDrop(apptId, srcCrewId, srcDate, srcBlock, crew.id, format(day, "yyyy-MM-dd"), null)
+                          }
+                          onApproveRForce={approveRForce}
+                          onDismissRForce={dismissRForce}
+                          hasMismatch={hasMismatch}
+                        />
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        );
-      })}
+                  </Fragment>
+                );
+              })}
+            </Fragment>
+          );
+        })}
+      </div>
 
       {selectedAppt && (
         <AppointmentSheet
@@ -573,6 +552,16 @@ export default function CrewLaneWeekView({
           onClose={() => setScheduleTarget(null)}
         />
       )}
+
+      {dropConfirmTarget && (
+        <ScheduleModal
+          date={new Date(`${dropConfirmTarget.date}T00:00:00`)}
+          crewId={dropConfirmTarget.crewId}
+          editingAppointment={dropConfirmTarget.appointment}
+          rescheduleMode
+          onClose={() => setDropConfirmTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -601,6 +590,7 @@ function MeasureTimeLaneCell({
   onQueueDrop,
   onApproveRForce,
   onDismissRForce,
+  hasMismatch,
 }: {
   crew: Crew;
   day: Date;
@@ -625,7 +615,16 @@ function MeasureTimeLaneCell({
   onQueueDrop?: (order: RForceOrder) => void;
   onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string) => Promise<Appointment | null>;
   onDismissRForce?: (workOrderNumber: string, rforceDate: string, startTime?: string) => Promise<void>;
+  hasMismatch: (appt: Appointment) => boolean;
 }) {
+  const {
+    draggedAppointment,
+    draggedOrder,
+    resizingAppointment,
+    setDraggedAppointment,
+    setDraggedOrder,
+    setResizingAppointment,
+  } = useSchedulerDrag();
   const [blockDragOver, setBlockDragOver] = useState<TimeBlock | null>(null);
   const [cellDragOver, setCellDragOver] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
@@ -676,13 +675,13 @@ function MeasureTimeLaneCell({
     e.preventDefault();
     setCellDragOver(false);
     setBlockDragOver(null);
-    const draggedAppt = getDraggedAppointment();
+    const draggedAppt = draggedAppointment;
     if (draggedAppt) {
       onAppointmentDrop?.(draggedAppt.appointment.id, draggedAppt.sourceCrewId, draggedAppt.sourceDate, draggedAppt.sourceTimeBlock, MEASURE_TIME_BLOCKS[0]);
       setDraggedAppointment(null);
       return;
     }
-    const order = getDraggedOrder();
+    const order = draggedOrder;
     if (order) {
       onQueueDrop?.(order);
       setDraggedOrder(null);
@@ -690,8 +689,8 @@ function MeasureTimeLaneCell({
   }
 
   return (
-    <td
-      className={`p-0 border-b border-border border-l border-l-border/30 align-top ${
+    <div
+      className={`p-0 border-b border-border border-l border-l-border/30 ${
         hasConflict
           ? "bg-time-off-conflict/10"
           : off
@@ -740,19 +739,19 @@ function MeasureTimeLaneCell({
               e.preventDefault();
               e.stopPropagation();
               setBlockDragOver(null);
-              const resizing = getResizingAppointment();
+              const resizing = resizingAppointment;
               if (resizing) {
                 onResizeDrop?.(resizing.appointmentId, block);
                 setResizingAppointment(null);
                 return;
               }
-              const draggedAppt = getDraggedAppointment();
+              const draggedAppt = draggedAppointment;
               if (draggedAppt) {
                 onAppointmentDrop?.(draggedAppt.appointment.id, draggedAppt.sourceCrewId, draggedAppt.sourceDate, draggedAppt.sourceTimeBlock, block);
                 setDraggedAppointment(null);
                 return;
               }
-              const order = getDraggedOrder();
+              const order = draggedOrder;
               if (order) {
                 onQueueDrop?.(order);
                 setDraggedOrder(null);
@@ -832,7 +831,7 @@ function MeasureTimeLaneCell({
                               <CompactAppointmentContent
                                 appointment={a}
                                 crew={crewObj}
-                                hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
+                                hasDiscrepancy={!!discItem || hasMismatch(a)}
                                 multiDayLabel={multiDay}
                                 orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                                 accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
@@ -867,7 +866,7 @@ function MeasureTimeLaneCell({
           })}
         </div>
       )}
-    </td>
+    </div>
   );
 }
 
@@ -892,6 +891,7 @@ function StandardCell({
   onAppointmentDrop,
   onApproveRForce,
   onDismissRForce,
+  hasMismatch,
 }: {
   crew: Crew;
   day: Date;
@@ -913,7 +913,9 @@ function StandardCell({
   onAppointmentDrop?: (apptId: string, srcCrewId: string, srcDate: string, srcBlock: TimeBlock | null) => void;
   onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string) => Promise<Appointment | null>;
   onDismissRForce?: (workOrderNumber: string, rforceDate: string, startTime?: string) => Promise<void>;
+  hasMismatch: (appt: Appointment) => boolean;
 }) {
+  const { draggedAppointment, draggedOrder, setDraggedAppointment, setDraggedOrder } = useSchedulerDrag();
   const [dragOver, setDragOver] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
 
@@ -949,13 +951,13 @@ function StandardCell({
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragOver(false);
-    const draggedAppt = getDraggedAppointment();
+    const draggedAppt = draggedAppointment;
     if (draggedAppt) {
       onAppointmentDrop?.(draggedAppt.appointment.id, draggedAppt.sourceCrewId, draggedAppt.sourceDate, draggedAppt.sourceTimeBlock);
       setDraggedAppointment(null);
       return;
     }
-    const order = getDraggedOrder();
+    const order = draggedOrder;
     if (order && onDrop) {
       onDrop(order);
       setDraggedOrder(null);
@@ -975,8 +977,8 @@ function StandardCell({
 
   if (off && !hasContent) {
     return (
-      <td
-        className={`p-0.5 border-b border-border border-l border-l-border/30 align-top ${timeOffColor ? "" : "bg-time-off-light/40"} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+      <div
+        className={`p-0.5 border-b border-border border-l border-l-border/30 ${timeOffColor ? "" : "bg-time-off-light/40"} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
         style={timeOffColor ? offStyle : undefined}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -988,14 +990,14 @@ function StandardCell({
         >
           <Palmtree size={10} style={timeOffColor ? { color: `${timeOffColor}90` } : undefined} className={timeOffColor ? "" : "text-time-off/50"} />
         </div>
-      </td>
+      </div>
     );
   }
 
   if (crewUnavailable && !hasContent) {
     return (
-      <td
-        className={`p-0.5 border-b border-border border-l border-l-border/30 align-top bg-muted/5 ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+      <div
+        className={`p-0.5 border-b border-border border-l border-l-border/30 bg-muted/5 ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1003,13 +1005,13 @@ function StandardCell({
         <div className="w-full h-6 rounded-sm flex items-center justify-center border border-dashed bg-muted/5 border-muted/20">
           <Ban size={9} className="text-muted/30" />
         </div>
-      </td>
+      </div>
     );
   }
 
   return (
-    <td
-      className={`p-0.5 border-b border-border border-l border-l-border/30 align-top ${
+    <div
+      className={`p-0.5 border-b border-border border-l border-l-border/30 ${
         hasConflict
           ? (timeOffColor ? "" : "bg-time-off-conflict/10")
           : off
@@ -1082,7 +1084,7 @@ function StandardCell({
                     <CompactAppointmentContent
                       appointment={a}
                       crew={crewObj}
-                      hasDiscrepancy={!!discItem || checkDiscrepancy(a, rforceOrders)}
+                      hasDiscrepancy={!!discItem || hasMismatch(a)}
                       multiDayLabel={multiDay}
                       orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                       accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
@@ -1108,7 +1110,7 @@ function StandardCell({
           <Plus size={8} className="text-muted/15 group-hover:text-primary" />
         </button>
       )}
-    </td>
+    </div>
   );
 }
 
@@ -1133,6 +1135,7 @@ function WeekCard({
   spanBlocks?: number;
   showResizeHandle?: boolean;
 }) {
+  const { setDraggedAppointment, setResizingAppointment } = useSchedulerDrag();
   const isDraggable = !!appointment;
   const spanHeight = spanBlocks && spanBlocks > 1 ? { height: `${spanBlocks * 18}px`, position: "relative" as const, zIndex: 5 } : undefined;
 
@@ -1175,6 +1178,14 @@ function WeekCard({
       onDragStart={isDraggable ? handleDragStart : undefined}
       onDragEnd={isDraggable ? handleDragEnd : undefined}
       onClick={onClick}
+      tabIndex={0}
+      aria-label="Open appointment details"
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
       className={`rounded-sm cursor-pointer hover:shadow transition-all text-[9px] leading-tight overflow-hidden group/card ${
         dimmed ? "opacity-30" : ""
       } ${isDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}
@@ -1212,35 +1223,52 @@ function CompactAppointmentContent({
   const bgColor = crew?.color || "#1a73e8";
   const city = parseCity(appointment.address);
   const isLinked = !!appointment.work_order_number;
+  // Parse additional crew members from notes
+  const additionalMembers = appointment.notes?.match(/^\[Resources: ([^\]]*)\]/)?.[1] || "";
+  const hasHelpers = !!(appointment.secondary_crew_id || appointment.tertiary_crew_id || additionalMembers);
 
   return (
-    <div className="rounded-sm px-1 py-0.5 text-white" style={{ backgroundColor: bgColor }}>
+    <div
+      className={`rounded-sm px-1 py-0.5 text-white ${hasDiscrepancy ? "border-l-[3px] border-amber-400" : ""}`}
+      style={{ backgroundColor: bgColor }}
+    >
+      {hasDiscrepancy && (
+        <div className="truncate text-amber-200 text-[8px] font-semibold leading-tight flex items-center gap-0.5">
+          <AlertTriangle size={8} className="shrink-0" />
+          rF mismatch
+        </div>
+      )}
       {orderAlerts && (
         <div className="truncate text-yellow-200 text-[8px] leading-tight">{orderAlerts}</div>
       )}
       <div className="font-semibold truncate flex items-center gap-0.5">
         {appointment.customer_name}
-        {appointment.manual_override ? (
-          <span className="text-blue-200 text-[7px] font-bold" title="Manual override">M</span>
-        ) : hasDiscrepancy ? (
-          <span className="text-yellow-200 text-[7px]">!</span>
-        ) : null}
+        {appointment.manual_override && (
+          <span className="text-blue-200 text-[8px] font-bold" title="Manual override">M</span>
+        )}
         {showRForce && (
           isLinked ? (
-            hasDiscrepancy ? (
-              <span className="text-amber-300 text-[7px]" title="rForce mismatch">&#9888;</span>
-            ) : (
-              <span className="text-green-300 text-[7px]" title="In sync with rForce">&#10003;</span>
+            !hasDiscrepancy && (
+              <span className="text-green-300 text-[8px]" title="In sync with rForce">&#10003;</span>
             )
           ) : (
-            <span title="Not linked to rForce"><Unlink size={7} className="shrink-0 opacity-60" /></span>
+            <span title="Not linked to rForce"><Unlink size={8} className="shrink-0 opacity-60" /></span>
           )
         )}
       </div>
-      {accountName && <div className="truncate opacity-70 text-[7px]">{accountName}</div>}
-      {city && <div className="truncate opacity-80 text-[8px]">{city}</div>}
+      {accountName && <div className="truncate opacity-70 text-[8px]">{accountName}</div>}
+      {city && <div className="truncate opacity-80 text-[9px]">{city}</div>}
+      {hasHelpers && (
+        <div className="truncate opacity-80 text-[8px] flex items-center gap-0.5">
+          <span>+{[
+            ...(appointment.secondary_crew_id ? ["crew2"] : []),
+            ...(appointment.tertiary_crew_id ? ["crew3"] : []),
+            ...(additionalMembers ? [additionalMembers] : []),
+          ].join(", ")}</span>
+        </div>
+      )}
       {multiDayLabel && (
-        <div className="opacity-70 text-[8px]">{multiDayLabel}</div>
+        <div className="opacity-70 text-[9px]">{multiDayLabel}</div>
       )}
     </div>
   );

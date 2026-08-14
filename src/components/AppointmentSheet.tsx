@@ -88,6 +88,7 @@ export default function AppointmentSheet({
   const tertiaryCrew = appointment.tertiary_crew_id
     ? crews.find((c) => c.id === appointment.tertiary_crew_id)
     : null;
+  const additionalMembers = appointment.notes?.match(/^\[Resources: ([^\]]*)\]/)?.[1] || "";
   const isCancelled = appointment.status === "cancelled";
 
   const handleCancel = async () => {
@@ -214,9 +215,16 @@ export default function AppointmentSheet({
           </div>
 
           <InfoRow icon={<User size={16} />} label="Crew">
-            {crew?.name || "Unknown"}
-            {secondaryCrew && ` + ${secondaryCrew.name}`}
-            {tertiaryCrew && ` + ${tertiaryCrew.name}`}
+            <div>
+              <div>{crew?.name || "Unknown"}</div>
+              {secondaryCrew && <div className="text-xs opacity-80">+ {secondaryCrew.name}</div>}
+              {tertiaryCrew && <div className="text-xs opacity-80">+ {tertiaryCrew.name}</div>}
+              {additionalMembers && (
+                <div className="text-xs opacity-70 mt-0.5">
+                  Crew members: {additionalMembers}
+                </div>
+              )}
+            </div>
           </InfoRow>
 
           <InfoRow icon={<Calendar size={16} />} label="Date">

@@ -13,7 +13,6 @@ import {
   Sun,
   Moon,
   Monitor,
-  AlertTriangle,
   Eye,
   EyeOff,
   MapPin,
@@ -36,8 +35,6 @@ interface Props {
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
   onJumpToAppointment?: (date: Date) => void;
-  flagCount?: number;
-  onFlagsClick?: () => void;
   showRForce?: boolean;
   onToggleRForce?: () => void;
 }
@@ -53,8 +50,6 @@ export default function CalendarHeader({
   searchQuery = "",
   onSearchChange,
   onJumpToAppointment,
-  flagCount = 0,
-  onFlagsClick,
   showRForce = false,
   onToggleRForce,
 }: Props) {
@@ -291,21 +286,6 @@ export default function CalendarHeader({
         >
           <Search size={16} />
         </button>
-        {onFlagsClick && (
-          <button
-            onClick={onFlagsClick}
-            className="relative p-1.5 rounded-full hover:bg-surface"
-            aria-label={`${flagCount} issues`}
-            title={`${flagCount} scheduling issues`}
-          >
-            <AlertTriangle size={16} className={flagCount > 0 ? "text-warning" : "text-muted"} />
-            {flagCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] bg-danger text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5">
-                {flagCount > 99 ? "99+" : flagCount}
-              </span>
-            )}
-          </button>
-        )}
         {onToggleRForce && (
           <button
             onClick={onToggleRForce}

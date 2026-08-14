@@ -756,12 +756,24 @@ export async function approveRForceOrder(
   const { start, end } = timeBlockStartEnd(tb);
   const appointmentType = (normalizeWoType(rforceOrder.work_order_type) || "install") as Appointment["appointment_type"];
 
+  // Compute duration from rForce date range (multi-day installs)
+  let durationDays = 1;
+  if (rforceOrder.scheduled_start && rforceOrder.scheduled_end) {
+    const startDate = rforceOrder.scheduled_start.slice(0, 10);
+    const endDate = rforceOrder.scheduled_end.slice(0, 10);
+    if (startDate !== endDate) {
+      const diffMs = new Date(endDate).getTime() - new Date(startDate).getTime();
+      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1;
+      if (diffDays > 1 && diffDays <= 14) durationDays = diffDays;
+    }
+  }
+
   // Pre-write conflict check — block the approval if it would double-book
   if (existingAppointments) {
     const conflicts = checkSchedulingConflicts(
       crewId,
       scheduledDate,
-      1, // rForce approvals are always single-day
+      durationDays,
       tb,
       null,
       existingAppointments,
@@ -772,6 +784,64 @@ export async function approveRForceOrder(
   }
 
   const sb = requireSupabase();
+
+  const { data: rpcData, error: rpcError } = await sb.rpc("approve_rforce_order", {
+    p_crew_id: crewId,
+    p_appointment_type: appointmentType || "install",
+    p_order_number: rforceOrder.order_number || null,
+    p_work_order_number: rforceOrder.work_order_number.trim(),
+    p_customer_name: rforceOrder.customer_name || "Unknown",
+    p_address: rforceOrder.address || "",
+    p_scheduled_date: scheduledDate,
+    p_start_time: start,
+    p_end_time: end,
+    p_time_block: tb,
+    p_product_count: rforceOrder.product_count ?? null,
+    p_salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
+    p_rforce_order_id: rforceOrder.id,
+    p_actor_id: actorId || null,
+    p_actor_name: actorName || null,
+    p_duration_days: durationDays,
+  });
+  if (rpcError) {
+    const message = rpcError.message || "rForce confirmation failed";
+    if (message.includes("DUPLICATE_WO") || rpcError.code === "23505") {
+      throw new Error(`DUPLICATE_WO: An active appointment for WO ${rforceOrder.work_order_number} already exists`);
+    }
+    if (message.includes("SCHEDULING_CONFLICT")) throw new Error(message);
+    throw new Error(message);
+  }
+
+  const rpcResult = rpcData as { appointment_id?: string; link_id?: string } | null;
+  if (!rpcResult?.appointment_id || !rpcResult.link_id) {
+    throw new Error("rForce confirmation returned incomplete data");
+  }
+  const [{ data: atomicAppt, error: atomicApptError }, { data: atomicLink, error: atomicLinkError }] =
+    await Promise.all([
+      sb.from("sched_appointments").select("*").eq("id", rpcResult.appointment_id).single(),
+      sb.from("sched_appointment_links").select("*").eq("id", rpcResult.link_id).single(),
+    ]);
+  if (atomicApptError || !atomicAppt) throw new Error(atomicApptError?.message || "Confirmed appointment could not be loaded");
+  if (atomicLinkError || !atomicLink) throw new Error(atomicLinkError?.message || "Confirmed appointment link could not be loaded");
+
+  learnResourceMapping(rforceOrder, crewId);
+  return {
+    appointment: atomicAppt as Appointment,
+    link: atomicLink as AppointmentLink,
+    warnings,
+  };
+
+  /* Legacy non-atomic confirmation path retained in git history only.
+  // Guard: prevent duplicate appointments by work order number
+  const { data: existingByWo } = await sb
+    .from("sched_appointments")
+    .select("id")
+    .eq("work_order_number", rforceOrder.work_order_number)
+    .neq("status", "cancelled")
+    .limit(1);
+  if (existingByWo && existingByWo.length > 0) {
+    throw new Error(`DUPLICATE_WO: An appointment for WO ${rforceOrder.work_order_number} already exists`);
+  }
 
   // Step 1: INSERT appointment (critical — throw on failure)
   const { data: appt, error } = await sb
@@ -788,7 +858,7 @@ export async function approveRForceOrder(
       scheduled_date: scheduledDate,
       start_time: start,
       end_time: end,
-      duration_days: 1,
+      duration_days: durationDays,
       time_block: tb,
       status: "scheduled",
       notes: null,
@@ -847,6 +917,7 @@ export async function approveRForceOrder(
   learnResourceMapping(rforceOrder, crewId);
 
   return { appointment: typedAppt, link, warnings };
+  */
 }
 
 // ── Flag Resolutions ──

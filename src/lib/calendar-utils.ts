@@ -18,6 +18,7 @@ import {
   parseISO,
   isSameDay,
 } from "date-fns";
+import { deriveRForceCalendarStatus } from "./rforce-calendar-status";
 
 export const MEASURE_TIME_BLOCKS: TimeBlock[] = [
   "9-10",
@@ -484,30 +485,21 @@ export function getRForceDisplayItems(
 ): RForceDisplayItem[] {
   const dateStr = format(date, "yyyy-MM-dd");
 
-  const linksByExtKey = new Map<string, AppointmentLink>();
-  for (const link of activeLinks) {
-    if (!link.unlinked_at) linksByExtKey.set(link.external_key, link);
-  }
-
-  const apptsById = new Map<string, Appointment>();
-  for (const a of appointments) {
-    if (a.status !== "cancelled") apptsById.set(a.id, a);
-  }
+  const normalizeWo = (value: string | null | undefined) =>
+    (value || "").trim().toLowerCase();
+  const statusByWo = new Map(
+    deriveRForceCalendarStatus(
+      rforceOrders,
+      appointments,
+      activeLinks,
+      crews,
+      mappings || []
+    ).map((item) => [normalizeWo(item.rforceOrder.work_order_number), item])
+  );
 
   const dismissalKeys = new Set<string>();
   for (const d of dismissals) {
     dismissalKeys.add(`${d.work_order_number}|${d.rforce_date}`);
-  }
-
-  // Build a set of work_order_numbers that already have an active app appointment.
-  // This catches approved orders even when the link INSERT failed (e.g. RLS).
-  const linkedWOs = new Set<string>();
-  const apptByWO = new Map<string, Appointment>();
-  for (const a of appointments) {
-    if (a.work_order_number && a.status !== "cancelled") {
-      linkedWOs.add(a.work_order_number);
-      apptByWO.set(a.work_order_number, a);
-    }
   }
 
   const items: RForceDisplayItem[] = [];
@@ -535,13 +527,12 @@ export function getRForceDisplayItems(
     const isMeasure = crew.crew_type === "measure_tech";
     const timeBlock: TimeBlock = isMeasure ? timeToBlock(hour) : "full_day";
 
-    const link = linksByExtKey.get(rf.id);
+    const calendarStatus = statusByWo.get(normalizeWo(rf.work_order_number));
 
-    if (link) {
-      const appt = apptsById.get(link.appointment_id);
-      if (!appt) continue;
+    if (calendarStatus?.linkedAppointment) {
+      const appt = calendarStatus.linkedAppointment;
 
-      const diffs = compareLinkedPair(appt, rf, crews, mappings);
+      const diffs = calendarStatus.status === "mismatch" ? calendarStatus.mismatchDetails : null;
       const displayMode: RForceDisplayMode = diffs ? "discrepancy" : "synced";
       items.push({
         rforceOrder: rf,
@@ -551,10 +542,10 @@ export function getRForceDisplayItems(
         linkedAppointment: appt,
         differences: diffs || undefined,
       });
-    } else if (linkedWOs.has(rf.work_order_number)) {
+    } else if (calendarStatus?.linkedAppointment) {
       // Matched by work_order_number — treat as synced (or discrepancy)
-      const appt = apptByWO.get(rf.work_order_number)!;
-      const diffs = compareLinkedPair(appt, rf, crews, mappings);
+      const appt = calendarStatus.linkedAppointment;
+      const diffs = calendarStatus.status === "mismatch" ? calendarStatus.mismatchDetails : null;
       const displayMode: RForceDisplayMode = diffs ? "discrepancy" : "synced";
       items.push({
         rforceOrder: rf,

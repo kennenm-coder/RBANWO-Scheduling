@@ -37,3 +37,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.claude/worktrees/
+CLAUDE_FINISHING_STEPS.md
+CLAUDE_SCHEDULER_REBUILD_PLAN.md
