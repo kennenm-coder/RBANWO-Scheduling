@@ -5,6 +5,10 @@ import {
   getAppointmentsForDay,
   getAppointmentsForCrewAndDay,
   timeBlockLabel,
+  formatTime12,
+  formatTimeShort,
+  formatAppointmentTimeRange,
+  humanizeConflictMessage,
   timeBlockStartEnd,
   getTimeBlocksForType,
   timeToBlock,
@@ -199,5 +203,62 @@ describe("timeBlockLabel", () => {
   it("returns formatted labels", () => {
     expect(timeBlockLabel("9-10")).toBe("9:00 – 10:00 AM");
     expect(timeBlockLabel("full_day")).toBe("Full Day (8 AM)");
+  });
+});
+
+describe("humanizeConflictMessage", () => {
+  const crews = [{ id: "crew-1", name: "Ryan Benoit-Perz" } as unknown as import("./types").Crew];
+  const appts = [
+    makeAppt({ id: "9161ae7c-df81-4ef2-ae13-c0a14501d59e", crew_id: "crew-1", customer_name: "Jim Hays", scheduled_date: "2026-08-18", start_time: "12:00", end_time: "14:00", time_block: "12-2" }),
+  ];
+
+  it("translates a resource-conflict UUID into who/when/customer", () => {
+    const msg = "SCHEDULING_CONFLICT: resource is already assigned to appointment 9161ae7c-df81-4ef2-ae13-c0a14501d59e";
+    const out = humanizeConflictMessage(msg, appts, crews);
+    expect(out).toContain("Ryan Benoit-Perz");
+    expect(out).toContain("Jim Hays");
+    expect(out).toContain("12:00 PM");
+    expect(out).not.toContain("9161ae7c");
+  });
+
+  it("falls back gracefully when the appointment isn't loaded", () => {
+    const msg = "SCHEDULING_CONFLICT: resource is already assigned to appointment 00000000-0000-0000-0000-000000000000";
+    expect(humanizeConflictMessage(msg, appts, crews)).toBe("That crew is already booked in this slot.");
+  });
+
+  it("strips the prefix from other conflict messages", () => {
+    expect(humanizeConflictMessage("SCHEDULING_CONFLICT: That crew slot is already booked", appts, crews)).toBe("That crew slot is already booked");
+  });
+});
+
+describe("formatTimeShort / formatAppointmentTimeRange", () => {
+  it("formats compact times", () => {
+    expect(formatTimeShort("10:30")).toBe("10:30a");
+    expect(formatTimeShort("14:00")).toBe("2p");
+    expect(formatTimeShort("16:00")).toBe("4p");
+    expect(formatTimeShort("09:00")).toBe("9a");
+    expect(formatTimeShort("12:00")).toBe("12p");
+    expect(formatTimeShort(null)).toBe("");
+  });
+  it("formats a start–end range", () => {
+    expect(formatAppointmentTimeRange({ start_time: "10:30", end_time: "12:00" })).toBe("10:30a–12p");
+    expect(formatAppointmentTimeRange({ start_time: "08:00", end_time: "16:00" })).toBe("8a–4p");
+    expect(formatAppointmentTimeRange({ start_time: "10:00", end_time: null })).toBe("10a");
+    expect(formatAppointmentTimeRange({ start_time: null, end_time: null })).toBe("");
+  });
+});
+
+describe("formatTime12", () => {
+  it("formats 24-hour times as 12-hour", () => {
+    expect(formatTime12("08:00")).toBe("8:00 AM");
+    expect(formatTime12("16:00")).toBe("4:00 PM");
+    expect(formatTime12("00:00")).toBe("12:00 AM");
+    expect(formatTime12("12:30")).toBe("12:30 PM");
+    expect(formatTime12("09:05")).toBe("9:05 AM");
+  });
+  it("handles empty/invalid input", () => {
+    expect(formatTime12(null)).toBe("");
+    expect(formatTime12("")).toBe("");
+    expect(formatTime12("garbage")).toBe("garbage");
   });
 });

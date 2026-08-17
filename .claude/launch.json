@@ -6,7 +6,7 @@
       "runtimeExecutable": "cmd.exe",
       "runtimeArgs": ["/c", ".claude\\dev.cmd"],
       "port": 3000,
-      "autoPort": true
+      "autoPort": true,
     },
     {
       "name": "demo",

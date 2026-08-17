@@ -17,6 +17,14 @@ import type { Appointment, TimeBlock } from "./types";
 vi.mock("./supabase", () => ({
   requireSupabase: () => ({
     from: () => ({
+      // Existing-work-order lookup performed by approveRForceOrder before it
+      // decides whether to place a queued tile or create a new one. Returns no
+      // candidates so the conflict-check / create path is exercised.
+      select: () => ({
+        neq: () => ({
+          ilike: () => Promise.resolve({ data: [], error: null }),
+        }),
+      }),
       insert: () => ({
         select: () => ({
           single: () => Promise.resolve({ data: null, error: { code: "mock", message: "should not reach DB" } }),

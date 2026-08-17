@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
@@ -24,10 +24,12 @@ import {
   timeBlockStartEnd,
 } from "@/lib/calendar-utils";
 import { deriveRForceCalendarStatus } from "@/lib/rforce-calendar-status";
+import { assignTimeLanes } from "@/lib/timeline-lanes";
 import { getTimeOffForDate } from "@/lib/store";
 import { useCurrentActor } from "./AuthProvider";
 import { crewHasType, sortByFirstName, getEligibleCrews, getDepartmentSectionsForDate } from "@/lib/crew-utils";
-import { executeScheduleMove } from "@/lib/schedule-command";
+import { executeScheduleMove, validateMove } from "@/lib/schedule-command";
+import { calculateTimelineDrag, getDurationMinutes, DAY_VIEW_SNAP_MINUTES } from "@/lib/timeline-drag";
 import RForceDetailSheet from "./RForceDetailSheet";
 import { Palmtree, MapPinned, Ban } from "lucide-react";
 import { format } from "date-fns";
@@ -42,12 +44,17 @@ interface Props {
   date: Date;
   filterType?: AppointmentType | "all";
   showRForce?: boolean;
+  /** Crew to scroll to + briefly highlight (arriving from an Issues click). */
+  focusCrewId?: string | null;
+  onFocusHandled?: () => void;
 }
 
 export default function CrewLaneDayView({
   date,
   filterType = "all",
   showRForce = false,
+  focusCrewId = null,
+  onFocusHandled,
 }: Props) {
   const {
     crews, appointments, rforceOrders, timeOffRequests,
@@ -70,6 +77,34 @@ export default function CrewLaneDayView({
     crew?: Crew;
     displayItem?: RForceDisplayItem;
   } | null>(null);
+
+  // Scroll to + highlight the crew row the user clicked from the Issues page.
+  // Poll briefly because the day's appointments may still be loading when we
+  // arrive, so the crew row might not be in the DOM on the first tick.
+  useEffect(() => {
+    if (!focusCrewId) return;
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries += 1;
+      const el = document.querySelector<HTMLElement>(`[data-crew-row="${focusCrewId}"]`);
+      if (el) {
+        clearInterval(iv);
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.style.outline = "2px solid var(--color-primary)";
+        el.style.outlineOffset = "-2px";
+        setTimeout(() => {
+          el.style.outline = "";
+          el.style.outlineOffset = "";
+        }, 2600);
+        onFocusHandled?.();
+      } else if (tries >= 20) {
+        clearInterval(iv);
+        onFocusHandled?.();
+      }
+    }, 200);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusCrewId]);
 
   const dateStr = format(date, "yyyy-MM-dd");
   const offToday = useMemo(
@@ -147,6 +182,9 @@ export default function CrewLaneDayView({
         startTime: startTime || null,
         endTime: endTime || null,
         timeBlock: appt.time_block,
+        // Day view drops land at an exact time — keep it (and re-derive the block)
+        // instead of snapping a measure job back to its block start.
+        exactTime: appt.time_block !== "full_day" && !!startTime,
       },
       appt,
       appointments,
@@ -244,16 +282,18 @@ export default function CrewLaneDayView({
         <RForceDetailSheet
           order={selectedRForce.order}
           crew={selectedRForce.crew}
+          stale={selectedRForce.displayItem?.stale}
           onClose={() => setSelectedRForce(null)}
           onApprove={
             selectedRForce.displayItem?.displayMode === "approval"
-              ? async () => {
+              ? async (override?: boolean) => {
                   const item = selectedRForce.displayItem!;
                   await approveRForce(
                     item.rforceOrder,
                     item.crewId,
                     item.timeBlock,
-                    item.rforceOrder.scheduled_start?.slice(0, 10) || dateStr
+                    item.rforceOrder.scheduled_start?.slice(0, 10) || dateStr,
+                    override
                   );
                 }
               : undefined
@@ -299,6 +339,17 @@ function durationPercent(start: string, end: string): number {
   return timeToPercent(end) - timeToPercent(start);
 }
 
+interface DayDragPreview {
+  crewId: string;
+  customerName: string;
+  leftPercent: number;
+  widthPercent: number;
+  startTime: string;
+  endTime: string;
+  valid: boolean;
+  invalidReason?: string;
+}
+
 function CrewSection({
   title,
   crews,
@@ -332,14 +383,41 @@ function CrewSection({
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
   onRForceClick: (order: RForceOrder, crew: Crew, displayItem?: RForceDisplayItem) => void;
-  onApproveRForce: (rforceOrder: RForceOrder, crewId: string, timeBlock: TimeBlock, scheduledDate: string) => Promise<Appointment | null>;
+  onApproveRForce: (rforceOrder: RForceOrder, crewId: string, timeBlock: TimeBlock, scheduledDate: string, override?: boolean) => Promise<Appointment | null>;
   onDismissRForce: (workOrderNumber: string, rforceDate: string, rforceStartTime?: string) => Promise<void>;
   onAppointmentDrop?: (appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string) => void;
   hasMismatch: (appt: Appointment) => boolean;
 }) {
   const { draggedAppointment, draggedOrder, setDraggedAppointment, setDraggedOrder } = useSchedulerDrag();
+  // Minutes into the dragged card where the pointer grabbed it. Captured at
+  // drag start so the drop can subtract it and the card doesn't jump when the
+  // user grabs its middle or right edge.
+  const grabOffsetMinutesRef = useRef(0);
   const [showMap, setShowMap] = useState(false);
+
+  // Live drag preview: the tile-shaped placeholder shown at the snapped landing
+  // spot while dragging. Only updated when the meaningful slot changes (see
+  // lastPreviewKeyRef) so we don't re-render on every pixel of pointer movement.
+  const [dragPreview, setDragPreview] = useState<DayDragPreview | null>(null);
+  const lastPreviewKeyRef = useRef<string | null>(null);
+
+  function clearDragPreview() {
+    setDragPreview(null);
+    lastPreviewKeyRef.current = null;
+    grabOffsetMinutesRef.current = 0;
+  }
+
+  // Record how far into the card (in minutes) the pointer grabbed, so the drop
+  // can offset by it. The card's on-screen width maps to its duration, so the
+  // horizontal grab ratio × duration is the grab offset in minutes.
+  function captureGrabOffset(e: React.DragEvent, appt: Appointment) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0;
+    const clampedRatio = Math.max(0, Math.min(1, ratio));
+    const dur = getDurationMinutes(appt.start_time || "08:00", appt.end_time || "16:00");
+    grabOffsetMinutesRef.current = clampedRatio * (dur > 0 ? dur : 0);
+  }
   const [dragOverCrewId, setDragOverCrewId] = useState<string | null>(null);
 
   const rforceByWo = useMemo(() => {
@@ -405,6 +483,109 @@ function CrewSection({
               const avail = getCrewAvailability(crew.id, date, availabilityRules, availabilityExceptions);
               const crewUnavailable = !avail.available;
 
+              // Overlap-lane assignment so same-time items never draw on top of
+              // each other, with per-tile heights so a card with rForce alerts
+              // (extra lines) gets a taller lane instead of clipping — the crew
+              // row grows to fit the tallest tile in each lane.
+              const LANE_GAP = 4;
+              // Tile width as % of the timeline. Below NARROW_PCT a short (1–2h)
+              // tile is too skinny for the full layout, so it drops to a condensed
+              // essentials-only card (name + time + city).
+              const NARROW_PCT = 16;
+              const tileWidthPct = (a: Appointment): number => {
+                const start = a.start_time || "08:00";
+                const end = a.end_time || (a.time_block === "full_day" ? "16:00" : "10:00");
+                return Math.max(durationPercent(start, end), 100 / TIMELINE_HOURS);
+              };
+              const isNarrowTile = (a: Appointment) => tileWidthPct(a) < NARROW_PCT;
+              // Estimate how much vertical room an app card needs from its content.
+              const estimateAppHeight = (a: Appointment): number => {
+                const widthPct = tileWidthPct(a);
+                // Condensed card: p-1 padding + name + time + city.
+                if (widthPct < NARROW_PCT) return 8 + 16 + 14 + 16 + 12;
+
+                const rf = a.work_order_number ? rforceByWo.get(a.work_order_number) : undefined;
+                const alertText = rf?.order_alerts || rf?.scheduler_notes || "";
+                const hasAccount = !!rf?.account_name;
+                const hasDisc = crewDiscrepancies.some((d) => d.linkedAppointment?.id === a.id) || hasMismatch(a);
+                const hasHelpers = !!(a.secondary_crew_id || a.tertiary_crew_id || /^\[Resources:/.test(a.notes || ""));
+                const wide = widthPct >= 20;
+                const charsPerLine = Math.max(12, Math.round(widthPct * 0.9));
+                let h = 16 + 16 + 14 + 16 + (wide ? 18 : 32); // padding + name + time + address + type/units row
+                if (hasAccount) h += 15;
+                if (hasDisc) h += wide ? 24 : 34;
+                if (alertText) {
+                  const lines = Math.min(2, Math.max(1, Math.ceil(alertText.length / charsPerLine)));
+                  h += lines * 14 + 10; // clamped alert banner + its margins
+                }
+                if (hasHelpers) h += 15;
+                if (a.duration_days > 1) h += 15;
+                return h + 4; // small safety margin over clipping
+              };
+              const RF_H = 58;
+              // Approval cards carry Approve/Dismiss buttons, so they need real
+              // height or the buttons clip — size from content + width.
+              const estimateApprovalHeight = (it: RForceDisplayItem): number => {
+                const o = it.rforceOrder;
+                const s = o.scheduled_start?.slice(11, 16) || "08:00";
+                const e = o.scheduled_end?.slice(11, 16) || "10:00";
+                const widthPct = Math.max(durationPercent(s, e), 100 / TIMELINE_HOURS);
+                const wide = widthPct >= 20;
+                // padding + name/badge + address + type/product + Approve/Dismiss row
+                let h = 16 + 20 + 16 + (wide ? 18 : 34) + 40;
+                if (o.account_name) h += 15;
+                return h;
+              };
+              const apptItem = (a: Appointment) => ({
+                id: a.id,
+                start_time: a.start_time,
+                end_time: a.end_time || (a.time_block === "full_day" ? "16:00" : null),
+                height: estimateAppHeight(a),
+              });
+              const apprItem = (it: RForceDisplayItem) => ({
+                id: `appr-${it.rforceOrder.work_order_number}`,
+                start_time: it.rforceOrder.scheduled_start?.slice(11, 16),
+                end_time: it.rforceOrder.scheduled_end?.slice(11, 16),
+                height: estimateApprovalHeight(it),
+              });
+              const rfItem = (it: RForceDisplayItem) => ({
+                id: `rf-${it.rforceOrder.work_order_number}`,
+                start_time: it.rforceOrder.scheduled_start?.slice(11, 16),
+                end_time: it.rforceOrder.scheduled_end?.slice(11, 16),
+                height: RF_H,
+              });
+              // Pack items into lanes, then size each lane to its tallest tile and
+              // stack lanes with cumulative offsets.
+              const layoutLanes = (items: { id: string; start_time?: string | null; end_time?: string | null; height: number }[]) => {
+                const { laneOf, laneCount } = assignTimeLanes(items);
+                const laneHeights = new Array(laneCount).fill(40);
+                for (const it of items) {
+                  const lane = laneOf.get(it.id) ?? 0;
+                  laneHeights[lane] = Math.max(laneHeights[lane], it.height);
+                }
+                const laneTops: number[] = [];
+                let acc = 0;
+                for (let i = 0; i < laneCount; i++) {
+                  laneTops.push(acc);
+                  acc += laneHeights[i] + LANE_GAP;
+                }
+                return {
+                  total: Math.max(acc - LANE_GAP, 40),
+                  styleFor: (id: string) => {
+                    const lane = laneOf.get(id) ?? 0;
+                    return { top: `${laneTops[lane]}px`, height: `${laneHeights[lane]}px` };
+                  },
+                };
+              };
+              // Single-layer: app tiles + approval cards share one timeline.
+              const singleLanes = layoutLanes([...crewAppts.map(apptItem), ...crewApprovals.map(apprItem)]);
+              // Two-layer: app tiles on the bottom, rForce + approvals on top.
+              const appLanes = layoutLanes(crewAppts.map(apptItem));
+              const rfTopLanes = layoutLanes([...crewRForceVisible.map(rfItem), ...crewApprovals.map(apprItem)]);
+              const laneStyle = (layout: { total: number }) => ({ minHeight: `${layout.total}px` });
+              const bandStyle = (layout: { styleFor: (id: string) => { top: string; height: string } }, id: string) =>
+                layout.styleFor(id);
+
               const [wsH, wsM] = avail.workStart.split(":").map(Number);
               const [weH, weM] = avail.workEnd.split(":").map(Number);
               const crewWorkStart = wsH + (wsM || 0) / 60;
@@ -423,6 +604,69 @@ function CrewSection({
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
                 if (dragOverCrewId !== crew.id) setDragOverCrewId(crew.id);
+                // Queue orders get the lane highlight only — no tile-shaped preview.
+                if (!dragged) return;
+
+                const appt = dragged.appointment;
+                const durationMins = getDurationMinutes(
+                  appt.start_time || "08:00",
+                  appt.end_time || "16:00"
+                );
+                if (!(durationMins > 0)) return;
+
+                // Recompute against the CURRENT lane rect every move so horizontal
+                // scrolling is reflected (clientX and rect.left are both viewport).
+                const rect = e.currentTarget.getBoundingClientRect();
+                const drag = calculateTimelineDrag({
+                  pointerClientX: e.clientX,
+                  laneLeft: rect.left,
+                  laneWidth: rect.width,
+                  timelineStartMinutes: TIMELINE_START * 60,
+                  timelineEndMinutes: TIMELINE_END * 60,
+                  appointmentDurationMinutes: durationMins,
+                  grabOffsetMinutes: grabOffsetMinutesRef.current,
+                  snapMinutes: DAY_VIEW_SNAP_MINUTES,
+                });
+
+                // Only re-render when the snapped slot (or crew/validity) changes,
+                // not on every pixel — keeps dragging smooth.
+                const key = `${crew.id}|${drag.startTime}|${drag.endTime}`;
+                if (lastPreviewKeyRef.current === key) return;
+                lastPreviewKeyRef.current = key;
+
+                // Validate against the shared command so the preview can warn
+                // (ineligible crew / conflict) before the user releases.
+                let invalidReason: string | undefined;
+                try {
+                  const err = validateMove(
+                    {
+                      appointmentId: appt.id,
+                      expectedVersion: appt.version,
+                      crewId: crew.id,
+                      scheduledDate: format(date, "yyyy-MM-dd"),
+                      timeBlock: appt.time_block,
+                      startTime: drag.startTime,
+                      endTime: drag.endTime,
+                    },
+                    appt,
+                    appointments,
+                    crews
+                  );
+                  invalidReason = err?.message;
+                } catch {
+                  invalidReason = undefined;
+                }
+
+                setDragPreview({
+                  crewId: crew.id,
+                  customerName: appt.customer_name,
+                  leftPercent: drag.leftPercent,
+                  widthPercent: drag.widthPercent,
+                  startTime: drag.startTime,
+                  endTime: drag.endTime,
+                  valid: !invalidReason,
+                  invalidReason,
+                });
               }
               function handleRowDragLeave() {
                 if (dragOverCrewId === crew.id) setDragOverCrewId(null);
@@ -432,29 +676,39 @@ function CrewSection({
                 setDragOverCrewId(null);
                 const dragged = draggedAppointment;
                 if (dragged) {
-                  // Calculate drop time from mouse X position on the timeline
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const xPct = ((e.clientX - rect.left) / rect.width) * 100;
-                  const dropHour = TIMELINE_START + (xPct / 100) * TIMELINE_HOURS;
-
-                  // Snap to nearest half-hour
-                  const snappedHour = Math.round(dropHour * 2) / 2;
-                  const h = Math.floor(snappedHour);
-                  const m = (snappedHour - h) * 60;
-                  const startTime = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-
-                  // Keep original duration
                   const origAppt = dragged.appointment;
-                  const [origSH, origSM] = (origAppt.start_time || "08:00").split(":").map(Number);
-                  const [origEH, origEM] = (origAppt.end_time || "16:00").split(":").map(Number);
-                  const durationMins = (origEH * 60 + origEM) - (origSH * 60 + origSM);
-                  const endMins = h * 60 + m + durationMins;
-                  const eH = Math.floor(endMins / 60);
-                  const eM = endMins % 60;
-                  const endTime = `${String(Math.min(eH, 23)).padStart(2, "0")}:${String(eM).padStart(2, "0")}`;
+                  const durationMins = getDurationMinutes(
+                    origAppt.start_time || "08:00",
+                    origAppt.end_time || "16:00"
+                  );
 
-                  onAppointmentDrop?.(dragged.appointment.id, crew.id, startTime, endTime);
+                  // A malformed / zero-length appointment can't be placed by
+                  // dragging — bail rather than invent a time. (Rare; the
+                  // reschedule modal is the right path for those.)
+                  if (!(durationMins > 0)) {
+                    setDraggedAppointment(null);
+                    clearDragPreview();
+                    return;
+                  }
+
+                  // Same shared math the live preview will use: subtract the
+                  // grab offset so the card lands where it was picked up, snap,
+                  // clamp inside the timeline, and preserve duration.
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const { startTime, endTime } = calculateTimelineDrag({
+                    pointerClientX: e.clientX,
+                    laneLeft: rect.left,
+                    laneWidth: rect.width,
+                    timelineStartMinutes: TIMELINE_START * 60,
+                    timelineEndMinutes: TIMELINE_END * 60,
+                    appointmentDurationMinutes: durationMins,
+                    grabOffsetMinutes: grabOffsetMinutesRef.current,
+                    snapMinutes: DAY_VIEW_SNAP_MINUTES,
+                  });
+
+                  onAppointmentDrop?.(origAppt.id, crew.id, startTime, endTime);
                   setDraggedAppointment(null);
+                  clearDragPreview();
                   return;
                 }
 
@@ -464,6 +718,7 @@ function CrewSection({
                   onQueueDrop?.(order, crew.id);
                   setDraggedOrder(null);
                 }
+                clearDragPreview();
               }
 
               function renderGridlines() {
@@ -481,7 +736,7 @@ function CrewSection({
               }
 
               return (
-                <div key={crew.id} className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : crewUnavailable ? "bg-muted/5" : ""}`}>
+                <div key={crew.id} data-crew-row={crew.id} className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : crewUnavailable ? "bg-muted/5" : ""}`}>
                   <div className={`w-36 shrink-0 p-2 text-xs font-medium ${off ? "bg-amber-100 dark:bg-amber-900/40" : crewUnavailable ? "bg-muted/5" : "bg-background"}`}>
                     <div className="flex items-center gap-1.5">
                       <div
@@ -506,7 +761,7 @@ function CrewSection({
                     /* Two-layer layout: rForce on top, app on bottom */
                     <div className="flex-1 flex flex-col min-w-0">
                       {/* rForce layer (top) */}
-                      <div className="relative min-h-[44px] border-b border-dashed border-border/50">
+                      <div className="relative min-h-[44px] border-b border-dashed border-border/50" style={laneStyle(rfTopLanes)}>
                         {renderGridlines()}
                         {crewRForceVisible.map((rf) => {
                           const startTime = rf.rforceOrder.scheduled_start?.slice(11, 16) || "08:00";
@@ -517,8 +772,8 @@ function CrewSection({
                           return (
                             <div
                               key={`rf-${rf.rforceOrder.work_order_number}`}
-                              className="absolute top-0.5 bottom-0.5 z-[2] overflow-hidden"
-                              style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                              className="absolute z-[2] overflow-hidden"
+                              style={{ left: `${leftPct}%`, width: `${widthPct}%`, ...bandStyle(rfTopLanes, `rf-${rf.rforceOrder.work_order_number}`) }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onRForceClick(rf.rforceOrder, crew, rf);
@@ -544,15 +799,16 @@ function CrewSection({
                           return (
                             <div
                               key={`appr-${item.rforceOrder.work_order_number}`}
-                              className="absolute top-0.5 bottom-0.5 z-[3] overflow-hidden"
-                              style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                              className="absolute z-[3] overflow-hidden"
+                              style={{ left: `${leftPct}%`, width: `${widthPct}%`, ...bandStyle(rfTopLanes, `appr-${item.rforceOrder.work_order_number}`) }}
                               onClick={(e) => e.stopPropagation()}
                             >
                               <ApprovalCard
                                 rforceOrder={item.rforceOrder}
+                                stale={item.stale}
                                 crew={crew}
-                                onApprove={async () => {
-                                  await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate);
+                                onApprove={async (override) => {
+                                  await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate, override);
                                 }}
                                 onDismiss={async () => {
                                   await onDismissRForce(
@@ -572,12 +828,24 @@ function CrewSection({
                       {/* App layer (bottom) */}
                       <div
                         className={`relative min-h-[44px] cursor-pointer transition-colors ${dragOverCrewId === crew.id ? "bg-primary/15 outline outline-2 outline-dashed outline-primary" : ""}`}
+                        style={laneStyle(appLanes)}
                         onClick={() => onCellClick(crew.id, "full_day")}
                         onDragOver={handleRowDragOver}
                         onDragLeave={handleRowDragLeave}
                         onDrop={handleRowDrop}
                       >
                         {renderGridlines()}
+                        {dragPreview && dragPreview.crewId === crew.id && (
+                          <div
+                            className={`pointer-events-none absolute z-[6] rounded-md border-2 border-dashed flex flex-col justify-center px-2 overflow-hidden ${dragPreview.valid ? "border-primary bg-primary/25" : "border-red-500 bg-red-500/20"}`}
+                            style={{ left: `${dragPreview.leftPercent}%`, width: `${dragPreview.widthPercent}%`, top: 3, height: 40 }}
+                          >
+                            <span className="truncate text-[10px] font-semibold leading-tight">{dragPreview.customerName}</span>
+                            <span className={`truncate text-[9px] leading-tight ${dragPreview.valid ? "text-primary/80" : "text-red-600 dark:text-red-400"}`}>
+                              {dragPreview.startTime}–{dragPreview.endTime}{!dragPreview.valid && dragPreview.invalidReason ? ` · ${dragPreview.invalidReason}` : ""}
+                            </span>
+                          </div>
+                        )}
                         {off && !hasAnyContent && (
                           <div className="absolute inset-0 bg-amber-200/40 dark:bg-amber-800/20 flex items-center justify-center z-[1]">
                             <Palmtree size={14} className="text-amber-500/50 dark:text-amber-400/40" />
@@ -595,12 +863,13 @@ function CrewSection({
                           return (
                             <div
                               key={a.id}
-                              className="absolute top-0.5 bottom-0.5 z-[2] cursor-grab active:cursor-grabbing"
-                              style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                              className={`absolute z-[2] cursor-grab active:cursor-grabbing rounded ${draggedAppointment?.appointment.id === a.id ? "outline outline-2 outline-primary outline-offset-1" : ""}`}
+                              style={{ left: `${leftPct}%`, width: `${widthPct}%`, ...bandStyle(appLanes, a.id) }}
                               draggable
                               onDragStart={(e) => {
                                 e.dataTransfer.effectAllowed = "move";
                                 e.dataTransfer.setData("text/plain", a.id);
+                                captureGrabOffset(e, a);
                                 setDraggedAppointment({
                                   appointment: a,
                                   sourceCrewId: crew.id,
@@ -612,6 +881,7 @@ function CrewSection({
                               onDragEnd={(e) => {
                                 (e.currentTarget as HTMLElement).style.opacity = "1";
                                 setDraggedAppointment(null);
+                                clearDragPreview();
                               }}
                               onClick={(e) => { e.stopPropagation(); onCardClick(a); }}
                             >
@@ -619,7 +889,7 @@ function CrewSection({
                                 <AppointmentCard
                                   appointment={a}
                                   crew={crew}
-                                  compact={false}
+                                  compact={isNarrowTile(a)}
                                   hasDiscrepancy={!!discItem || hasMismatch(a)}
                                   orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                                   accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
@@ -648,6 +918,7 @@ function CrewSection({
                     /* Single-layer layout (rForce off or no rForce content) */
                     <div
                       className={`flex-1 relative min-h-[90px] cursor-pointer transition-colors ${dragOverCrewId === crew.id ? "bg-primary/15 outline outline-2 outline-dashed outline-primary" : ""}`}
+                      style={laneStyle(singleLanes)}
                       onClick={() => onCellClick(crew.id, "full_day")}
                       onDragOver={handleRowDragOver}
                       onDragLeave={handleRowDragLeave}
@@ -663,6 +934,17 @@ function CrewSection({
                         style={{ width: `${crewOffRight}%` }}
                       />
                       {renderGridlines()}
+                      {dragPreview && dragPreview.crewId === crew.id && (
+                        <div
+                          className={`pointer-events-none absolute z-[6] rounded-md border-2 border-dashed flex flex-col justify-center px-2 overflow-hidden ${dragPreview.valid ? "border-primary bg-primary/25" : "border-red-500 bg-red-500/20"}`}
+                          style={{ left: `${dragPreview.leftPercent}%`, width: `${dragPreview.widthPercent}%`, top: 3, height: 40 }}
+                        >
+                          <span className="truncate text-[10px] font-semibold leading-tight">{dragPreview.customerName}</span>
+                          <span className={`truncate text-[9px] leading-tight ${dragPreview.valid ? "text-primary/80" : "text-red-600 dark:text-red-400"}`}>
+                            {dragPreview.startTime}–{dragPreview.endTime}{!dragPreview.valid && dragPreview.invalidReason ? ` · ${dragPreview.invalidReason}` : ""}
+                          </span>
+                        </div>
+                      )}
                       {/* Time-off overlay */}
                       {off && !hasAnyContent && (
                         <div className="absolute inset-0 bg-amber-200/40 dark:bg-amber-800/20 flex items-center justify-center z-[1]">
@@ -688,12 +970,13 @@ function CrewSection({
                         return (
                           <div
                             key={a.id}
-                            className="absolute top-1 bottom-1 z-[2] cursor-grab active:cursor-grabbing"
-                            style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                            className={`absolute z-[2] cursor-grab active:cursor-grabbing rounded ${draggedAppointment?.appointment.id === a.id ? "outline outline-2 outline-primary outline-offset-1" : ""}`}
+                            style={{ left: `${leftPct}%`, width: `${widthPct}%`, ...bandStyle(singleLanes, a.id) }}
                             draggable
                             onDragStart={(e) => {
                               e.dataTransfer.effectAllowed = "move";
                               e.dataTransfer.setData("text/plain", a.id);
+                              captureGrabOffset(e, a);
                               setDraggedAppointment({
                                 appointment: a,
                                 sourceCrewId: crew.id,
@@ -705,6 +988,7 @@ function CrewSection({
                             onDragEnd={(e) => {
                               (e.currentTarget as HTMLElement).style.opacity = "1";
                               setDraggedAppointment(null);
+                              clearDragPreview();
                             }}
                             onClick={(e) => { e.stopPropagation(); onCardClick(a); }}
                           >
@@ -712,7 +996,7 @@ function CrewSection({
                               <AppointmentCard
                                 appointment={a}
                                 crew={crew}
-                                compact={false}
+                                compact={isNarrowTile(a)}
                                 hasDiscrepancy={!!discItem || hasMismatch(a)}
                                 orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                                 accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
@@ -744,15 +1028,16 @@ function CrewSection({
                         return (
                           <div
                             key={`appr-${item.rforceOrder.work_order_number}`}
-                            className="absolute top-1 bottom-1 z-[3] overflow-hidden"
-                            style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                            className="absolute z-[3] overflow-hidden"
+                            style={{ left: `${leftPct}%`, width: `${widthPct}%`, ...bandStyle(singleLanes, `appr-${item.rforceOrder.work_order_number}`) }}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <ApprovalCard
                               rforceOrder={item.rforceOrder}
+                              stale={item.stale}
                               crew={crew}
-                              onApprove={async () => {
-                                await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate);
+                              onApprove={async (override) => {
+                                await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate, override);
                               }}
                               onDismiss={async () => {
                                 await onDismissRForce(

@@ -94,6 +94,9 @@ export interface Appointment {
   time_block_end?: TimeBlock | null;
   manual_override?: boolean;
   override_source?: { crew_name?: string; scheduled_date?: string; time_block?: string } | null;
+  /** When true, this appointment is excluded from the double-booking unique index
+   *  (an intentional same-slot overlap approved via the conflict-override flow). */
+  allow_overlap?: boolean;
   status: AppointmentStatus;
   notes: string | null;
   reschedule_reason: string | null;
@@ -200,6 +203,8 @@ export interface ReconciliationDifferences {
   time?: { app: string; rforce: string };
   crew?: { app: string; rforce: string };
   type?: { app: string; rforce: string };
+  /** Day-count of the job (rForce span vs scheduled duration_days). */
+  duration?: { app: number; rforce: number };
 }
 
 export interface ReconciliationResult {
@@ -430,6 +435,8 @@ export interface RForceDisplayItem {
   linkedAppointment?: Appointment;
   differences?: ReconciliationDifferences;
   fuzzyMatch?: FuzzyMatchCandidate;
+  /** Order hasn't appeared in recent imports — likely cancelled/removed in rForce. */
+  stale?: boolean;
 }
 
 // ── Fuzzy Matching ──

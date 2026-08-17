@@ -19,6 +19,8 @@ import {
   isSameDay,
 } from "date-fns";
 import { deriveRForceCalendarStatus } from "./rforce-calendar-status";
+import { latestImportTime, isOrderStale } from "./rforce-staleness";
+import { timeToBlock, matchCrewByMapping, matchCrewByName } from "./crew-match";
 
 export const MEASURE_TIME_BLOCKS: TimeBlock[] = [
   "9-10",
@@ -64,6 +66,77 @@ export function timeBlockLabel(block: TimeBlock): string {
     case "full_day":
       return "Full Day (8 AM)";
   }
+}
+
+/**
+ * Turn a raw scheduling-conflict error into a sentence a human can act on.
+ * The DB trigger reports the clashing appointment only by UUID; here we resolve
+ * it to the crew, day, time, and customer so the scheduler knows what's in the way.
+ */
+export function humanizeConflictMessage(
+  message: string,
+  appointments: Appointment[],
+  crews: Crew[]
+): string {
+  const stripped = message.replace(/^(Error:\s*)?SCHEDULING_CONFLICT:\s*/, "").trim();
+  const idMatch = stripped.match(/resource is already assigned to appointment ([0-9a-fA-F-]{36})/);
+  if (idMatch) {
+    const appt = appointments.find((a) => a.id === idMatch[1]);
+    if (appt) {
+      const crewName = crews.find((c) => c.id === appt.crew_id)?.name || "That crew";
+      const when =
+        appt.start_time && appt.end_time
+          ? `${formatTime12(appt.start_time)}–${formatTime12(appt.end_time)}`
+          : appt.time_block
+            ? timeBlockLabel(appt.time_block)
+            : "that time";
+      const day = appt.scheduled_date ? ` on ${formatDateStr(appt.scheduled_date)}` : "";
+      const who = appt.customer_name ? ` for ${appt.customer_name}` : "";
+      return `${crewName} is already booked ${when}${day}${who}.`;
+    }
+    return "That crew is already booked in this slot.";
+  }
+  return stripped;
+}
+
+/** Compact time for tiles, e.g. "10:30" → "10:30a", "14:00" → "2p". */
+export function formatTimeShort(hhmm: string | null | undefined): string {
+  if (!hhmm) return "";
+  const [hStr, mStr] = hhmm.split(":");
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr || "0", 10);
+  if (Number.isNaN(h)) return hhmm;
+  const period = h >= 12 ? "p" : "a";
+  let hr = h % 12;
+  if (hr === 0) hr = 12;
+  return m ? `${hr}:${String(m).padStart(2, "0")}${period}` : `${hr}${period}`;
+}
+
+/**
+ * A short scheduled-time range for a tile, e.g. "10:30a–12p". Full-day work
+ * collapses to "8a–4p". Returns "" when the appointment has no times.
+ */
+export function formatAppointmentTimeRange(appt: {
+  start_time?: string | null;
+  end_time?: string | null;
+}): string {
+  if (!appt.start_time) return "";
+  const start = formatTimeShort(appt.start_time);
+  const end = appt.end_time ? formatTimeShort(appt.end_time) : "";
+  return end ? `${start}–${end}` : start;
+}
+
+/** Format a "HH:mm" 24-hour time string as 12-hour, e.g. "16:00" → "4:00 PM". */
+export function formatTime12(hhmm: string | null | undefined): string {
+  if (!hhmm) return "";
+  const [hStr, mStr] = hhmm.split(":");
+  let h = parseInt(hStr, 10);
+  const m = parseInt(mStr || "0", 10);
+  if (Number.isNaN(h)) return hhmm;
+  const period = h >= 12 ? "PM" : "AM";
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${String(Number.isNaN(m) ? 0 : m).padStart(2, "0")} ${period}`;
 }
 
 export function timeBlockStartEnd(block: TimeBlock): {
@@ -297,40 +370,10 @@ export function crewTypeLabel(type: Crew["crew_type"]): string {
   }
 }
 
-export function timeToBlock(hour: number): TimeBlock {
-  if (hour < 10) return "9-10";
-  if (hour < 12) return "10-12";
-  if (hour < 14) return "12-2";
-  if (hour < 16) return "2-4";
-  return "4-6";
-}
-
-export function matchCrewByMapping(
-  resourceName: string,
-  crews: Crew[],
-  mappings: ResourceMapping[]
-): Crew | undefined {
-  const lower = resourceName.toLowerCase().trim();
-  const mapping = mappings.find((m) => m.raw_name.toLowerCase() === lower);
-  if (mapping) return crews.find((c) => c.id === mapping.crew_id);
-  return undefined;
-}
-
-export function matchCrewByName(resourceName: string, crews: Crew[], mappings?: ResourceMapping[]): Crew | undefined {
-  if (mappings && mappings.length > 0) {
-    const mapped = matchCrewByMapping(resourceName, crews, mappings);
-    if (mapped) return mapped;
-  }
-  const lower = resourceName.toLowerCase().trim();
-  const exact = crews.find((c) => c.name.toLowerCase() === lower);
-  if (exact) return exact;
-  const aliasMatch = crews.find((c) =>
-    c.aliases?.some((a) => a.toLowerCase() === lower)
-  );
-  if (aliasMatch) return aliasMatch;
-  const firstName = lower.split(" ")[0];
-  return crews.find((c) => c.name.toLowerCase().split(" ")[0] === firstName);
-}
+// Crew/time-block matching helpers now live in the leaf module ./crew-match.
+// Imported for internal use and re-exported so existing importers of
+// calendar-utils keep working.
+export { timeToBlock, matchCrewByMapping, matchCrewByName };
 
 export interface RForceCalendarItem {
   rforceOrder: RForceOrder;
@@ -502,6 +545,9 @@ export function getRForceDisplayItems(
     dismissalKeys.add(`${d.work_order_number}|${d.rforce_date}`);
   }
 
+  // Newest import timestamp — orders far behind it dropped out of rForce.
+  const newestImport = latestImportTime(rforceOrders);
+
   const items: RForceDisplayItem[] = [];
 
   for (const rf of rforceOrders) {
@@ -541,6 +587,7 @@ export function getRForceDisplayItems(
         displayMode,
         linkedAppointment: appt,
         differences: diffs || undefined,
+        stale: isOrderStale(rf, newestImport),
       });
     } else if (calendarStatus?.linkedAppointment) {
       // Matched by work_order_number — treat as synced (or discrepancy)
@@ -554,6 +601,7 @@ export function getRForceDisplayItems(
         displayMode,
         linkedAppointment: appt,
         differences: diffs || undefined,
+        stale: isOrderStale(rf, newestImport),
       });
     } else {
       const dismissKey = `${rf.work_order_number}|${startDate}`;
@@ -564,6 +612,7 @@ export function getRForceDisplayItems(
         crewId: crew.id,
         timeBlock,
         displayMode: "approval",
+        stale: isOrderStale(rf, newestImport),
       });
     }
   }

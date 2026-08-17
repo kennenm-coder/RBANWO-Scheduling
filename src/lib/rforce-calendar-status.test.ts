@@ -102,16 +102,59 @@ describe("deriveRForceCalendarStatus", () => {
     });
   });
 
-  it("returns mismatch when times differ", () => {
+  it("returns mismatch when the rForce time lands in a different block", () => {
+    // rForce 10:00 → 10-12 block, but the appointment sits in the 2-4 block.
     const rf = makeRForceOrder({ scheduled_start: "2026-08-14T10:00:00" });
-    const appt = makeAppointment({ scheduled_date: "2026-08-14", start_time: "14:00" });
+    const appt = makeAppointment({ scheduled_date: "2026-08-14", start_time: "14:00", time_block: "2-4" });
     const result = deriveRForceCalendarStatus([rf], [appt], [], crews);
     expect(result).toHaveLength(1);
     expect(result[0].status).toBe("mismatch");
     expect(result[0].mismatchDetails?.time).toEqual({
-      app: "14:00",
-      rforce: "10:00",
+      app: "2-4",
+      rforce: "10-12",
     });
+  });
+
+  it("stays in sync when the rForce time is within the same block (block-aware)", () => {
+    // rForce 10:30 falls inside the 10-12 block → not a mismatch even though the
+    // stored start_time (10:00) differs from the exact minute.
+    const rf = makeRForceOrder({ scheduled_start: "2026-08-14T10:30:00" });
+    const appt = makeAppointment({ scheduled_date: "2026-08-14", start_time: "10:00", time_block: "10-12" });
+    const result = deriveRForceCalendarStatus([rf], [appt], [], crews);
+    expect(result[0].status).toBe("synced");
+    expect(result[0].mismatchDetails).toBeUndefined();
+  });
+
+  it("returns a duration mismatch when rForce spans more days than the appointment", () => {
+    // rForce is a 2-day job (9/14–9/15); the appointment is booked for 1 day.
+    const rf = makeRForceOrder({
+      scheduled_start: "2026-09-14T08:00:00",
+      scheduled_end: "2026-09-15T16:00:00",
+    });
+    const appt = makeAppointment({
+      scheduled_date: "2026-09-14",
+      duration_days: 1,
+      start_time: "08:00",
+      time_block: "full_day",
+    });
+    const result = deriveRForceCalendarStatus([rf], [appt], [], crews);
+    expect(result[0].status).toBe("mismatch");
+    expect(result[0].mismatchDetails?.duration).toEqual({ app: 1, rforce: 2 });
+  });
+
+  it("stays synced when the rForce span matches the appointment duration", () => {
+    const rf = makeRForceOrder({
+      scheduled_start: "2026-09-14T08:00:00",
+      scheduled_end: "2026-09-15T16:00:00",
+    });
+    const appt = makeAppointment({
+      scheduled_date: "2026-09-14",
+      duration_days: 2,
+      start_time: "08:00",
+      time_block: "full_day",
+    });
+    const result = deriveRForceCalendarStatus([rf], [appt], [], crews);
+    expect(result[0].status).toBe("synced");
   });
 
   it("returns mismatch when crew/resource differs", () => {

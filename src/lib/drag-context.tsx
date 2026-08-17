@@ -75,8 +75,21 @@ export function SchedulerDragProvider({ children }: { children: React.ReactNode 
   return <SchedulerDragContext.Provider value={value}>{children}</SchedulerDragContext.Provider>;
 }
 
+/**
+ * No-op fallback used when a draggable card (e.g. QueueItemCard) is rendered
+ * outside the scheduler — like the standalone /queue page, which has no drop
+ * targets. Drag simply does nothing there rather than crashing the page.
+ */
+const NOOP_DRAG: SchedulerDragValue = {
+  draggedOrder: null,
+  draggedAppointment: null,
+  resizingAppointment: null,
+  setDraggedOrder: () => {},
+  setDraggedAppointment: () => {},
+  setResizingAppointment: () => {},
+  clearDrag: () => {},
+};
+
 export function useSchedulerDrag(): SchedulerDragValue {
-  const value = useContext(SchedulerDragContext);
-  if (!value) throw new Error("useSchedulerDrag must be used inside SchedulerDragProvider");
-  return value;
+  return useContext(SchedulerDragContext) ?? NOOP_DRAG;
 }

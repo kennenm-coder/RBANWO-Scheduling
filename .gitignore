@@ -31,6 +31,10 @@ yarn-error.log*
 # env files
 .env*
 
+# one-off maintenance-script outputs (rollback / plan artifacts)
+/backfill_*_rollback_*.json
+/fix_mistyped_*.json
+
 # vercel
 .vercel
 

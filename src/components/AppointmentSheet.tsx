@@ -1,7 +1,7 @@
 "use client";
 
 import { Appointment, Crew, RForceOrder, AppointmentLink } from "@/lib/types";
-import { typeLabel, timeBlockLabel, formatDateStr, formatDateStrFull } from "@/lib/calendar-utils";
+import { typeLabel, timeBlockLabel, formatTime12, formatDateStr, formatDateStrFull } from "@/lib/calendar-utils";
 import { addDays, parseISO, format } from "date-fns";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes, createAppointmentEvent } from "@/lib/store";
@@ -238,10 +238,12 @@ export default function AppointmentSheet({
           </InfoRow>
 
           <InfoRow icon={<Clock size={16} />} label="Time">
-            {appointment.time_block
-              ? timeBlockLabel(appointment.time_block)
-              : appointment.start_time && appointment.end_time
-                ? `${appointment.start_time} – ${appointment.end_time}`
+            {appointment.start_time && appointment.end_time
+              ? `${formatTime12(appointment.start_time)} – ${formatTime12(appointment.end_time)}${
+                  appointment.time_block === "full_day" ? " (Full Day)" : ""
+                }`
+              : appointment.time_block
+                ? timeBlockLabel(appointment.time_block)
                 : "Not set"}
           </InfoRow>
 

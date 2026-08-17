@@ -242,7 +242,10 @@ export default function CrewBlockView({
               onQueueDrop={(order, crewId, day, block) =>
                 setScheduleTarget({ date: day, crewId, timeBlock: block, prefill: order })
               }
-              onAppointmentDrop={(appt, targetCrewId, targetDay) => {
+              onAppointmentDrop={(draggedAppt, targetCrewId, targetDay) => {
+                // Re-resolve by ID so the modal opens against the current
+                // record/version, not the snapshot captured at drag start.
+                const appt = appointments.find((a) => a.id === draggedAppt.id) ?? draggedAppt;
                 const dateStr = format(targetDay, "yyyy-MM-dd");
                 const existingEndTimes = appointments
                   .filter((candidate) =>
@@ -792,6 +795,73 @@ function HourlyCrewRows({
     return map;
   }, [appointments, crew.id, weekDays]);
 
+  // Lay each day's appointments into the hourly slots. An appointment sits in
+  // the slot for the hour it STARTS in and spans downward to cover every hour
+  // its end time reaches (a 1–3pm service covers the 1pm and 2pm rows). Slots
+  // covered by a spanning appointment above are skipped so the grid stays clean.
+  const planByDay = useMemo(() => {
+    const n: number = hours.length;
+    const firstHour: number = hours[0];
+    const lastHour: number = hours[n - 1];
+
+    function placement(a: Appointment): { startIdx: number; span: number } {
+      // All-day / untimed work pins to the first row.
+      if (a.time_block === "full_day") return { startIdx: 0, span: 1 };
+      const startH = getAppointmentStartHour(a);
+      if (startH === null) return { startIdx: 0, span: 1 };
+      const displayStart = Math.min(Math.max(startH, firstHour), lastHour);
+      const startIdx = displayStart - firstHour;
+      let span = 1;
+      if (a.end_time) {
+        const [ehStr, emStr] = a.end_time.split(":");
+        const eh = parseInt(ehStr, 10);
+        const em = parseInt(emStr || "0", 10);
+        if (!isNaN(eh)) {
+          const endEff = em > 0 ? eh + 1 : eh; // partial hour rounds up
+          span = Math.max(1, endEff - displayStart);
+        }
+      }
+      return { startIdx, span: Math.min(span, n - startIdx) };
+    }
+
+    type HourCellPlan =
+      | { skip: true }
+      | { skip: false; appts: Appointment[]; rowSpan: number };
+
+    const map = new Map<string, HourCellPlan[]>();
+    for (const day of weekDays) {
+      const dateStr = format(day, "yyyy-MM-dd");
+      const dayAppts = dayApptsMap.get(dateStr) || [];
+
+      const apptsByStart: Appointment[][] = hours.map(() => []);
+      const spanByStart: number[] = hours.map(() => 1);
+      for (const a of dayAppts) {
+        const { startIdx, span } = placement(a);
+        apptsByStart[startIdx].push(a);
+        spanByStart[startIdx] = Math.max(spanByStart[startIdx], span);
+      }
+
+      const covered = new Array<boolean>(n).fill(false);
+      const plan: HourCellPlan[] = [];
+      for (let i = 0; i < n; i++) {
+        if (covered[i]) { plan.push({ skip: true }); continue; }
+        const appts = apptsByStart[i];
+        if (appts.length === 0) { plan.push({ skip: false, appts: [], rowSpan: 1 }); continue; }
+        // Never span across a later hour that has its own appointments — it gets
+        // its own row instead of being swallowed by this chip.
+        let nextNonEmpty = n;
+        for (let j = i + 1; j < n; j++) {
+          if (apptsByStart[j].length > 0) { nextNonEmpty = j; break; }
+        }
+        const span = Math.max(1, Math.min(spanByStart[i], nextNonEmpty - i, n - i));
+        for (let k = i + 1; k < i + span; k++) covered[k] = true;
+        plan.push({ skip: false, appts, rowSpan: span });
+      }
+      map.set(dateStr, plan);
+    }
+    return map;
+  }, [dayApptsMap, weekDays, hours]);
+
   return (
     <>
       {hours.map((hour, hourIdx) => (
@@ -812,7 +882,6 @@ function HourlyCrewRows({
             const isToday = isSameDay(day, today);
             const off = isCrewOffOnDay(crew, day);
             const dateStr = format(day, "yyyy-MM-dd");
-            const dayAppts = dayApptsMap.get(dateStr) || [];
 
             if (off) {
               if (hourIdx === 0) {
@@ -832,16 +901,9 @@ function HourlyCrewRows({
               return null;
             }
 
-            // Match appointments to this hour:
-            // - full_day / no time_block → show on the first hour row only
-            // - specific time → show on the matching hour
-            const hourAppts = dayAppts.filter((a) => {
-              if (a.time_block === "full_day" || !a.time_block) {
-                return hourIdx === 0; // full-day shows on first row
-              }
-              const startH = getAppointmentStartHour(a);
-              return startH === hour;
-            });
+            const plan = planByDay.get(dateStr)?.[hourIdx];
+            if (!plan || plan.skip) return null; // covered by a spanning chip above
+
             const cellKey = `${dateStr}-h${hour}`;
             const isDragOver = dragOverCell === cellKey;
             // Convert hour to a time block string for the drop target
@@ -850,6 +912,7 @@ function HourlyCrewRows({
             return (
               <td
                 key={day.toISOString()}
+                rowSpan={plan.rowSpan}
                 className={`border border-border/50 p-0.5 align-top text-[10px] transition-colors ${
                   isToday ? "bg-primary/5" : ""
                 } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
@@ -880,19 +943,26 @@ function HourlyCrewRows({
                   }
                 }}
               >
-                {hourAppts.map((appt) => (
-                  <BlockCell
-                    key={appt.id}
-                    appointment={appt}
-                    label={multiDayLabel(appt, day)}
-                    crewColor={crewColor}
-                    onClick={() => onAppointmentClick(appt)}
-                    small
-                    sourceCrewId={crew.id}
-                    sourceDate={dateStr}
-                    sourceTimeBlock={appt.time_block || null}
-                  />
-                ))}
+                {plan.appts.length === 0 ? (
+                  <div className="min-h-[18px]" />
+                ) : (
+                  <div className="flex flex-col gap-0.5 h-full">
+                    {plan.appts.map((appt) => (
+                      <BlockCell
+                        key={appt.id}
+                        appointment={appt}
+                        label={multiDayLabel(appt, day)}
+                        crewColor={crewColor}
+                        onClick={() => onAppointmentClick(appt)}
+                        small
+                        heightRows={plan.appts.length === 1 ? plan.rowSpan : undefined}
+                        sourceCrewId={crew.id}
+                        sourceDate={dateStr}
+                        sourceTimeBlock={appt.time_block || null}
+                      />
+                    ))}
+                  </div>
+                )}
               </td>
             );
           })}
@@ -913,6 +983,8 @@ interface BlockCellProps {
   sourceCrewId?: string;
   sourceDate?: string;
   sourceTimeBlock?: TimeBlock | null;
+  /** When set (>1), the chip is sized to span that many hour rows. */
+  heightRows?: number;
 }
 
 function BlockCell({
@@ -924,6 +996,7 @@ function BlockCell({
   sourceCrewId,
   sourceDate,
   sourceTimeBlock,
+  heightRows,
 }: BlockCellProps) {
   const { setDraggedAppointment } = useSchedulerDrag();
   const { unscheduleAppointment } = useData();
@@ -981,7 +1054,10 @@ function BlockCell({
       className={`group/block relative rounded px-1.5 cursor-grab active:cursor-grabbing hover:shadow-sm transition-shadow text-white truncate ${
         small ? "py-0 text-[10px] leading-snug" : "py-0.5 text-[11px] leading-tight"
       }`}
-      style={{ backgroundColor: crewColor }}
+      style={{
+        backgroundColor: crewColor,
+        minHeight: heightRows && heightRows > 1 ? `${heightRows * 20}px` : undefined,
+      }}
       title={`${appointment.customer_name} — ${appointment.address || ""} (${typeLabel(appointment.appointment_type)})`}
     >
       <span className="pr-3">{label}</span>

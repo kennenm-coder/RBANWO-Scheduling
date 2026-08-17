@@ -5,10 +5,15 @@ import { useData } from "./DataProvider";
 import { upsertCrew, deactivateCrew, toggleCrewActive } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
 import { Crew, CrewType, ManagesType } from "@/lib/types";
-import { findUnmatchedNames } from "@/lib/unmatched-resources";
+import {
+  categorizeResourceNames,
+  deniedNamesFromFlagKeys,
+  deniedNameKey,
+} from "@/lib/unmatched-resources";
 import {
   Plus, Pencil, Trash2, X, Save, AlertTriangle,
   UserPlus, Link2, ToggleLeft, ToggleRight, Archive, RotateCcw,
+  Check, HelpCircle,
 } from "lucide-react";
 import AvailabilityEditor from "./AvailabilityEditor";
 
@@ -31,7 +36,15 @@ const MANAGES_OPTIONS: { value: ManagesType; label: string }[] = [
 ];
 
 export default function ResourceManager() {
-  const { crews, rforceOrders, timeOffRequests, refreshData } = useData();
+  const {
+    crews,
+    rforceOrders,
+    timeOffRequests,
+    flagResolutions,
+    resolveFlag,
+    unresolveFlag,
+    refreshData,
+  } = useData();
   const [editing, setEditing] = useState<Partial<Crew> | null>(null);
   const [aliasInput, setAliasInput] = useState("");
   const [showInactive, setShowInactive] = useState(false);
@@ -54,9 +67,14 @@ export default function ResourceManager() {
   const allCrews = crews;
   const displayCrews = showInactive ? allCrews : allCrews.filter((c) => c.is_active);
 
-  const unmatched = useMemo(
-    () => findUnmatchedNames(allCrews, rforceOrders, timeOffRequests),
-    [allCrews, rforceOrders, timeOffRequests]
+  const deniedNames = useMemo(
+    () => deniedNamesFromFlagKeys(flagResolutions.map((f) => f.flag_key)),
+    [flagResolutions]
+  );
+
+  const { unmatched, suggested } = useMemo(
+    () => categorizeResourceNames(allCrews, rforceOrders, timeOffRequests, deniedNames),
+    [allCrews, rforceOrders, timeOffRequests, deniedNames]
   );
 
   const grouped = displayCrews.reduce(
@@ -88,7 +106,24 @@ export default function ResourceManager() {
     const aliases = [...(crew.aliases || []), name];
     await upsertCrew({ ...crew, aliases });
     setLinkingAlias(null);
+    // If this name had been denied earlier, clear that memory now that the
+    // scheduler is explicitly aliasing it — otherwise the stale denial lingers.
+    if (deniedNames.has(name.toLowerCase().trim().replace(/\s+/g, " "))) {
+      await unresolveFlag(deniedNameKey(name));
+    }
     await refreshData();
+  };
+
+  // Confirm a "close enough" suggestion: attach the rForce/time-off name as an
+  // alias on the matched resource, so it becomes an exact match everywhere
+  // (calendar mismatch flag included).
+  const handleApproveSuggestion = (name: string, crewId: string) =>
+    handleLinkAlias(name, crewId);
+
+  // Reject a suggestion: remember the denial so the name stops being suggested
+  // and instead drops into the Unmatched section for manual Alias/Add.
+  const handleDenySuggestion = async (name: string) => {
+    await resolveFlag(deniedNameKey(name));
   };
 
   const handleSave = async () => {
@@ -205,6 +240,51 @@ export default function ResourceManager() {
           </button>
         </div>
       </div>
+
+      {suggested.length > 0 && (
+        <div className="mb-6 border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/10 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <HelpCircle size={14} className="text-amber-500" />
+            <h4 className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+              {suggested.length} Possible {suggested.length === 1 ? "Match" : "Matches"} — Confirm
+            </h4>
+          </div>
+          <p className="text-xs text-amber-600/70 dark:text-amber-400/60 mb-3">
+            These rForce / time-off names are close to an existing resource but not
+            an exact match. Approve to save it as a nickname, or deny to handle it
+            as an unmatched name below.
+          </p>
+          <div className="space-y-1.5">
+            {suggested.map((s) => (
+              <div key={s.name} className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-background rounded-lg">
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm">{s.name}</span>
+                  <span className="text-[11px] text-muted"> → {s.crewName}</span>
+                </div>
+                <span className="text-[10px] text-muted px-1.5 py-0.5 bg-surface rounded">
+                  {s.source === "rforce" ? "rForce" : "Time Off"}
+                </span>
+                <button
+                  onClick={() => handleApproveSuggestion(s.name, s.crewId)}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium bg-green-600 text-white hover:bg-green-700 rounded transition-colors"
+                  title={`Save "${s.name}" as a nickname of ${s.crewName}`}
+                >
+                  <Check size={10} />
+                  Approve
+                </button>
+                <button
+                  onClick={() => handleDenySuggestion(s.name)}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/20 rounded transition-colors"
+                  title="Not the same person — move to Unmatched"
+                >
+                  <X size={10} />
+                  Deny
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {unmatched.length > 0 && (
         <div className="mb-6 border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 rounded-xl p-4">

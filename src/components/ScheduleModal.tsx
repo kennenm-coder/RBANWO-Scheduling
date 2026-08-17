@@ -31,6 +31,7 @@ import {
 } from "@/lib/scheduling-policy";
 import { fetchAccountSuggestions, AccountSuggestion, createAppointmentEvent } from "@/lib/store";
 import { executeScheduleMove } from "@/lib/schedule-command";
+import { deriveTimesFromOrder } from "@/lib/rforce-times";
 import { useData } from "./DataProvider";
 import { useCurrentActor } from "./AuthProvider";
 import { X, AlertTriangle, AlertCircle, MapPin, ChevronDown, ChevronRight, Users } from "lucide-react";
@@ -96,6 +97,12 @@ export default function ScheduleModal({
     return "tech_measure";
   }
   const [type, setType] = useState<AppointmentType>(deriveAppointmentType);
+  // When scheduling straight from an rForce order, seed the block/start/end from
+  // the order's real scheduled window instead of the full_day default (which
+  // stamped queued jobs with an all-day 08:00–16:00 bar).
+  const prefillTimes = prefill
+    ? deriveTimesFromOrder(prefill.scheduled_start, prefill.scheduled_end, deriveAppointmentType())
+    : null;
   const [selectedCrewId, setSelectedCrewId] = useState(
     editingAppointment?.crew_id || crewId || ""
   );
@@ -109,7 +116,7 @@ export default function ScheduleModal({
     editingAppointment?.scheduled_date || format(date, "yyyy-MM-dd")
   );
   const [selectedBlock, setSelectedBlock] = useState<TimeBlock>(
-    editingAppointment?.time_block || initialTimeBlock || "full_day"
+    editingAppointment?.time_block || initialTimeBlock || prefillTimes?.time_block || "full_day"
   );
   const [customerName, setCustomerName] = useState(
     editingAppointment?.customer_name || prefill?.customer_name || ""
@@ -149,10 +156,10 @@ export default function ScheduleModal({
   // Explicit start/end for timed types (service, JIP, etc.)
   const timedDefaults = getDefaultTimes(type);
   const [startTime, setStartTime] = useState(
-    initialStartTime || editingAppointment?.start_time || timedDefaults.start
+    initialStartTime || editingAppointment?.start_time || prefillTimes?.start_time || timedDefaults.start
   );
   const [endTime, setEndTime] = useState(
-    initialEndTime || editingAppointment?.end_time || timedDefaults.end
+    initialEndTime || editingAppointment?.end_time || prefillTimes?.end_time || timedDefaults.end
   );
   const schedulingMode = getSchedulingMode(type);
   const [rescheduleReason, setRescheduleReason] = useState("");
@@ -238,10 +245,13 @@ export default function ScheduleModal({
     setError("");
 
     // Use scheduling policy to resolve times based on type
+    // full_day types (installs) accept an explicit start/end too, so a job
+    // scheduled straight from an rForce order keeps its real window instead of
+    // resetting to the 08:00–16:00 default.
     const resolved = resolveScheduleTimes(type, {
       timeBlock: schedulingMode === "fixed_block" ? selectedBlock : null,
-      startTime: schedulingMode === "timed" ? startTime : null,
-      endTime: schedulingMode === "timed" ? endTime : null,
+      startTime: schedulingMode === "fixed_block" ? null : startTime,
+      endTime: schedulingMode === "fixed_block" ? null : endTime,
     });
     const start = resolved.start;
     const end = resolved.end;

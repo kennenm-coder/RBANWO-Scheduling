@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 import { CalendarDays, ListTodo, Users, Settings, AlertTriangle } from "lucide-react";
 import { useData } from "./DataProvider";
-import { findUnmatchedNames } from "@/lib/unmatched-resources";
-import { deriveIssues } from "@/lib/issues";
+import { categorizeResourceNames, deniedNamesFromFlagKeys } from "@/lib/unmatched-resources";
+import { deriveIssues, deriveDroppedTiles } from "@/lib/issues";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: CalendarDays },
@@ -18,16 +18,28 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { crews, rforceOrders, appointments, activeLinks, resourceMappings, timeOffRequests } = useData();
+  const { crews, rforceOrders, appointments, activeLinks, resourceMappings, timeOffRequests, flagResolutions, scheduledWorkOrders, dismissals } = useData();
 
-  const unmatchedCount = useMemo(
-    () => findUnmatchedNames(crews, rforceOrders, timeOffRequests).length,
-    [crews, rforceOrders, timeOffRequests]
-  );
+  // Resources badge = names needing attention: hard-unmatched + close-enough
+  // suggestions awaiting confirm/deny.
+  const unmatchedCount = useMemo(() => {
+    const denied = deniedNamesFromFlagKeys(flagResolutions.map((f) => f.flag_key));
+    const { unmatched, suggested } = categorizeResourceNames(
+      crews,
+      rforceOrders,
+      timeOffRequests,
+      denied
+    );
+    return unmatched.length + suggested.length;
+  }, [crews, rforceOrders, timeOffRequests, flagResolutions]);
 
+  // Pass scheduledWorkOrders so the badge counts issues the same way the Issues
+  // page does — otherwise already-scheduled jobs get re-flagged as "missing".
   const issueCount = useMemo(
-    () => deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings).length,
-    [rforceOrders, appointments, activeLinks, crews, resourceMappings]
+    () =>
+      deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals).length +
+      deriveDroppedTiles(appointments, rforceOrders, dismissals).length,
+    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals]
   );
 
   return (
