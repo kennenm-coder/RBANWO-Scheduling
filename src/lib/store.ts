@@ -17,11 +17,12 @@ import {
   MatchRejection,
   TimeBlock,
 } from "./types";
-import { timeBlockStartEnd } from "./calendar-utils";
+import { timeBlockStartEnd, formatDateStr } from "./calendar-utils";
 import { buildSalesforceUrl } from "./salesforce";
 import { normalizeWoType } from "./normalize";
 import { learnResourceMapping } from "./resource-learning";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
+import { deriveTimesFromOrder } from "./rforce-times";
 
 // ── Crews ──
 
@@ -178,7 +179,10 @@ export async function updateAppointment(
     if (error.code === "23505") {
       throw new Error("DOUBLE_BOOK");
     }
-    throw error;
+    // Preserve the DB message (e.g. the scheduling-conflict trigger's
+    // "SCHEDULING_CONFLICT: …") as a real Error so callers can pattern-match it
+    // instead of receiving a raw object that stringifies to "[object Object]".
+    throw new Error(error.message || "Failed to update appointment");
   }
   return data as Appointment;
 }
@@ -353,6 +357,44 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
         longitude: row.longitude ?? null,
         updated_at: row.updated_at,
       } as RForceOrder))
+    );
+    if (data.length < BATCH) break;
+    offset += BATCH;
+  }
+  return all;
+}
+
+/**
+ * Every work-order number that already has a real, placed appointment ANYWHERE
+ * on the calendar — regardless of the date window the calendar currently loads.
+ *
+ * "Placed" = non-cancelled and actually scheduled (has a date, not a queued
+ * tile). This mirrors the DUPLICATE_WO condition in approveRForceOrder: such a
+ * job can't be approved again because a tile already exists. The Issues view
+ * uses this to avoid flagging a job as "missing" when its tile simply falls
+ * outside the loaded 30-day-back window (e.g. an already-completed-on-calendar
+ * past install). Only the WO number is fetched, so this stays cheap.
+ */
+export async function fetchScheduledWorkOrderNumbers(): Promise<string[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const all: string[] = [];
+  let offset = 0;
+  const BATCH = 1000;
+  while (true) {
+    const { data } = await sb
+      .from("sched_appointments")
+      .select("work_order_number")
+      .neq("status", "cancelled")
+      .neq("status", "unscheduled")
+      .not("scheduled_date", "is", null)
+      .not("work_order_number", "is", null)
+      .range(offset, offset + BATCH - 1);
+    if (!data || data.length === 0) break;
+    all.push(
+      ...(data as { work_order_number: string | null }[])
+        .map((r) => r.work_order_number || "")
+        .filter(Boolean)
     );
     if (data.length < BATCH) break;
     offset += BATCH;
@@ -750,11 +792,43 @@ export async function approveRForceOrder(
   scheduledDate: string,
   actorId?: string | null,
   actorName?: string | null,
-  existingAppointments?: Appointment[]
+  existingAppointments?: Appointment[],
+  /** Bypass the double-booking guard (intentional same-slot overlap). Does NOT
+   *  bypass the duplicate-work-order guard. */
+  override: boolean = false
 ): Promise<{ appointment: Appointment; link: AppointmentLink | null; warnings: string[] }> {
   const warnings: string[] = [];
-  const { start, end } = timeBlockStartEnd(tb);
   const appointmentType = (normalizeWoType(rforceOrder.work_order_type) || "install") as Appointment["appointment_type"];
+  const { start: blockStart, end: blockEnd } = timeBlockStartEnd(tb);
+  // Carry the appointment's REAL rForce window instead of the time-block default.
+  // The block used to drive the stored start/end, which stamped every full-day
+  // default (services, JIPs, queue-dropped jobs) with 08:00–16:00 and drew an
+  // all-day bar. `deriveTimesFromOrder` is the shared source of truth (also used
+  // by the one-time backfill) so live approvals and repaired history agree.
+  const derived = deriveTimesFromOrder(
+    rforceOrder.scheduled_start,
+    rforceOrder.scheduled_end,
+    appointmentType
+  );
+  let start = blockStart;
+  let end = blockEnd;
+  // May be null for timed types (service/JIP), whose block grid places them by
+  // start hour rather than in the full-day row.
+  let timeBlockToStore: TimeBlock | null = tb;
+  if (derived) {
+    if (tb === "full_day") {
+      // Default / queue placement — take the real window and its natural block.
+      start = derived.start_time;
+      end = derived.end_time;
+      timeBlockToStore = derived.time_block;
+    } else if (derived.start_time >= blockStart && derived.start_time < blockEnd) {
+      // Scheduler explicitly chose this block; keep it but show the true time,
+      // capped to the block so a whole-day window can't overflow the slot.
+      start = derived.start_time;
+      end = derived.end_time <= blockEnd ? derived.end_time : blockEnd;
+      if (end <= start) end = blockEnd;
+    }
+  }
 
   // Compute duration from rForce date range (multi-day installs)
   let durationDays = 1;
@@ -768,8 +842,126 @@ export async function approveRForceOrder(
     }
   }
 
-  // Pre-write conflict check — block the approval if it would double-book
-  if (existingAppointments) {
+  const sb = requireSupabase();
+
+  // An appointment for this work order may already exist outside the calendar's
+  // knowledge: a queued (unscheduled) tile, or one scheduled beyond the loaded
+  // date window. Both keep their work_order_number, and the atomic RPC treats
+  // ANY non-cancelled appointment as a duplicate — so a naive "Approve" would
+  // dead-end on DUPLICATE_WO even when the scheduler just wants that tile placed
+  // on the calendar. The approve button's job here is to PULL the existing tile
+  // onto the calendar, not to mint a second one.
+  //
+  //   • Queued tile (unscheduled / no date) → place it on the calendar.
+  //   • Already scheduled elsewhere         → genuine duplicate, refuse.
+  const woTrimmed = (rforceOrder.work_order_number || "").trim();
+  const normalizedWo = woTrimmed.toLowerCase();
+  let existing: Appointment | null = null;
+  if (woTrimmed) {
+    const { data: candidates } = await sb
+      .from("sched_appointments")
+      .select("*")
+      .neq("status", "cancelled")
+      .ilike("work_order_number", `%${woTrimmed}%`);
+    existing =
+      ((candidates as Appointment[]) || []).find(
+        (a) => (a.work_order_number || "").trim().toLowerCase() === normalizedWo
+      ) || null;
+  }
+
+  if (existing) {
+    const isQueued = existing.status === "unscheduled" || !existing.scheduled_date;
+    if (!isQueued) {
+      // Genuinely on the calendar already — never create a duplicate. Tell the
+      // scheduler where it lives so they can move that one instead.
+      const where = existing.scheduled_date
+        ? `on ${formatDateStr(existing.scheduled_date)}`
+        : "elsewhere";
+      throw new Error(
+        `DUPLICATE_WO: ${existing.customer_name || "This job"} is already scheduled ${where} — open that appointment to move it to this date`
+      );
+    }
+
+    // Place the queued tile on the calendar rather than creating a second one.
+    // Skip the double-booking check when the scheduler has chosen to override.
+    if (existingAppointments && !override) {
+      const conflicts = checkSchedulingConflicts(
+        crewId,
+        scheduledDate,
+        durationDays,
+        tb,
+        null,
+        existingAppointments,
+        existing.id,
+      );
+      if (conflicts.length > 0) {
+        throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
+      }
+    }
+
+    let scheduled: Appointment | null;
+    try {
+      scheduled = await updateAppointment(existing.id, existing.version, {
+        crew_id: crewId,
+        scheduled_date: scheduledDate,
+        start_time: start,
+        end_time: end,
+        time_block: timeBlockToStore,
+        duration_days: durationDays,
+        status: "scheduled",
+        // Overlap tag excludes this row from the double-booking unique index.
+        ...(override ? { allow_overlap: true } : {}),
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "DOUBLE_BOOK") {
+        throw new Error("SCHEDULING_CONFLICT: That crew slot is already booked");
+      }
+      throw err;
+    }
+    if (!scheduled) throw new Error("Failed to place the queued appointment on the calendar");
+
+    // Ensure a link ties this appointment to the rForce order (idempotent).
+    let placedLink: AppointmentLink | null = null;
+    try {
+      placedLink = await linkAppointment(scheduled.id, scheduled.version, rforceOrder, "auto");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "ALREADY_LINKED") {
+        warnings.push("Link already existed (idempotent)");
+      } else {
+        warnings.push(`Link not created: ${msg}`);
+      }
+    }
+
+    try {
+      await createAppointmentEvent({
+        appointment_id: scheduled.id,
+        action: "approved_from_rforce",
+        actor_id: actorId || null,
+        actor_name_snapshot: actorName || null,
+        before_state: { status: existing.status, scheduled_date: existing.scheduled_date },
+        after_state: {
+          scheduled_date: scheduledDate,
+          crew_id: crewId,
+          time_block: timeBlockToStore,
+          source: "rforce_approval_from_queue",
+        },
+        reason: "Placed queued appointment on calendar from rForce approval",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      warnings.push(`Audit event not recorded: ${msg}`);
+    }
+
+    learnResourceMapping(rforceOrder, crewId);
+    return { appointment: scheduled, link: placedLink, warnings };
+  }
+
+  // ── No existing tile — create a new one ──
+  // Pre-write conflict check — block the approval if it would double-book,
+  // unless the scheduler has chosen to override.
+  if (existingAppointments && !override) {
     const conflicts = checkSchedulingConflicts(
       crewId,
       scheduledDate,
@@ -783,7 +975,68 @@ export async function approveRForceOrder(
     }
   }
 
-  const sb = requireSupabase();
+  // Override path: insert directly with allow_overlap so the intentional
+  // same-slot overlap is excluded from the double-booking unique index. (The
+  // atomic RPC can't set allow_overlap, so it's bypassed only for overrides.
+  // The work-order uniqueness index still protects against true duplicates.)
+  if (override) {
+    const { data: inserted, error: insErr } = await sb
+      .from("sched_appointments")
+      .insert({
+        crew_id: crewId,
+        appointment_type: appointmentType || "install",
+        order_number: rforceOrder.order_number || null,
+        work_order_number: woTrimmed,
+        customer_name: rforceOrder.customer_name || "Unknown",
+        address: rforceOrder.address || "",
+        scheduled_date: scheduledDate,
+        start_time: start,
+        end_time: end,
+        duration_days: durationDays,
+        time_block: timeBlockToStore,
+        status: "scheduled",
+        product_count: rforceOrder.product_count ?? null,
+        salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
+        scheduled_by: actorId || null,
+        origin: "rforce_approved",
+        sync_state: "linked_pending_confirmation",
+        allow_overlap: true,
+      })
+      .select()
+      .single();
+    if (insErr || !inserted) {
+      if (insErr?.code === "23505") {
+        throw new Error(`DUPLICATE_WO: An active appointment for WO ${woTrimmed} already exists`);
+      }
+      throw new Error(insErr?.message || "Override approval failed");
+    }
+    const overrideAppt = inserted as Appointment;
+
+    let overrideLink: AppointmentLink | null = null;
+    try {
+      overrideLink = await linkAppointment(overrideAppt.id, overrideAppt.version, rforceOrder, "auto");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "ALREADY_LINKED") warnings.push("Link already existed (idempotent)");
+      else warnings.push(`Link not created: ${msg}`);
+    }
+    try {
+      await createAppointmentEvent({
+        appointment_id: overrideAppt.id,
+        action: "approved_from_rforce",
+        actor_id: actorId || null,
+        actor_name_snapshot: actorName || null,
+        before_state: null,
+        after_state: { scheduled_date: scheduledDate, crew_id: crewId, time_block: timeBlockToStore, allow_overlap: true },
+        reason: "Approved with double-booking override",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      warnings.push(`Audit event not recorded: ${msg}`);
+    }
+    learnResourceMapping(rforceOrder, crewId);
+    return { appointment: overrideAppt, link: overrideLink, warnings };
+  }
 
   const { data: rpcData, error: rpcError } = await sb.rpc("approve_rforce_order", {
     p_crew_id: crewId,
@@ -795,7 +1048,7 @@ export async function approveRForceOrder(
     p_scheduled_date: scheduledDate,
     p_start_time: start,
     p_end_time: end,
-    p_time_block: tb,
+    p_time_block: timeBlockToStore,
     p_product_count: rforceOrder.product_count ?? null,
     p_salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
     p_rforce_order_id: rforceOrder.id,
@@ -805,8 +1058,13 @@ export async function approveRForceOrder(
   });
   if (rpcError) {
     const message = rpcError.message || "rForce confirmation failed";
-    if (message.includes("DUPLICATE_WO") || rpcError.code === "23505") {
+    if (message.includes("DUPLICATE_WO")) {
       throw new Error(`DUPLICATE_WO: An active appointment for WO ${rforceOrder.work_order_number} already exists`);
+    }
+    // A raw unique-violation here (WO already checked above) is the double-book
+    // index — surface it as a conflict so the override prompt can offer a bypass.
+    if (rpcError.code === "23505") {
+      throw new Error("SCHEDULING_CONFLICT: That crew slot is already booked");
     }
     if (message.includes("SCHEDULING_CONFLICT")) throw new Error(message);
     throw new Error(message);
@@ -859,7 +1117,7 @@ export async function approveRForceOrder(
       start_time: start,
       end_time: end,
       duration_days: durationDays,
-      time_block: tb,
+      time_block: timeBlockToStore,
       status: "scheduled",
       notes: null,
       reschedule_reason: null,

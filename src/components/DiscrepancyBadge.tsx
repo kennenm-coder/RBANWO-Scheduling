@@ -23,6 +23,11 @@ export default function DiscrepancyBadge({ differences, onClick }: Props) {
   if (differences.crew) lines.push(formatDiffLine("Crew", differences.crew.rforce));
   if (differences.time) lines.push(formatDiffLine("Time", differences.time.rforce));
   if (differences.type) lines.push(formatDiffLine("Type", differences.type.rforce));
+  if (differences.duration) {
+    lines.push(
+      `Days: rF ${differences.duration.rforce}-day, scheduled ${differences.duration.app}-day`
+    );
+  }
 
   return (
     <div

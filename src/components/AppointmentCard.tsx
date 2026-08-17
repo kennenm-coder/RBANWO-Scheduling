@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Appointment, Crew } from "@/lib/types";
-import { typeLabel, formatProductBreakdown } from "@/lib/calendar-utils";
+import { typeLabel, formatProductBreakdown, formatAppointmentTimeRange } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { useData } from "./DataProvider";
 import { MapPin, Unlink, AlertTriangle, CheckCircle, Undo2, Users } from "lucide-react";
@@ -74,7 +74,7 @@ export default function AppointmentCard({
           onClick();
         }
       }}
-      className={`group/card relative rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-white text-xs leading-tight overflow-hidden ${hasDiscrepancy ? "border-l-4 border-amber-400" : ""}`}
+      className={`group/card relative h-full rounded-lg cursor-pointer hover:shadow-md transition-shadow text-white text-xs leading-tight overflow-hidden ${compact ? "p-1" : "p-2"} ${hasDiscrepancy ? "border-l-4 border-amber-400" : ""}`}
       style={{ backgroundColor: bgColor }}
     >
       {/* Unschedule button — visible on hover */}
@@ -87,19 +87,28 @@ export default function AppointmentCard({
       >
         <Undo2 size={12} className={unscheduling ? "animate-spin" : ""} />
       </button>
-      {hasDiscrepancy && (
+      {/* Narrow tiles drop the verbose banners — the amber left border + the
+          discrepancy badge still flag a mismatch — and keep just the essentials. */}
+      {!compact && hasDiscrepancy && (
         <div className="flex items-start gap-1 bg-amber-400/30 text-amber-100 rounded px-1.5 py-0.5 mb-1 text-[10px] leading-snug font-semibold">
           <AlertTriangle size={10} className="shrink-0 mt-0.5" />
           <span>rForce mismatch — data changed since scheduling</span>
         </div>
       )}
-      {orderAlerts && (
+      {!compact && orderAlerts && (
         <div className="flex items-start gap-1 bg-yellow-400/30 text-yellow-100 rounded px-1.5 py-0.5 mb-1 text-[10px] leading-snug">
           <AlertTriangle size={10} className="shrink-0 mt-0.5" />
           <span className="line-clamp-2">{orderAlerts}</span>
         </div>
       )}
       <div className="font-semibold truncate flex items-center gap-1 pr-5">
+        {/* Condensed tiles hide the full note banner, so flag that a note exists
+            with the warning triangle (hover shows the text). */}
+        {compact && orderAlerts && (
+          <span title={orderAlerts} className="shrink-0">
+            <AlertTriangle size={11} className="text-yellow-300" />
+          </span>
+        )}
         {appointment.customer_name}
         {!appointment.work_order_number && (
           <Unlink size={10} className="shrink-0 opacity-70" />
@@ -108,18 +117,19 @@ export default function AppointmentCard({
           <span title="In sync with rForce"><CheckCircle size={10} className="shrink-0 text-green-300" /></span>
         )}
       </div>
-      {accountName && (
-        <div className="truncate opacity-80 text-[10px] leading-snug">{accountName}</div>
+      {formatAppointmentTimeRange(appointment) && (
+        <div className={`font-medium opacity-95 leading-snug ${compact ? "text-[10px]" : "text-[11px]"}`}>
+          {formatAppointmentTimeRange(appointment)}
+        </div>
       )}
       {compact ? (
-        <div className="truncate opacity-85 mt-0.5">
-          {city}
-          {(helpers.length > 0 || additionalMembers) && (
-            <span className="opacity-70"> +{[...helpers, ...(additionalMembers ? [additionalMembers] : [])].join(", ")}</span>
-          )}
-        </div>
+        // Condensed essentials for narrow tiles: name (above) + time + city.
+        city && <div className="truncate opacity-85 text-[10px] leading-snug">{city}</div>
       ) : (
         <>
+          {accountName && (
+            <div className="truncate opacity-80 text-[10px] leading-snug">{accountName}</div>
+          )}
           <div className="flex items-center gap-1 mt-0.5 opacity-90">
             <MapPin size={10} />
             <span className="truncate">{appointment.address}</span>

@@ -48,8 +48,10 @@ import {
   fetchMatchRejections,
   rejectMatch as rejectMatchInDb,
   unrejectMatch as unrejectMatchInDb,
+  fetchScheduledWorkOrderNumbers,
 } from "@/lib/store";
 import { mergeRForceIntoAppointment as mergeInDb, MergeResult } from "@/lib/merge";
+import { humanizeConflictMessage } from "@/lib/calendar-utils";
 import { subscribeToAppointments } from "@/lib/realtime";
 import { useAuth } from "./AuthProvider";
 import { addDays, subDays, format } from "date-fns";
@@ -67,6 +69,10 @@ interface DataContextValue {
   dismissals: RForceDismissal[];
   flagResolutions: FlagResolution[];
   matchRejections: MatchRejection[];
+  /** Work orders that already have a placed tile anywhere on the calendar,
+   *  including outside the loaded date window. Shared so the Issues page and the
+   *  bottom-nav badge count issues the same way. */
+  scheduledWorkOrders: Set<string>;
   loading: boolean;
   connected: boolean;
   createAppointment: (
@@ -95,7 +101,8 @@ interface DataContextValue {
     rforceOrder: RForceOrder,
     crewId: string,
     timeBlock: TimeBlock,
-    scheduledDate: string
+    scheduledDate: string,
+    override?: boolean
   ) => Promise<Appointment>;
   dismissRForce: (
     workOrderNumber: string,
@@ -136,6 +143,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [dismissals, setDismissals] = useState<RForceDismissal[]>([]);
   const [flagResolutions, setFlagResolutions] = useState<FlagResolution[]>([]);
   const [matchRejections, setMatchRejections] = useState<MatchRejection[]>([]);
+  const [scheduledWorkOrders, setScheduledWorkOrders] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
@@ -146,7 +154,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const start = format(subDays(today, 30), "yyyy-MM-dd");
       const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-      const [c, a, r, t, av, links, rm, dism, flagRes, matchRej, unsched] = await Promise.all([
+      const [c, a, r, t, av, links, rm, dism, flagRes, matchRej, unsched, schedWos] = await Promise.all([
         fetchCrews(),
         fetchAppointments(start, end),
         fetchRForceOrders(),
@@ -158,6 +166,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         fetchFlagResolutions(),
         fetchMatchRejections(),
         fetchUnscheduledAppointments(),
+        fetchScheduledWorkOrderNumbers(),
       ]);
 
       // REMOVED: Auto-cancel on page load.
@@ -179,6 +188,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setFlagResolutions(flagRes);
       setMatchRejections(matchRej);
       setUnscheduledAppointments(unsched);
+      setScheduledWorkOrders(new Set(schedWos.map((w) => w.trim().toLowerCase())));
       loadedRangeRef.current = { start, end };
     } catch (err) {
       console.error("Failed to load data:", err);
@@ -372,20 +382,40 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       rforceOrder: RForceOrder,
       crewId: string,
       timeBlock: TimeBlock,
-      scheduledDate: string
+      scheduledDate: string,
+      override: boolean = false
     ) => {
-      // Throws on failure — caller should catch and surface the message
-      const result = await approveRForceInDb(rforceOrder, crewId, timeBlock, scheduledDate, user?.id, displayName);
+      // Throws on failure — caller should catch and surface the message.
+      // Translate the DB's UUID-based conflict text into a human sentence
+      // (who is booked, when) using the appointments/crews already in memory.
+      let result;
+      try {
+        result = await approveRForceInDb(rforceOrder, crewId, timeBlock, scheduledDate, user?.id, displayName, undefined, override);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("SCHEDULING_CONFLICT")) {
+          throw new Error("SCHEDULING_CONFLICT: " + humanizeConflictMessage(msg, appointments, crews));
+        }
+        throw err;
+      }
       setAppointments((prev) => {
-        if (prev.find((a) => a.id === result.appointment.id)) return prev;
+        if (prev.find((a) => a.id === result.appointment.id)) {
+          return prev.map((a) => (a.id === result.appointment.id ? result.appointment : a));
+        }
         return [...prev, result.appointment];
       });
+      // If approval placed a tile that was sitting in the queue, drop it from the
+      // unscheduled list so the queue and calendar stay consistent.
+      setUnscheduledAppointments((prev) => prev.filter((a) => a.id !== result.appointment.id));
       if (result.link) {
-        setActiveLinks((prev) => [...prev, result.link!]);
+        setActiveLinks((prev) => {
+          if (prev.find((l) => l.id === result.link!.id)) return prev;
+          return [...prev, result.link!];
+        });
       }
       return result.appointment;
     },
-    [user?.id, displayName]
+    [user?.id, displayName, appointments, crews]
   );
 
   const handleDismissRForce = useCallback(
@@ -464,6 +494,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         dismissals,
         flagResolutions,
         matchRejections,
+        scheduledWorkOrders,
         loading,
         connected,
         createAppointment: handleCreate,

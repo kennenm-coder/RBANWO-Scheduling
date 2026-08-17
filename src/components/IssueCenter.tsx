@@ -7,6 +7,7 @@ import { detectFlags, applyResolutions, categorizeFlags, countActionableFlags, S
 import { openSalesforce } from "@/lib/salesforce";
 import { timeBlockStartEnd, formatDateStr } from "@/lib/calendar-utils";
 import { normalizeWoType } from "@/lib/normalize";
+import { deriveTimesFromOrder } from "@/lib/rforce-times";
 import { Appointment, FlagClass, FlagCode, TimeBlock } from "@/lib/types";
 import {
   X,
@@ -586,27 +587,43 @@ function QuickFixes({
   // ── Time mismatch: accept rForce time ──
   if (flag.code === "time_mismatch" && appt && flag.differences?.time) {
     const rfTimeStr = flag.differences.time.rforce;
-    // Try to map rForce time to the closest time block
-    const rfHour = parseInt(rfTimeStr.split(":")[0], 10);
-    let targetBlock: TimeBlock | null = null;
-    if (!isNaN(rfHour)) {
-      if (rfHour < 10) targetBlock = "9-10";
-      else if (rfHour < 12) targetBlock = "10-12";
-      else if (rfHour < 14) targetBlock = "12-2";
-      else if (rfHour < 16) targetBlock = "2-4";
-      else targetBlock = "4-6";
+    // Prefer the linked order's REAL window (exact start/end + natural block) via
+    // the shared derivation. Fall back to a block-rounded time only when the
+    // order or its scheduled window isn't available.
+    const normWo = (appt.work_order_number || "").trim().toLowerCase();
+    const linkedOrder = normWo
+      ? rforceOrders.find((o) => (o.work_order_number || "").trim().toLowerCase() === normWo)
+      : undefined;
+    const derived = linkedOrder
+      ? deriveTimesFromOrder(linkedOrder.scheduled_start, linkedOrder.scheduled_end, appt.appointment_type)
+      : null;
+
+    let update: { time_block: TimeBlock | null; start_time: string; end_time: string } | null = null;
+    if (derived) {
+      update = { time_block: derived.time_block, start_time: derived.start_time, end_time: derived.end_time };
+    } else {
+      // Fallback: map the rForce hour to its block.
+      const rfHour = parseInt(rfTimeStr.split(":")[0], 10);
+      let targetBlock: TimeBlock | null = null;
+      if (!isNaN(rfHour)) {
+        if (rfHour < 10) targetBlock = "9-10";
+        else if (rfHour < 12) targetBlock = "10-12";
+        else if (rfHour < 14) targetBlock = "12-2";
+        else if (rfHour < 16) targetBlock = "2-4";
+        else targetBlock = "4-6";
+      }
+      if (targetBlock) {
+        const times = timeBlockStartEnd(targetBlock);
+        update = { time_block: targetBlock, start_time: times.start, end_time: times.end };
+      }
     }
-    if (targetBlock) {
-      const times = timeBlockStartEnd(targetBlock);
+
+    if (update) {
       fixes.push({
         label: `Accept rForce time (${rfTimeStr})`,
         icon: <Clock size={11} />,
         action: async () => {
-          await updateAppointment(appt.id, appt.version, {
-            time_block: targetBlock!,
-            start_time: times.start,
-            end_time: times.end,
-          });
+          await updateAppointment(appt.id, appt.version, update);
         },
       });
     }

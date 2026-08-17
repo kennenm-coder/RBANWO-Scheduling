@@ -69,7 +69,15 @@ export function buildQueueItems(
   activeLinks: AppointmentLink[],
   dismissals: RForceDismissal[],
   mappings: ResourceMapping[],
-  _matchRejections: MatchRejection[] = []
+  _matchRejections: MatchRejection[] = [],
+  /**
+   * Work-order numbers (normalized) that already have a tile ANYWHERE on the
+   * calendar — including tiles outside the loaded date window (e.g. completed
+   * jobs backfilled to history). Such orders are already handled and must not be
+   * re-listed as "needs confirmation" just because their tile isn't in the
+   * window the calendar currently loads. Mirrors deriveIssues' same guard.
+   */
+  scheduledWorkOrders: Set<string> = new Set()
 ): QueueItem[] {
   const items: QueueItem[] = [];
   const dismissalKeys = new Set(
@@ -91,6 +99,13 @@ export function buildQueueItems(
     if (
       scheduledDate &&
       dismissalKeys.has(`${rf.work_order_number.trim().toLowerCase()}|${scheduledDate}`)
+    ) continue;
+
+    // Already placed on the calendar somewhere (incl. outside the loaded window) —
+    // approving would only hit the duplicate guard, so it isn't a queue item.
+    if (
+      calendarItem.status === "needs_confirmation" &&
+      scheduledWorkOrders.has(rf.work_order_number.trim().toLowerCase())
     ) continue;
 
     const category: QueueItemCategory =

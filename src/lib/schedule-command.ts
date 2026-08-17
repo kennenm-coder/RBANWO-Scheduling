@@ -18,6 +18,15 @@ import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-va
 import { getEligibleCrews } from "./crew-utils";
 import { createAppointmentEvent } from "./store";
 
+/** Which 2-hour measure block an hour lands in. */
+function hourToFixedBlock(hour: number): TimeBlock {
+  if (hour < 10) return "9-10";
+  if (hour < 12) return "10-12";
+  if (hour < 14) return "12-2";
+  if (hour < 16) return "2-4";
+  return "4-6";
+}
+
 // ── Types ──
 
 export interface ScheduleMoveTarget {
@@ -36,6 +45,12 @@ export interface ScheduleMoveTarget {
   startTime?: string | null;
   /** For timed types — explicit end. */
   endTime?: string | null;
+  /**
+   * Day-view drag: keep the EXACT dropped time even for fixed_block (measure)
+   * appointments, and derive the block from it — instead of snapping to the
+   * block start. Lets a measure job hold a genuine time when it really has one.
+   */
+  exactTime?: boolean;
   /** Multi-day install duration. */
   durationDays?: number;
   /** Non-scheduling fields that must be committed atomically with the move. */
@@ -136,7 +151,17 @@ export function buildMoveUpdates(
   let endTime: string;
   let timeBlock: TimeBlock | null;
 
-  if (mode === "fixed_block" && target.timeBlock) {
+  if (mode === "fixed_block" && target.exactTime && target.startTime) {
+    // Day-view exact-time drop for a measure job: keep the precise time and
+    // derive which block it lands in.
+    const origDuration = timeDurationMinutes(
+      currentAppointment.start_time || "10:00",
+      currentAppointment.end_time || "12:00"
+    );
+    startTime = snapTo30Min(target.startTime);
+    endTime = target.endTime || addMinutesToTime(startTime, origDuration);
+    timeBlock = hourToFixedBlock(parseInt(startTime.slice(0, 2), 10));
+  } else if (mode === "fixed_block" && target.timeBlock) {
     const resolved = resolveScheduleTimes(currentAppointment.appointment_type, {
       timeBlock: target.timeBlock,
     });

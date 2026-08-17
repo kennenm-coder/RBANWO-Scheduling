@@ -12,12 +12,25 @@
 
 import { Appointment, RForceOrder, AppointmentLink, Crew, ResourceMapping } from "./types";
 
+/** Which 2-hour measure block an hour falls in. Local copy to avoid a circular
+ *  import with calendar-utils (which imports from this module). */
+function hourToBlock(hour: number): string {
+  if (hour < 10) return "9-10";
+  if (hour < 12) return "10-12";
+  if (hour < 14) return "12-2";
+  if (hour < 16) return "2-4";
+  return "4-6";
+}
+
 export type RForceCalendarStatus = "needs_confirmation" | "mismatch" | "reference" | "synced";
 
 export interface RForceMismatchDetails {
   date?: { app: string; rforce: string };
   time?: { app: string; rforce: string };
   crew?: { app: string; rforce: string };
+  /** Day-count of the job: rForce span vs the scheduled appointment's duration.
+   *  Flags e.g. a 2-day install booked for only 1 day. */
+  duration?: { app: number; rforce: number };
 }
 
 export interface RForceCalendarItem {
@@ -112,12 +125,34 @@ function detectMismatch(
     }
   }
 
-  // Time mismatch — skip for full_day appointments since they use default
-  // 08:00–16:00 and don't track specific rForce times
-  if (rf.scheduled_start && appt.start_time && appt.time_block !== "full_day") {
-    const rfTime = rf.scheduled_start.slice(11, 16);
-    if (rfTime && appt.start_time && rfTime !== appt.start_time) {
-      details.time = { app: appt.start_time, rforce: rfTime };
+  // Time mismatch — block-aware. Measure appointments live in 2-hour blocks, so
+  // a job is "on time" as long as the rForce time falls in the SAME block; only
+  // a rForce time that lands in a DIFFERENT block is a real mismatch (wrong
+  // window). This avoids false positives from block-vs-exact-minute differences
+  // (e.g. rForce 10:30 in a 10–12 block). full_day work has no block to compare.
+  if (rf.scheduled_start && appt.time_block && appt.time_block !== "full_day") {
+    const rfHour = parseInt(rf.scheduled_start.slice(11, 13), 10);
+    if (!Number.isNaN(rfHour)) {
+      const rfBlock = hourToBlock(rfHour);
+      if (rfBlock !== appt.time_block) {
+        details.time = { app: appt.time_block, rforce: rfBlock };
+        hasMismatch = true;
+      }
+    }
+  }
+
+  // Duration mismatch — the rForce order spans a different number of days than
+  // the scheduled appointment (e.g. a 2-day install booked for only 1 day).
+  if (rf.scheduled_start && appt.scheduled_date) {
+    const rfStart = rf.scheduled_start.slice(0, 10);
+    const rfEnd = (rf.scheduled_end || rf.scheduled_start).slice(0, 10);
+    const rfDays = Math.max(
+      1,
+      Math.round((new Date(rfEnd).getTime() - new Date(rfStart).getTime()) / 86_400_000) + 1
+    );
+    const apptDays = Math.max(1, appt.duration_days || 1);
+    if (rfDays !== apptDays) {
+      details.duration = { app: apptDays, rforce: rfDays };
       hasMismatch = true;
     }
   }

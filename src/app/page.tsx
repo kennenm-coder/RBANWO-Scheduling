@@ -36,6 +36,8 @@ export default function CalendarPage() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showRForce, setShowRForce] = useState(false);
+  // Crew to scroll to + highlight when arriving from an Issues-page click.
+  const [focusCrewId, setFocusCrewId] = useState<string | null>(null);
 
   const initializedRef = useRef(false);
 
@@ -43,6 +45,7 @@ export default function CalendarPage() {
   useEffect(() => {
     const dateParam = searchParams.get("date");
     const viewParam = searchParams.get("view") as ViewMode | null;
+    const crewParam = searchParams.get("crew");
     if (dateParam) {
       try { setCurrentDate(parseISO(dateParam)); } catch {}
     }
@@ -50,8 +53,9 @@ export default function CalendarPage() {
       setViewMode(viewParam);
       localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
     }
+    if (crewParam) setFocusCrewId(crewParam);
     // Clean query params from the URL after reading
-    if (dateParam || viewParam) {
+    if (dateParam || viewParam || crewParam) {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, [searchParams]);
@@ -192,21 +196,22 @@ export default function CalendarPage() {
         </a>
       </div>
 
-      {/* Queue panel — always mounted so memos stay warm; CSS hides when closed */}
+      {/* Queue panel — unmounted when closed so it doesn't render (and diff)
+          hundreds of hidden cards. Filters/search persist to localStorage via
+          useQueueFilters, so state is restored on reopen. */}
       <div
         className={`shrink-0 border-r border-border bg-background overflow-hidden transition-all duration-300 ${
           queueOpen ? "w-full sm:w-[380px]" : "w-0"
         }`}
       >
-        <div
-          className="w-full sm:w-[380px] h-full flex flex-col"
-          aria-hidden={!queueOpen}
-        >
-          <div className="px-3 py-2 border-b border-border bg-surface flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Unscheduled Queue</h2>
+        {queueOpen && (
+          <div className="w-full sm:w-[380px] h-full flex flex-col">
+            <div className="px-3 py-2 border-b border-border bg-surface flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Unscheduled Queue</h2>
+            </div>
+            <UnscheduledQueue />
           </div>
-          <UnscheduledQueue />
-        </div>
+        )}
       </div>
 
       {/* Calendar */}
@@ -229,8 +234,9 @@ export default function CalendarPage() {
           onToggleRForce={handleToggleRForce}
         />
 
-        {/* Hide WeekSummary in week view — the table headers already show days */}
-        {viewMode !== "week" && (
+        {/* Only show WeekSummary in day view — week and block views already
+            show the days of the week in their own column headers. */}
+        {viewMode === "day" && (
           <WeekSummary
             currentDate={currentDate}
             onDayClick={(date) => {
@@ -253,7 +259,13 @@ export default function CalendarPage() {
           }`}
         >
           {viewMode === "day" ? (
-            <CrewLaneDayView date={currentDate} filterType={filterType} showRForce={showRForce} />
+            <CrewLaneDayView
+              date={currentDate}
+              filterType={filterType}
+              showRForce={showRForce}
+              focusCrewId={focusCrewId}
+              onFocusHandled={() => setFocusCrewId(null)}
+            />
           ) : viewMode === "block" ? (
             <CrewBlockView
               currentDate={currentDate}

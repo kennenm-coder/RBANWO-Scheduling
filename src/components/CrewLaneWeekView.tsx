@@ -24,6 +24,7 @@ import {
   MEASURE_TIME_BLOCKS,
   timeBlockStartEnd,
   appointmentSpansBlock,
+  formatAppointmentTimeRange,
 } from "@/lib/calendar-utils";
 import { deriveRForceCalendarStatus } from "@/lib/rforce-calendar-status";
 import { getTimeOffForDate } from "@/lib/store";
@@ -196,6 +197,63 @@ export default function CrewLaneWeekView({
     return sections.filter((s) => s.filterType === filterType);
   }, [sections, filterType]);
 
+  // Same-time appointments (and rForce cards) render as side-by-side lanes. A
+  // day column has to widen to fit the busiest slot in that day across every
+  // crew, so all rows in the column share one width. Compute that lane count.
+  const dayColumnLanes = useMemo(() => {
+    const lanes = new Map<string, number>();
+    for (const day of days) lanes.set(format(day, "yyyy-MM-dd"), 1);
+    for (const section of filteredSections) {
+      if (collapsedSections.has(section.key)) continue;
+      const isMeasure = section.filterType === "tech_measure" && !section.key.includes("mgmt");
+      for (const crew of section.crews) {
+        const showTimeLanes = isMeasure || (isDualRole(crew) && crewHasType(crew, "measure_tech"));
+        for (const day of days) {
+          const dateStr = format(day, "yyyy-MM-dd");
+          const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
+          const items = (rforceByDay.get(dateStr) || []).filter((r) => r.crewId === crew.id);
+          const approvals = items.filter((d) => d.displayMode === "approval");
+          const visible = items.filter((d) => d.displayMode === "synced" || d.displayMode === "regular" || d.displayMode === "discrepancy");
+          let cellMax = 1;
+          if (showTimeLanes) {
+            for (const block of MEASURE_TIME_BLOCKS) {
+              const ba = cellAppts.filter((a) => appointmentSpansBlock(a, block)).length;
+              const br =
+                approvals.filter((r) => r.timeBlock === block).length +
+                (showRForce ? visible.filter((r) => r.timeBlock === block).length : 0);
+              cellMax = Math.max(cellMax, ba + br);
+            }
+          } else {
+            // Standard cells stack vertically by start time, so the column only
+            // has to widen for the busiest same-start group, not the total count.
+            const byTime = new Map<string, number>();
+            const bump = (t: string) => byTime.set(t || "~~", (byTime.get(t || "~~") || 0) + 1);
+            for (const a of cellAppts) bump(a.start_time || (a.time_block ? timeBlockStartEnd(a.time_block).start : ""));
+            for (const r of approvals) bump(r.rforceOrder.scheduled_start?.slice(11, 16) || timeBlockStartEnd(r.timeBlock).start);
+            if (showRForce) for (const r of visible) bump(r.rforceOrder.scheduled_start?.slice(11, 16) || timeBlockStartEnd(r.timeBlock).start);
+            cellMax = Math.max(1, ...byTime.values());
+          }
+          lanes.set(dateStr, Math.max(lanes.get(dateStr) || 1, cellMax));
+        }
+      }
+    }
+    return lanes;
+  }, [filteredSections, collapsedSections, days, appointments, rforceByDay, showRForce]);
+
+  const LANE_BASE_PX = 120;
+  const LANE_EXTRA_PX = 104;
+  const gridTemplateColumns = useMemo(
+    () =>
+      "140px " +
+      days
+        .map((day) => {
+          const n = dayColumnLanes.get(format(day, "yyyy-MM-dd")) || 1;
+          return `minmax(${LANE_BASE_PX + (Math.max(n, 1) - 1) * LANE_EXTRA_PX}px, 1fr)`;
+        })
+        .join(" "),
+    [days, dayColumnLanes]
+  );
+
   function toggleSection(key: string) {
     setCollapsedSections((prev) => {
       const next = new Set(prev);
@@ -312,10 +370,10 @@ export default function CrewLaneWeekView({
     <div className="flex-1 overflow-auto">
       <div
         className="grid min-w-[1120px]"
-        style={{ gridTemplateColumns: '140px repeat(7, minmax(120px, 1fr))' }}
+        style={{ gridTemplateColumns }}
       >
         {/* Sticky header row — shared across all departments */}
-        <div className="px-1 py-0.5 text-[9px] text-muted font-medium text-left border-b border-border sticky left-0 top-0 bg-background z-20">
+        <div className="h-5 flex items-center px-1 text-[9px] text-muted font-medium text-left border-b border-border sticky left-0 top-0 bg-background z-40">
           Crew
         </div>
         {days.map((day) => {
@@ -323,7 +381,7 @@ export default function CrewLaneWeekView({
           return (
             <div
               key={day.toISOString()}
-              className={`px-0.5 py-0.5 text-[9px] font-medium text-center border-b border-border cursor-pointer hover:bg-primary-light sticky top-0 bg-background z-10 ${today ? "bg-primary-light" : ""}`}
+              className={`h-5 flex items-center justify-center gap-1 px-0.5 text-[9px] font-medium text-center border-b border-border cursor-pointer hover:bg-primary-light sticky top-0 bg-background z-30 ${today ? "bg-primary-light" : ""}`}
               onClick={() => onDayClick(day)}
             >
               <span className={today ? "text-primary font-bold" : ""}>
@@ -359,7 +417,7 @@ export default function CrewLaneWeekView({
               {/* Section header — spans all 8 columns */}
               <button
                 onClick={() => toggleSection(section.key)}
-                className="w-full flex items-center gap-1.5 px-2 py-1 bg-surface sticky top-0 z-10 hover:bg-border/50 transition-colors"
+                className="w-full flex items-center gap-1.5 px-2 py-1 bg-surface sticky top-5 z-20 hover:bg-border/50 transition-colors"
                 style={{ gridColumn: '1 / -1' }}
               >
                 {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
@@ -505,13 +563,14 @@ export default function CrewLaneWeekView({
         <RForceDetailSheet
           order={selectedRForce.order}
           crew={selectedRForce.crew}
+          stale={selectedRForce.displayItem?.stale}
           onClose={() => setSelectedRForce(null)}
           onApprove={
             selectedRForce.displayItem?.displayMode === "approval"
-              ? async () => {
+              ? async (override?: boolean) => {
                   const item = selectedRForce.displayItem!;
                   const dateStr = selectedRForce.order.scheduled_start?.slice(0, 10) || format(new Date(), "yyyy-MM-dd");
-                  await approveRForce(selectedRForce.order, item.crewId, item.timeBlock, dateStr);
+                  await approveRForce(selectedRForce.order, item.crewId, item.timeBlock, dateStr, override);
                 }
               : undefined
           }
@@ -613,7 +672,7 @@ function MeasureTimeLaneCell({
   onAppointmentDrop?: (apptId: string, srcCrewId: string, srcDate: string, srcBlock: TimeBlock | null, targetBlock: TimeBlock) => void;
   onResizeDrop?: (apptId: string, targetBlock: TimeBlock) => void;
   onQueueDrop?: (order: RForceOrder) => void;
-  onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string) => Promise<Appointment | null>;
+  onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string, override?: boolean) => Promise<Appointment | null>;
   onDismissRForce?: (workOrderNumber: string, rforceDate: string, startTime?: string) => Promise<void>;
   hasMismatch: (appt: Appointment) => boolean;
 }) {
@@ -641,11 +700,17 @@ function MeasureTimeLaneCell({
     const bIdx = b.time_block ? blockOrder.indexOf(b.time_block) : 99;
     return aIdx - bIdx;
   });
+  // Appointments that don't land in ANY 2-hour block — a timed service/JIP or a
+  // full-day job assigned to this measure tech. They MUST still be shown or a
+  // scheduler could book over an appointment they can't see.
+  const offBlockAppts = allApptsSorted.filter(
+    (a) => !MEASURE_TIME_BLOCKS.some((b) => appointmentSpansBlock(a, b))
+  );
 
   const approvalItems = cellDisplayItems.filter((d) => d.displayMode === "approval");
   const discrepancyItems = cellDisplayItems.filter((d) => d.displayMode === "discrepancy");
   const visibleRForce = cellDisplayItems.filter((d) =>
-    d.displayMode === "synced" || d.displayMode === "regular"
+    d.displayMode === "synced" || d.displayMode === "regular" || d.displayMode === "discrepancy"
   );
   const allRForceSorted = [...(showRForce ? visibleRForce : []), ...approvalItems].sort((a, b) => {
     const blockOrder = MEASURE_TIME_BLOCKS as string[];
@@ -716,6 +781,39 @@ function MeasureTimeLaneCell({
           <Palmtree size={9} style={timeOffColor ? { color: `${timeOffColor}90` } : undefined} className={timeOffColor ? "" : "text-time-off/50"} />
         </div>
       )}
+      {/* Cross-type jobs (timed service/JIP, full-day) on this measure tech that
+          match no block — shown at the top so they can't hide behind the grid. */}
+      {offBlockAppts.length > 0 && (
+        <div className="space-y-0.5 px-0.5 pt-0.5">
+          {offBlockAppts.map((a) => {
+            const dimmed = !!searchQuery && !appointmentMatchesSearch(a, crewObj, searchQuery);
+            const discItem = discrepancyByApptId.get(a.id);
+            return (
+              <div key={a.id} className="relative">
+                <WeekCard
+                  dimmed={dimmed}
+                  onClick={() => onCardClick(a)}
+                  appointment={a}
+                  sourceCrewId={crew.id}
+                  sourceDate={dateStr}
+                  sourceTimeBlock={a.time_block}
+                >
+                  <CompactAppointmentContent
+                    appointment={a}
+                    crew={crewObj}
+                    hasDiscrepancy={!!discItem || hasMismatch(a)}
+                    multiDayLabel={getMultiDayLabel(a, day)}
+                    orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+                    accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
+                    showRForce={showRForce}
+                  />
+                </WeekCard>
+                {discItem && <DiscrepancyBadge differences={discItem.differences} onClick={() => onRForceClick(discItem.rforceOrder, discItem)} />}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {(!off || cellAppts.length > 0 || allRForceSorted.length > 0 || discrepancyItems.length > 0) && (
         <div>
           {MEASURE_TIME_BLOCKS.map((block) => {
@@ -779,36 +877,36 @@ function MeasureTimeLaneCell({
                       <span className="text-[7px] text-muted/40">off</span>
                     </div>
                   ) : hasItems ? (
-                    <div>
-                      {/* rForce layer on top */}
-                      {blockRForce.length > 0 && (
-                        <div className={blockAppts.length > 0 ? "pb-0.5 mb-0.5" : ""} style={blockAppts.length > 0 ? { borderBottom: "1px dashed var(--color-border)" } : undefined}>
-                          {blockRForce.filter((rf) => rf.displayMode !== "approval").map((rf) => {
-                            const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
-                            return (
-                              <WeekCard key={rf.rforceOrder.work_order_number} dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder, rf)}>
-                                <CompactRForceContent order={rf.rforceOrder} crew={crewObj} isSynced={rf.displayMode === "synced"} />
-                              </WeekCard>
-                            );
-                          })}
-                          {blockRForce.filter((rf) => rf.displayMode === "approval").map((rf) => (
-                            <ApprovalCard
-                              key={`approve-${rf.rforceOrder.work_order_number}`}
-                              rforceOrder={rf.rforceOrder}
-                              crew={crewObj}
-                              compact
-                              onApprove={async () => {
-                                await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr);
-                              }}
-                              onDismiss={() =>
-                                onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16)) ?? Promise.resolve()
-                              }
-                              onClick={() => onRForceClick(rf.rforceOrder, rf)}
-                            />
-                          ))}
+                    // Each rForce card and each appointment is its own side-by-side
+                    // lane; the day column is pre-sized to fit the busiest block.
+                    <div className="flex items-start gap-0.5">
+                      {blockRForce.filter((rf) => rf.displayMode !== "approval").map((rf) => {
+                        const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
+                        return (
+                          <div key={`rf-${rf.rforceOrder.work_order_number}`} className="flex-1 min-w-0">
+                            <WeekCard dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder, rf)}>
+                              <CompactRForceContent order={rf.rforceOrder} crew={crewObj} isSynced={rf.displayMode === "synced"} />
+                            </WeekCard>
+                          </div>
+                        );
+                      })}
+                      {blockRForce.filter((rf) => rf.displayMode === "approval").map((rf) => (
+                        <div key={`approve-${rf.rforceOrder.work_order_number}`} className="flex-1 min-w-0">
+                          <ApprovalCard
+                            rforceOrder={rf.rforceOrder}
+                            stale={rf.stale}
+                            crew={crewObj}
+                            compact
+                            onApprove={async (override) => {
+                              await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr, override);
+                            }}
+                            onDismiss={() =>
+                              onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16)) ?? Promise.resolve()
+                            }
+                            onClick={() => onRForceClick(rf.rforceOrder, rf)}
+                          />
                         </div>
-                      )}
-                      {/* App layer below */}
+                      ))}
                       {blockAppts.map((a) => {
                         const isSpanStart = a.time_block === block;
                         if (!isSpanStart && a.time_block_end) return null;
@@ -817,7 +915,7 @@ function MeasureTimeLaneCell({
                         const spanLen = a.time_block_end ? MEASURE_TIME_BLOCKS.indexOf(a.time_block_end) - MEASURE_TIME_BLOCKS.indexOf(a.time_block!) + 1 : 1;
                         const discItem = discrepancyByApptId.get(a.id);
                         return (
-                          <div key={a.id} className="relative">
+                          <div key={a.id} className="relative flex-1 min-w-0">
                             <WeekCard
                               dimmed={dimmed}
                               onClick={() => onCardClick(a)}
@@ -846,7 +944,7 @@ function MeasureTimeLaneCell({
                       {blockAppts.length === 0 && (
                         <button
                           onClick={() => onSchedule(block)}
-                          className="w-full h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
+                          className="flex-1 min-w-0 h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
                         >
                           <Plus size={7} className="text-muted/20 hover:text-primary" />
                         </button>
@@ -911,7 +1009,7 @@ function StandardCell({
   getMultiDayLabel: (a: Appointment, d: Date) => string | null;
   onDrop?: (order: RForceOrder) => void;
   onAppointmentDrop?: (apptId: string, srcCrewId: string, srcDate: string, srcBlock: TimeBlock | null) => void;
-  onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string) => Promise<Appointment | null>;
+  onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string, override?: boolean) => Promise<Appointment | null>;
   onDismissRForce?: (workOrderNumber: string, rforceDate: string, startTime?: string) => Promise<void>;
   hasMismatch: (appt: Appointment) => boolean;
 }) {
@@ -922,7 +1020,7 @@ function StandardCell({
   const approvalItems = cellDisplayItems.filter((d) => d.displayMode === "approval");
   const discrepancyItems = cellDisplayItems.filter((d) => d.displayMode === "discrepancy");
   const visibleRForce = showRForce
-    ? cellDisplayItems.filter((d) => d.displayMode === "synced" || d.displayMode === "regular")
+    ? cellDisplayItems.filter((d) => d.displayMode === "synced" || d.displayMode === "regular" || d.displayMode === "discrepancy")
     : [];
   const discrepancyByApptId = new Map<string, RForceDisplayItem>();
   for (const d of discrepancyItems) {
@@ -974,6 +1072,82 @@ function StandardCell({
   const offBorderStyle = timeOffColor
     ? { borderColor: `${timeOffColor}60` }
     : undefined;
+
+  // Stack cards vertically by start time; only cards sharing an exact start
+  // time render side-by-side in one row. Untimed (e.g. full-day) cards sort
+  // last. This mirrors the day view's top-to-bottom-by-time read order.
+  const startTimeGroups = (() => {
+    const groups = new Map<string, React.ReactNode[]>();
+    const push = (time: string, node: React.ReactNode) => {
+      const key = time || "~~";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(node);
+    };
+
+    for (const rf of visibleRForce) {
+      const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
+      const time = rf.rforceOrder.scheduled_start?.slice(11, 16) || timeBlockStartEnd(rf.timeBlock).start;
+      push(time, (
+        <div key={`rf-${rf.rforceOrder.work_order_number}`} className="flex-1 min-w-0">
+          <WeekCard dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder, rf)}>
+            <CompactRForceContent order={rf.rforceOrder} crew={crewObj} isSynced={rf.displayMode === "synced"} />
+          </WeekCard>
+        </div>
+      ));
+    }
+
+    for (const rf of approvalItems) {
+      const time = rf.rforceOrder.scheduled_start?.slice(11, 16) || timeBlockStartEnd(rf.timeBlock).start;
+      push(time, (
+        <div key={`approve-${rf.rforceOrder.work_order_number}`} className="flex-1 min-w-0">
+          <ApprovalCard
+            rforceOrder={rf.rforceOrder}
+            stale={rf.stale}
+            crew={crewObj}
+            compact
+            onApprove={async (override) => {
+              await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr, override);
+            }}
+            onDismiss={async () => {
+              await onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16));
+            }}
+            onClick={() => onRForceClick(rf.rforceOrder, rf)}
+          />
+        </div>
+      ));
+    }
+
+    for (const a of sortedAppts) {
+      const dimmed = !!searchQuery && !appointmentMatchesSearch(a, crewObj, searchQuery);
+      const multiDay = getMultiDayLabel(a, day);
+      const discItem = discrepancyByApptId.get(a.id);
+      const time = a.start_time || (a.time_block ? timeBlockStartEnd(a.time_block).start : "");
+      push(time, (
+        <div key={a.id} className="relative flex-1 min-w-0">
+          <WeekCard
+            dimmed={dimmed}
+            onClick={() => onCardClick(a)}
+            appointment={a}
+            sourceCrewId={crew.id}
+            sourceDate={dateStr}
+            sourceTimeBlock={a.time_block}
+          >
+            <CompactAppointmentContent
+              appointment={a}
+              crew={crewObj}
+              hasDiscrepancy={!!discItem || hasMismatch(a)}
+              multiDayLabel={multiDay}
+              orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
+              accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
+            />
+          </WeekCard>
+          {discItem && <DiscrepancyBadge differences={discItem.differences} onClick={() => onRForceClick(discItem.rforceOrder, discItem)} />}
+        </div>
+      ));
+    }
+
+    return [...groups.entries()].sort((x, y) => x[0].localeCompare(y[0]));
+  })();
 
   if (off && !hasContent) {
     return (
@@ -1036,71 +1210,20 @@ function StandardCell({
         </div>
       )}
       {hasContent ? (
-        <div>
-          {/* rForce layer — shown above app tiles when overlay is on */}
-          {(visibleRForce.length > 0 || approvalItems.length > 0) && (
-            <div className="space-y-0.5 pb-0.5" style={visibleRForce.length > 0 || approvalItems.length > 0 ? { borderBottom: "1px dashed var(--color-border)" } : undefined}>
-              {visibleRForce.map((rf) => {
-                const dimmed = !!searchQuery && !rforceItemMatchesSearch(rf, crewObj, searchQuery);
-                return (
-                  <WeekCard key={rf.rforceOrder.work_order_number} dimmed={dimmed} onClick={() => onRForceClick(rf.rforceOrder, rf)}>
-                    <CompactRForceContent order={rf.rforceOrder} crew={crewObj} isSynced={rf.displayMode === "synced"} />
-                  </WeekCard>
-                );
-              })}
-              {approvalItems.map((rf) => (
-                <ApprovalCard
-                  key={`approve-${rf.rforceOrder.work_order_number}`}
-                  rforceOrder={rf.rforceOrder}
-                  crew={crewObj}
-                  compact
-                  onApprove={async () => {
-                    await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr);
-                  }}
-                  onDismiss={async () => {
-                    await onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16));
-                  }}
-                  onClick={() => onRForceClick(rf.rforceOrder, rf)}
-                />
-              ))}
+        // Cards stack vertically by start time; only cards sharing an exact
+        // start time sit side-by-side in one row. The + row sits at the bottom.
+        <div className="space-y-0.5">
+          {startTimeGroups.map(([key, nodes]) => (
+            <div key={key} className="flex items-start gap-0.5">
+              {nodes}
             </div>
-          )}
-          {/* App layer — source of truth appointments */}
-          <div className="space-y-0.5 pt-0.5">
-            {sortedAppts.map((a) => {
-              const dimmed = !!searchQuery && !appointmentMatchesSearch(a, crewObj, searchQuery);
-              const multiDay = getMultiDayLabel(a, day);
-              const discItem = discrepancyByApptId.get(a.id);
-              return (
-                <div key={a.id} className="relative">
-                  <WeekCard
-                    dimmed={dimmed}
-                    onClick={() => onCardClick(a)}
-                    appointment={a}
-                    sourceCrewId={crew.id}
-                    sourceDate={dateStr}
-                    sourceTimeBlock={a.time_block}
-                  >
-                    <CompactAppointmentContent
-                      appointment={a}
-                      crew={crewObj}
-                      hasDiscrepancy={!!discItem || hasMismatch(a)}
-                      multiDayLabel={multiDay}
-                      orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
-                      accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
-                    />
-                  </WeekCard>
-                  {discItem && <DiscrepancyBadge differences={discItem.differences} onClick={() => onRForceClick(discItem.rforceOrder, discItem)} />}
-                </div>
-              );
-            })}
-            <button
-              onClick={onSchedule}
-              className="w-full h-4 flex items-center justify-center hover:bg-primary-light/30 transition-colors"
-            >
-              <Plus size={7} className="text-muted/15 hover:text-primary" />
-            </button>
-          </div>
+          ))}
+          <button
+            onClick={onSchedule}
+            className="w-full h-3 flex items-center justify-center hover:bg-primary-light/30 transition-colors rounded-sm"
+          >
+            <Plus size={7} className="text-muted/15 hover:text-primary" />
+          </button>
         </div>
       ) : (
         <button
@@ -1256,6 +1379,11 @@ function CompactAppointmentContent({
           )
         )}
       </div>
+      {formatAppointmentTimeRange(appointment) && (
+        <div className="truncate font-medium opacity-95 text-[8px] leading-tight">
+          {formatAppointmentTimeRange(appointment)}
+        </div>
+      )}
       {accountName && <div className="truncate opacity-70 text-[8px]">{accountName}</div>}
       {city && <div className="truncate opacity-80 text-[9px]">{city}</div>}
       {hasHelpers && (
