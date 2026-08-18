@@ -268,7 +268,13 @@ export interface TimeOffRequest {
   created_at: string;
 }
 
-export type AvailabilityKind = "pto" | "unavailable" | "role_assignment" | "block";
+export type AvailabilityKind =
+  | "pto"
+  | "unavailable"
+  | "role_assignment"
+  | "block"
+  | "late_day"
+  | "office_day";
 
 export interface AvailabilityRule {
   id: string;

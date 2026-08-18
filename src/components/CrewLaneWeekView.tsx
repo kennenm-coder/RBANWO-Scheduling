@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, Fragment } from "react";
+import { useState, useMemo, useRef, Fragment } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
@@ -16,6 +16,7 @@ import {
   TimeBlock,
   AppointmentType,
   RForceDisplayItem,
+  AvailabilityKind,
 } from "@/lib/types";
 import {
   getWeekDays,
@@ -28,7 +29,8 @@ import {
 } from "@/lib/calendar-utils";
 import { deriveRForceCalendarStatus } from "@/lib/rforce-calendar-status";
 import { getTimeOffForDate } from "@/lib/store";
-import { executeScheduleMove } from "@/lib/schedule-command";
+import { executeScheduleMove, ScheduleMoveTarget } from "@/lib/schedule-command";
+import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { useCurrentActor } from "./AuthProvider";
 import { getDepartmentSectionsForDate, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
@@ -36,9 +38,10 @@ import { getPreferences } from "@/lib/preferences";
 import { format, isToday, parseISO, addDays } from "date-fns";
 import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle } from "lucide-react";
 import { useSchedulerDrag } from "@/lib/drag-context";
+import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { getSchedulingMode } from "@/lib/scheduling-policy";
 import { useToast } from "./Toast";
-import { getAllCrewsAvailabilityForWeek, CrewDayAvailability } from "@/lib/availability";
+import { getAllCrewsAvailabilityForWeek, CrewDayAvailability, getCrewDayLabels, LABEL_KIND_TEXT } from "@/lib/availability";
 
 interface Props {
   currentDate: Date;
@@ -73,6 +76,11 @@ export default function CrewLaneWeekView({
   const { actorId, actorName } = useCurrentActor();
 
   const days = getWeekDays(currentDate);
+  // Auto-scroll the grid while dragging a tile toward its top/bottom edge so
+  // off-screen crews become reachable as drop targets.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { draggedAppointment: activeDrag, draggedOrder: activeOrder } = useSchedulerDrag();
+  useDragAutoScroll(scrollRef, !!activeDrag || !!activeOrder);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
@@ -86,6 +94,13 @@ export default function CrewLaneWeekView({
     crewId: string;
     timeBlock?: TimeBlock;
     prefill?: RForceOrder;
+  } | null>(null);
+  // A drop/resize that hit an occupied slot, awaiting confirmation to overlap.
+  const [pendingOverlap, setPendingOverlap] = useState<{
+    target: ScheduleMoveTarget;
+    appt: Appointment;
+    message: string;
+    successMessage: string;
   } | null>(null);
   const [selectedRForce, setSelectedRForce] = useState<{
     order: RForceOrder;
@@ -282,7 +297,8 @@ export default function CrewLaneWeekView({
       return;
     }
 
-    const result = await executeScheduleMove(
+    const targetCrew = crews.find((c) => c.id === targetCrewId);
+    await runMove(
       {
         appointmentId: appt.id,
         expectedVersion: appt.version,
@@ -293,6 +309,17 @@ export default function CrewLaneWeekView({
         endTime: appt.end_time,
       },
       appt,
+      `Moved to ${targetCrew?.name || "crew"} on ${targetDate}`
+    );
+  }
+
+  // Run a move; on a slot conflict, stash it so the scheduler can confirm an
+  // intentional overlap (retries with allowOverlap). `override` is set only by
+  // that confirmation path.
+  async function runMove(target: ScheduleMoveTarget, appt: Appointment, successMessage: string, override = false) {
+    const result = await executeScheduleMove(
+      { ...target, allowOverlap: override },
+      appt,
       appointments,
       crews,
       rforceOrders,
@@ -301,8 +328,9 @@ export default function CrewLaneWeekView({
     );
 
     if (result.ok) {
-      const targetCrew = crews.find((c) => c.id === targetCrewId);
-      showToast(`Moved to ${targetCrew?.name || "crew"} on ${targetDate}`, "success");
+      showToast(successMessage, "success");
+    } else if (result.error.code === "SCHEDULING_CONFLICT" && !override) {
+      setPendingOverlap({ target, appt, message: result.error.message, successMessage });
     } else {
       const severity = result.error.code === "VERSION_CONFLICT" ? "warning" : "error";
       showToast(result.error.message, severity);
@@ -367,7 +395,7 @@ export default function CrewLaneWeekView({
   }
 
   return (
-    <div className="flex-1 overflow-auto">
+    <div ref={scrollRef} className="flex-1 overflow-auto">
       <div
         className="grid min-w-[1120px]"
         style={{ gridTemplateColumns }}
@@ -460,6 +488,7 @@ export default function CrewLaneWeekView({
                       const hasConflict = off && cellAppts.length > 0;
                       const crewObj = crews.find((c) => c.id === crew.id);
                       const dayAvail = crewAvailability.get(crew.id)?.get(dateStr);
+                      const dayLabels = getCrewDayLabels(crew.id, day, availabilityRules, availabilityExceptions);
 
                       if (showTimeLanes) {
                         const blockedFromOtherSections = !isMeasure
@@ -482,6 +511,7 @@ export default function CrewLaneWeekView({
                             sectionType={section.filterType}
                             timeOffColor={timeOffColor}
                             availability={dayAvail}
+                            dayLabels={dayLabels}
                             showRForce={showRForce}
                             onCardClick={setSelectedAppt}
                             onRForceClick={(order, item) => setSelectedRForce({ order, crew: crewObj, displayItem: item })}
@@ -517,6 +547,7 @@ export default function CrewLaneWeekView({
                           crewObj={crewObj}
                           timeOffColor={timeOffColor}
                           availability={dayAvail}
+                          dayLabels={dayLabels}
                           showRForce={showRForce}
                           onCardClick={setSelectedAppt}
                           onRForceClick={(order, item) => setSelectedRForce({ order, crew: crewObj, displayItem: item })}
@@ -621,6 +652,38 @@ export default function CrewLaneWeekView({
           onClose={() => setDropConfirmTarget(null)}
         />
       )}
+
+      {pendingOverlap && (
+        <OverlapOverrideDialog
+          message={pendingOverlap.message}
+          onConfirm={async () => {
+            const p = pendingOverlap;
+            await runMove(p.target, p.appt, p.successMessage, true);
+            setPendingOverlap(null);
+          }}
+          onCancel={() => setPendingOverlap(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DayLabelBadges({ labels }: { labels?: AvailabilityKind[] }) {
+  if (!labels || labels.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-0.5 px-0.5 pt-0.5">
+      {labels.map((k) => (
+        <span
+          key={k}
+          className={`text-[7px] font-semibold leading-none px-0.5 py-px rounded ${
+            k === "late_day"
+              ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+              : "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300"
+          }`}
+        >
+          {LABEL_KIND_TEXT[k]}
+        </span>
+      ))}
     </div>
   );
 }
@@ -639,6 +702,7 @@ function MeasureTimeLaneCell({
   sectionType,
   timeOffColor,
   availability,
+  dayLabels,
   showRForce,
   onCardClick,
   onRForceClick,
@@ -664,6 +728,7 @@ function MeasureTimeLaneCell({
   sectionType: string;
   timeOffColor?: string;
   availability?: CrewDayAvailability;
+  dayLabels?: AvailabilityKind[];
   showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onRForceClick: (order: RForceOrder, displayItem?: RForceDisplayItem) => void;
@@ -767,6 +832,7 @@ function MeasureTimeLaneCell({
       onDragLeave={handleCellDragLeave}
       onDrop={handleCellDrop}
     >
+      <DayLabelBadges labels={dayLabels} />
       {hasConflict && (
         <div className="text-[8px] font-semibold px-0.5 flex items-center gap-0.5" style={timeOffColor ? { color: timeOffColor } : undefined}>
           <Palmtree size={8} style={timeOffColor ? { color: timeOffColor } : undefined} className={timeOffColor ? "" : "text-time-off"} />
@@ -980,6 +1046,7 @@ function StandardCell({
   crewObj,
   timeOffColor,
   availability,
+  dayLabels,
   showRForce,
   onCardClick,
   onSchedule,
@@ -1002,6 +1069,7 @@ function StandardCell({
   crewObj: Crew | undefined;
   timeOffColor?: string;
   availability?: CrewDayAvailability;
+  dayLabels?: AvailabilityKind[];
   showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onSchedule: () => void;
@@ -1158,6 +1226,7 @@ function StandardCell({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        <DayLabelBadges labels={dayLabels} />
         <div
           className={`w-full h-6 rounded-sm flex items-center justify-center border border-dashed ${timeOffColor ? "" : "bg-time-off-light/30 border-time-off/40"}`}
           style={timeOffColor ? { ...offStyle, ...offBorderStyle } : undefined}
@@ -1176,6 +1245,7 @@ function StandardCell({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        <DayLabelBadges labels={dayLabels} />
         <div className="w-full h-6 rounded-sm flex items-center justify-center border border-dashed bg-muted/5 border-muted/20">
           <Ban size={9} className="text-muted/30" />
         </div>
@@ -1203,6 +1273,7 @@ function StandardCell({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      <DayLabelBadges labels={dayLabels} />
       {hasConflict && (
         <div className="text-[8px] font-semibold px-0.5 flex items-center gap-0.5">
           <Palmtree size={8} style={timeOffColor ? { color: timeOffColor } : undefined} className={timeOffColor ? "" : "text-time-off"} />

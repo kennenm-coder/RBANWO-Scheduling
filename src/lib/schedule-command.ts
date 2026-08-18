@@ -53,6 +53,13 @@ export interface ScheduleMoveTarget {
   exactTime?: boolean;
   /** Multi-day install duration. */
   durationDays?: number;
+  /**
+   * Intentional same-slot overlap. When true, the client-side conflict check is
+   * skipped and the appointment is tagged `allow_overlap` so the DB guards let it
+   * share an already-booked slot. Set only after the scheduler explicitly
+   * confirms the double-book.
+   */
+  allowOverlap?: boolean;
   /** Non-scheduling fields that must be committed atomically with the move. */
   additionalUpdates?: Partial<Appointment>;
   /** Audit action/reason for explicit reschedules and edits. */
@@ -108,9 +115,11 @@ export function validateMove(
     endTime: target.endTime,
   });
 
-  // 3. Conflict check
+  // 3. Conflict check — skipped when the scheduler has explicitly opted into an
+  // intentional same-slot overlap (allow_overlap). The DB guards likewise skip
+  // rows tagged allow_overlap, so the double-book is placed on purpose.
   const durationDays = target.durationDays ?? currentAppointment.duration_days ?? 1;
-  if (resolved.timeBlock || mode === "timed") {
+  if (!target.allowOverlap && (resolved.timeBlock || mode === "timed")) {
     const blockForCheck = resolved.timeBlock || (mode === "full_day" ? "full_day" : null);
     if (blockForCheck) {
       const conflicts = checkSchedulingConflicts(
@@ -236,6 +245,9 @@ export function buildMoveUpdates(
     duration_days: target.durationDays ?? currentAppointment.duration_days,
     manual_override: manualOverride,
     override_source: overrideSource,
+    // Tag only when this move is an intentional overlap. A normal move into a
+    // free slot clears the flag so the appointment is fully guarded again.
+    allow_overlap: !!target.allowOverlap,
   };
 }
 

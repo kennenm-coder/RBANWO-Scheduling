@@ -16,6 +16,7 @@ import {
   Check, HelpCircle,
 } from "lucide-react";
 import AvailabilityEditor from "./AvailabilityEditor";
+import { summarizeLabelRules } from "@/lib/availability";
 
 const TYPE_ORDER: CrewType[] = [
   "measure_tech",
@@ -41,6 +42,7 @@ export default function ResourceManager() {
     rforceOrders,
     timeOffRequests,
     flagResolutions,
+    availabilityRules,
     resolveFlag,
     unresolveFlag,
     refreshData,
@@ -412,6 +414,14 @@ export default function ResourceManager() {
                       {c.notes && (
                         <span className="text-[11px] text-muted">{c.notes}</span>
                       )}
+                      {(() => {
+                        const labelSummary = summarizeLabelRules(c.id, availabilityRules);
+                        return labelSummary ? (
+                          <span className="text-[10px] text-teal-600 dark:text-teal-400">
+                            {labelSummary}
+                          </span>
+                        ) : null;
+                      })()}
                       {c.additional_types && c.additional_types.length > 0 && (
                         <span className="text-[10px] text-cyan-600 dark:text-cyan-400">
                           Also: {c.additional_types.map(crewTypeLabel).join(", ")}

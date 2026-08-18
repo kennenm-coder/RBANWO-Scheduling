@@ -28,13 +28,15 @@ import { assignTimeLanes } from "@/lib/timeline-lanes";
 import { getTimeOffForDate } from "@/lib/store";
 import { useCurrentActor } from "./AuthProvider";
 import { crewHasType, sortByFirstName, getEligibleCrews, getDepartmentSectionsForDate } from "@/lib/crew-utils";
-import { executeScheduleMove, validateMove } from "@/lib/schedule-command";
+import { executeScheduleMove, validateMove, ScheduleMoveTarget } from "@/lib/schedule-command";
+import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { calculateTimelineDrag, getDurationMinutes, DAY_VIEW_SNAP_MINUTES } from "@/lib/timeline-drag";
 import RForceDetailSheet from "./RForceDetailSheet";
 import { Palmtree, MapPinned, Ban } from "lucide-react";
 import { format } from "date-fns";
-import { getCrewAvailability } from "@/lib/availability";
+import { getCrewAvailability, getCrewDayLabels, LABEL_KIND_TEXT } from "@/lib/availability";
 import { useSchedulerDrag } from "@/lib/drag-context";
+import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { useToast } from "./Toast";
 import dynamic from "next/dynamic";
 
@@ -64,6 +66,11 @@ export default function CrewLaneDayView({
   } = useData();
   const { showToast } = useToast();
   const { actorId, actorName } = useCurrentActor();
+  // Auto-scroll the calendar while dragging a tile toward the top/bottom edge so
+  // off-screen resources become reachable as drop targets.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { draggedAppointment: activeDrag, draggedOrder: activeOrder } = useSchedulerDrag();
+  useDragAutoScroll(scrollRef, !!activeDrag || !!activeOrder);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
@@ -72,6 +79,14 @@ export default function CrewLaneDayView({
   } | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
+  // A drop that landed on an already-booked slot, awaiting the scheduler's
+  // confirmation to intentionally overlap. Holds the move to retry with override.
+  const [pendingOverlap, setPendingOverlap] = useState<{
+    target: ScheduleMoveTarget;
+    appt: Appointment;
+    message: string;
+    successMessage: string;
+  } | null>(null);
   const [selectedRForce, setSelectedRForce] = useState<{
     order: RForceOrder;
     crew?: Crew;
@@ -169,11 +184,40 @@ export default function CrewLaneDayView({
     [crews, date, availabilityRules, availabilityExceptions]
   );
 
+  // Run a move; on a slot conflict, stash it so the scheduler can confirm an
+  // intentional overlap (which retries with allowOverlap). `override` is set only
+  // by that confirmation path.
+  async function runMove(target: ScheduleMoveTarget, appt: Appointment, successMessage: string, override = false) {
+    const result = await executeScheduleMove(
+      { ...target, allowOverlap: override },
+      appt,
+      appointments,
+      crews,
+      rforceOrders,
+      updateAppointment,
+      { id: actorId, name: actorName }
+    );
+
+    if (result.ok) {
+      showToast(successMessage, "success");
+    } else if (result.error.code === "SCHEDULING_CONFLICT" && !override) {
+      setPendingOverlap({ target, appt, message: result.error.message, successMessage });
+    } else {
+      const severity = result.error.code === "VERSION_CONFLICT" ? "warning" : "error";
+      showToast(result.error.message, severity);
+    }
+  }
+
   async function handleAppointmentDrop(appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) {
     const appt = appointments.find((a) => a.id === appointmentId);
     if (!appt) return;
 
-    const result = await executeScheduleMove(
+    const targetCrew = crews.find((c) => c.id === targetCrewId);
+    const parts: string[] = [];
+    if (appt.crew_id !== targetCrewId && targetCrew) parts.push(targetCrew.name);
+    if (startTime && startTime !== appt.start_time) parts.push(`${startTime}–${endTime}`);
+
+    await runMove(
       {
         appointmentId: appt.id,
         expectedVersion: appt.version,
@@ -187,27 +231,12 @@ export default function CrewLaneDayView({
         exactTime: appt.time_block !== "full_day" && !!startTime,
       },
       appt,
-      appointments,
-      crews,
-      rforceOrders,
-      updateAppointment,
-      { id: actorId, name: actorName }
+      `Moved to ${parts.join(", ") || "new position"}`
     );
-
-    if (result.ok) {
-      const targetCrew = crews.find((c) => c.id === targetCrewId);
-      const parts: string[] = [];
-      if (appt.crew_id !== targetCrewId && targetCrew) parts.push(targetCrew.name);
-      if (startTime && startTime !== appt.start_time) parts.push(`${startTime}–${endTime}`);
-      showToast(`Moved to ${parts.join(", ") || "new position"}`, "success");
-    } else {
-      const severity = result.error.code === "VERSION_CONFLICT" ? "warning" : "error";
-      showToast(result.error.message, severity);
-    }
   }
 
   return (
-    <div className="flex-1 overflow-auto">
+    <div ref={scrollRef} className="flex-1 overflow-auto">
       {sections
         .filter((s) => filterType === "all" || filterType === s.filterType)
         .map((s) => (
@@ -310,6 +339,18 @@ export default function CrewLaneDayView({
                 }
               : undefined
           }
+        />
+      )}
+
+      {pendingOverlap && (
+        <OverlapOverrideDialog
+          message={pendingOverlap.message}
+          onConfirm={async () => {
+            const p = pendingOverlap;
+            await runMove(p.target, p.appt, p.successMessage, true);
+            setPendingOverlap(null);
+          }}
+          onCancel={() => setPendingOverlap(null)}
         />
       )}
     </div>
@@ -482,6 +523,7 @@ function CrewSection({
               );
               const avail = getCrewAvailability(crew.id, date, availabilityRules, availabilityExceptions);
               const crewUnavailable = !avail.available;
+              const dayLabels = getCrewDayLabels(crew.id, date, availabilityRules, availabilityExceptions);
 
               // Overlap-lane assignment so same-time items never draw on top of
               // each other, with per-tile heights so a card with rForce alerts
@@ -747,6 +789,22 @@ function CrewSection({
                       {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}
                       {!off && crewUnavailable && <Ban size={12} className="text-muted/40 shrink-0" />}
                     </div>
+                    {dayLabels.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1 pl-[18px]">
+                        {dayLabels.map((k) => (
+                          <span
+                            key={k}
+                            className={`text-[9px] font-medium px-1 py-px rounded ${
+                              k === "late_day"
+                                ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+                                : "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300"
+                            }`}
+                          >
+                            {LABEL_KIND_TEXT[k]}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {!off && !crewUnavailable && crew.notes && (
                       <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">{crew.notes}</div>
                     )}
