@@ -539,7 +539,8 @@ function CrewRow({
           crew.id,
           day
         ).filter(a => a.status !== "cancelled" && a.status !== "unscheduled");
-        const dayLabels = getDayLabels(crew.id, day);
+        // PTO takes precedence over Late/Office tags — hide them when off.
+        const dayLabels = off ? [] : getDayLabels(crew.id, day);
 
         return (
           <td

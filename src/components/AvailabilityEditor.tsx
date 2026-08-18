@@ -55,12 +55,12 @@ function ruleDescription(rule: AvailabilityRule): string {
     return `${deptLabel} on ${days}${interval}`;
   }
 
-  if (rule.kind === "late_day") {
-    return `Late Day on ${days}${interval}`;
-  }
-
-  if (rule.kind === "office_day") {
-    return `Office Day on ${days}${interval}`;
+  if (rule.kind === "late_day" || rule.kind === "office_day") {
+    const name = rule.kind === "late_day" ? "Late Day" : "Office Day";
+    if (rule.start_time && rule.end_time) {
+      return `${name} (blocks ${rule.start_time}–${rule.end_time}) on ${days}${interval}`;
+    }
+    return `${name} — all day on ${days}${interval}`;
   }
 
   return `${rule.kind} — ${days}${interval}`;
@@ -83,6 +83,9 @@ export default function AvailabilityEditor({
   const [repeatInterval, setRepeatInterval] = useState(1);
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("18:00");
+  // Late Day / Office Day: when true, the whole day is blocked (no times);
+  // when false, only the start–end window is blocked.
+  const [allDay, setAllDay] = useState(true);
   const [effectiveStart, setEffectiveStart] = useState(
     format(new Date(), "yyyy-MM-dd")
   );
@@ -116,6 +119,7 @@ export default function AvailabilityEditor({
     setRepeatInterval(1);
     setStartTime("08:00");
     setEndTime("18:00");
+    setAllDay(true);
     setEffectiveStart(format(new Date(), "yyyy-MM-dd"));
     setEffectiveEnd("");
     setReason("");
@@ -131,11 +135,16 @@ export default function AvailabilityEditor({
     setRepeatInterval(rule.repeat_interval);
     setStartTime(rule.start_time || "08:00");
     setEndTime(rule.end_time || "18:00");
+    setAllDay(!rule.start_time && !rule.end_time);
     setEffectiveStart(rule.effective_start);
     setEffectiveEnd(rule.effective_end || "");
     setReason(rule.reason || "");
     setAdding(true);
   }
+
+  // Block = always a time window. Late/Office = a window only when not "all day".
+  const usesTimeWindow =
+    kind === "block" || ((kind === "late_day" || kind === "office_day") && !allDay);
 
   async function handleSave() {
     if (weekdays.length === 0) return;
@@ -151,8 +160,8 @@ export default function AvailabilityEditor({
         department: kind === "role_assignment" ? department : null,
         weekdays,
         repeat_interval: repeatInterval,
-        start_time: kind === "block" ? startTime : null,
-        end_time: kind === "block" ? endTime : null,
+        start_time: usesTimeWindow ? startTime : null,
+        end_time: usesTimeWindow ? endTime : null,
         effective_start: effectiveStart,
         effective_end: effectiveEnd || null,
         reason: reason || null,
@@ -334,11 +343,30 @@ export default function AvailabilityEditor({
             </select>
           </div>
 
-          {kind === "block" && (
+          {(kind === "late_day" || kind === "office_day") && (
+            <div>
+              <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allDay}
+                  onChange={(e) => setAllDay(e.target.checked)}
+                  className="accent-primary"
+                />
+                Block the entire day
+              </label>
+              <p className="text-[10px] text-muted/60 mt-1">
+                {allDay
+                  ? "The whole day is blocked off, like time off."
+                  : "Only the time window below is blocked; the rest of the day stays open."}
+              </p>
+            </div>
+          )}
+
+          {usesTimeWindow && (
             <div className="flex gap-2">
               <div className="flex-1">
                 <label className="block text-[11px] text-muted mb-1">
-                  Start time
+                  {kind === "block" ? "Start time" : "Block from"}
                 </label>
                 <input
                   type="time"
@@ -349,7 +377,7 @@ export default function AvailabilityEditor({
               </div>
               <div className="flex-1">
                 <label className="block text-[11px] text-muted mb-1">
-                  End time
+                  {kind === "block" ? "End time" : "Block until"}
                 </label>
                 <input
                   type="time"

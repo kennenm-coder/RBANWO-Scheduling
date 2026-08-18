@@ -32,9 +32,9 @@ import { executeScheduleMove, validateMove, ScheduleMoveTarget } from "@/lib/sch
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { calculateTimelineDrag, getDurationMinutes, DAY_VIEW_SNAP_MINUTES } from "@/lib/timeline-drag";
 import RForceDetailSheet from "./RForceDetailSheet";
-import { Palmtree, MapPinned, Ban } from "lucide-react";
+import { Palmtree, MapPinned, Ban, Sunset, Building2 } from "lucide-react";
 import { format } from "date-fns";
-import { getCrewAvailability, getCrewDayLabels, LABEL_KIND_TEXT } from "@/lib/availability";
+import { getCrewAvailability, getCrewDayLabels, LABEL_KIND_TEXT, labelForBlockingKind } from "@/lib/availability";
 import { useSchedulerDrag } from "@/lib/drag-context";
 import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { useToast } from "./Toast";
@@ -82,6 +82,14 @@ export default function CrewLaneDayView({
   // A drop that landed on an already-booked slot, awaiting the scheduler's
   // confirmation to intentionally overlap. Holds the move to retry with override.
   const [pendingOverlap, setPendingOverlap] = useState<{
+    target: ScheduleMoveTarget;
+    appt: Appointment;
+    message: string;
+    successMessage: string;
+  } | null>(null);
+  // A drop onto a blocked availability window (PTO / Late / Office), awaiting
+  // confirmation to schedule over it.
+  const [pendingAvailability, setPendingAvailability] = useState<{
     target: ScheduleMoveTarget;
     appt: Appointment;
     message: string;
@@ -187,21 +195,31 @@ export default function CrewLaneDayView({
   // Run a move; on a slot conflict, stash it so the scheduler can confirm an
   // intentional overlap (which retries with allowOverlap). `override` is set only
   // by that confirmation path.
-  async function runMove(target: ScheduleMoveTarget, appt: Appointment, successMessage: string, override = false) {
+  async function runMove(
+    target: ScheduleMoveTarget,
+    appt: Appointment,
+    successMessage: string,
+    override = false,
+    availabilityOverride = false
+  ) {
     const result = await executeScheduleMove(
-      { ...target, allowOverlap: override },
+      { ...target, allowOverlap: override, allowAvailabilityConflict: availabilityOverride },
       appt,
       appointments,
       crews,
       rforceOrders,
       updateAppointment,
-      { id: actorId, name: actorName }
+      { id: actorId, name: actorName },
+      availabilityRules,
+      availabilityExceptions
     );
 
     if (result.ok) {
       showToast(successMessage, "success");
     } else if (result.error.code === "SCHEDULING_CONFLICT" && !override) {
       setPendingOverlap({ target, appt, message: result.error.message, successMessage });
+    } else if (result.error.code === "AVAILABILITY_CONFLICT" && !availabilityOverride) {
+      setPendingAvailability({ target, appt, message: result.error.message, successMessage });
     } else {
       const severity = result.error.code === "VERSION_CONFLICT" ? "warning" : "error";
       showToast(result.error.message, severity);
@@ -351,6 +369,21 @@ export default function CrewLaneDayView({
             setPendingOverlap(null);
           }}
           onCancel={() => setPendingOverlap(null)}
+        />
+      )}
+
+      {pendingAvailability && (
+        <OverlapOverrideDialog
+          title="Crew is blocked off"
+          intro="This lands on a blocked window:"
+          checkboxLabel="Yes, schedule over this block on purpose."
+          message={pendingAvailability.message}
+          onConfirm={async () => {
+            const p = pendingAvailability;
+            await runMove(p.target, p.appt, p.successMessage, false, true);
+            setPendingAvailability(null);
+          }}
+          onCancel={() => setPendingAvailability(null)}
         />
       )}
     </div>
@@ -523,7 +556,12 @@ function CrewSection({
               );
               const avail = getCrewAvailability(crew.id, date, availabilityRules, availabilityExceptions);
               const crewUnavailable = !avail.available;
-              const dayLabels = getCrewDayLabels(crew.id, date, availabilityRules, availabilityExceptions);
+              // PTO (external time off) wins over Late/Office tags, and a full-day
+              // Office/Late block is already conveyed by the row's reason line — so
+              // only show the small badges when the day isn't otherwise blocked.
+              const dayLabels = off || crewUnavailable
+                ? []
+                : getCrewDayLabels(crew.id, date, availabilityRules, availabilityExceptions);
 
               // Overlap-lane assignment so same-time items never draw on top of
               // each other, with per-tile heights so a card with rForce alerts
@@ -634,6 +672,20 @@ function CrewSection({
               const crewWorkEnd = weH + (weM || 0) / 60;
               const crewOffLeft = ((Math.max(crewWorkStart, TIMELINE_START) - TIMELINE_START) / TIMELINE_HOURS) * 100;
               const crewOffRight = ((TIMELINE_END - Math.min(crewWorkEnd, TIMELINE_END)) / TIMELINE_HOURS) * 100;
+
+              // Partial Late/Office (and other) blocked windows: shade just the
+              // affected 2-hour blocks on the timeline. Only when the crew isn't
+              // fully off/unavailable (those render a full overlay instead).
+              const partialBlockedRanges = (!off && !crewUnavailable)
+                ? [...avail.unavailableBlocks]
+                    .filter((b) => b !== "full_day")
+                    .map((b) => {
+                      const { start, end } = timeBlockStartEnd(b);
+                      const left = timeToPercent(start);
+                      return { key: b, left, width: timeToPercent(end) - left };
+                    })
+                    .filter((r) => r.width > 0)
+                : [];
 
               const hasAnyContent = crewAppts.length > 0 || crewApprovals.length > 0;
               const hasRForceContent = showRForce && (crewRForceVisible.length > 0 || crewApprovals.length > 0);
@@ -812,7 +864,17 @@ function CrewSection({
                       <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">Time Off</div>
                     )}
                     {!off && crewUnavailable && (
-                      <div className="text-[10px] text-muted/50 mt-0.5 pl-[18px]">{avail.reason || "Unavailable"}</div>
+                      <div
+                        className={`text-[10px] font-semibold mt-0.5 pl-[18px] ${
+                          avail.blockingKind === "late_day"
+                            ? "text-amber-700 dark:text-amber-300"
+                            : avail.blockingKind === "office_day"
+                              ? "text-teal-700 dark:text-teal-300"
+                              : "text-muted/50 font-normal"
+                        }`}
+                      >
+                        {avail.reason || "Unavailable"}
+                      </div>
                     )}
                   </div>
                   {twoLayer ? (
@@ -991,6 +1053,15 @@ function CrewSection({
                         className="absolute top-0 bottom-0 right-0 bg-muted/5 dark:bg-muted/10 z-0"
                         style={{ width: `${crewOffRight}%` }}
                       />
+                      {/* Partial Late/Office blocked windows */}
+                      {partialBlockedRanges.map((r) => (
+                        <div
+                          key={`blk-${r.key}`}
+                          className="absolute top-0 bottom-0 z-0 bg-amber-200/25 dark:bg-amber-800/20 border-x border-amber-300/40 dark:border-amber-700/30"
+                          style={{ left: `${r.left}%`, width: `${r.width}%` }}
+                          title="Blocked"
+                        />
+                      ))}
                       {renderGridlines()}
                       {dragPreview && dragPreview.crewId === crew.id && (
                         <div
@@ -1009,10 +1080,37 @@ function CrewSection({
                           <Palmtree size={14} className="text-amber-500/50 dark:text-amber-400/40" />
                         </div>
                       )}
-                      {/* Unavailable overlay */}
+                      {/* Unavailable overlay — colored + labeled for Late/Office */}
                       {!off && crewUnavailable && !hasAnyContent && (
-                        <div className="absolute inset-0 bg-muted/8 flex items-center justify-center z-[1]">
-                          <Ban size={14} className="text-muted/25" />
+                        <div
+                          className={`absolute inset-0 flex items-center justify-center gap-1.5 z-[1] ${
+                            avail.blockingKind === "late_day"
+                              ? "bg-amber-200/30 dark:bg-amber-800/20"
+                              : avail.blockingKind === "office_day"
+                                ? "bg-teal-200/30 dark:bg-teal-800/20"
+                                : "bg-muted/8"
+                          }`}
+                        >
+                          {avail.blockingKind === "late_day" || avail.blockingKind === "office_day" ? (
+                            <>
+                              {avail.blockingKind === "late_day" ? (
+                                <Sunset size={13} className="text-amber-500/70" />
+                              ) : (
+                                <Building2 size={13} className="text-teal-500/70" />
+                              )}
+                              <span
+                                className={`text-[11px] font-semibold ${
+                                  avail.blockingKind === "late_day"
+                                    ? "text-amber-700 dark:text-amber-300"
+                                    : "text-teal-700 dark:text-teal-300"
+                                }`}
+                              >
+                                {avail.reason || labelForBlockingKind(avail.blockingKind)}
+                              </span>
+                            </>
+                          ) : (
+                            <Ban size={14} className="text-muted/25" />
+                          )}
                         </div>
                       )}
                       {/* App appointment cards — draggable */}

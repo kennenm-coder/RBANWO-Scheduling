@@ -6,7 +6,7 @@
  * Views must NOT construct their own partial updates and conflict checks.
  */
 
-import { Appointment, Crew, RForceOrder, TimeBlock } from "./types";
+import { Appointment, AvailabilityRule, AvailabilityException, Crew, RForceOrder, TimeBlock } from "./types";
 import {
   getSchedulingMode,
   resolveScheduleTimes,
@@ -15,6 +15,7 @@ import {
   timeDurationMinutes,
 } from "./scheduling-policy";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
+import { checkAvailabilityConflict } from "./availability";
 import { getEligibleCrews } from "./crew-utils";
 import { createAppointmentEvent } from "./store";
 
@@ -60,6 +61,13 @@ export interface ScheduleMoveTarget {
    * confirms the double-book.
    */
   allowOverlap?: boolean;
+  /**
+   * Intentional booking onto a blocked availability window (PTO / Unavailable /
+   * Late Day / Office Day). When true, the availability pre-check is skipped and
+   * the appointment is tagged `allow_availability_conflict` so the flag is
+   * suppressed. Set only after the scheduler confirms the override.
+   */
+  allowAvailabilityConflict?: boolean;
   /** Non-scheduling fields that must be committed atomically with the move. */
   additionalUpdates?: Partial<Appointment>;
   /** Audit action/reason for explicit reschedules and edits. */
@@ -71,6 +79,7 @@ export type ScheduleErrorCode =
   | "NOT_FOUND"
   | "INELIGIBLE_CREW"
   | "SCHEDULING_CONFLICT"
+  | "AVAILABILITY_CONFLICT"
   | "VERSION_CONFLICT"
   | "DOUBLE_BOOK"
   | "DUPLICATE_WO"
@@ -95,7 +104,9 @@ export function validateMove(
   target: ScheduleMoveTarget,
   currentAppointment: Appointment,
   allAppointments: Appointment[],
-  allCrews: Crew[]
+  allCrews: Crew[],
+  availabilityRules: AvailabilityRule[] = [],
+  availabilityExceptions: AvailabilityException[] = []
 ): ScheduleError | null {
   // 1. Check crew eligibility
   const eligible = getEligibleCrews(allCrews, currentAppointment.appointment_type);
@@ -137,6 +148,31 @@ export function validateMove(
           message: formatConflictMessage(conflicts[0]),
         };
       }
+    }
+  }
+
+  // 4. Availability check — booking onto a blocked window (PTO / Unavailable /
+  // Late or Office day) requires an explicit override, just like double-booking.
+  if (!target.allowAvailabilityConflict && availabilityRules.length > 0) {
+    const blockForCheck: TimeBlock | null =
+      resolved.timeBlock || (mode === "full_day" ? "full_day" : null);
+    const block = checkAvailabilityConflict(
+      target.crewId,
+      target.scheduledDate,
+      durationDays,
+      blockForCheck,
+      target.timeBlockEnd ?? null,
+      availabilityRules,
+      availabilityExceptions,
+    );
+    if (block) {
+      const crewName = allCrews.find((c) => c.id === target.crewId)?.name || "This crew";
+      return {
+        code: "AVAILABILITY_CONFLICT",
+        message: block.fullDay
+          ? `${crewName} is ${block.reason} on ${block.date} (whole day blocked).`
+          : `${crewName} is ${block.reason} during this time on ${block.date}.`,
+      };
     }
   }
 
@@ -248,6 +284,9 @@ export function buildMoveUpdates(
     // Tag only when this move is an intentional overlap. A normal move into a
     // free slot clears the flag so the appointment is fully guarded again.
     allow_overlap: !!target.allowOverlap,
+    // Likewise for an intentional booking onto a blocked availability window;
+    // a normal move onto an open slot clears it.
+    allow_availability_conflict: !!target.allowAvailabilityConflict,
   };
 }
 
@@ -270,10 +309,19 @@ export async function executeScheduleMove(
   allCrews: Crew[],
   rforceOrders: RForceOrder[],
   updateAppointment: (id: string, version: number, updates: Partial<Appointment>) => Promise<Appointment | null>,
-  actor: { id: string | null; name: string | null }
+  actor: { id: string | null; name: string | null },
+  availabilityRules: AvailabilityRule[] = [],
+  availabilityExceptions: AvailabilityException[] = []
 ): Promise<ScheduleMoveResult> {
   // 1. Validate
-  const validationError = validateMove(target, currentAppointment, allAppointments, allCrews);
+  const validationError = validateMove(
+    target,
+    currentAppointment,
+    allAppointments,
+    allCrews,
+    availabilityRules,
+    availabilityExceptions,
+  );
   if (validationError) {
     return { ok: false, error: validationError };
   }

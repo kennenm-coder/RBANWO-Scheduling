@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getCrewAvailability, isTimeBlockAvailable } from "./availability";
+import { getCrewAvailability, isTimeBlockAvailable, checkAvailabilityConflict } from "./availability";
 import { AvailabilityRule, AvailabilityException } from "./types";
 import { parseISO } from "date-fns";
 
@@ -133,6 +133,55 @@ describe("getCrewAvailability", () => {
     expect(result.unavailableBlocks.has("2-4")).toBe(true);
     expect(result.unavailableBlocks.has("4-6")).toBe(true);
   });
+
+  it("blocks the whole day for an all-day office day", () => {
+    const rule = makeRule({
+      kind: "office_day",
+      effective_start: "2026-08-10",
+      effective_end: "2026-08-10",
+    });
+    const result = getCrewAvailability("crew-1", localDate("2026-08-10"), [rule], []);
+    expect(result.available).toBe(false);
+    expect(result.blockingKind).toBe("office_day");
+    expect(result.reason).toBe("Office");
+    expect(result.unavailableBlocks.size).toBeGreaterThan(0);
+  });
+
+  it("blocks only the window for a timed late day", () => {
+    const rule = makeRule({
+      kind: "late_day",
+      start_time: "08:00",
+      end_time: "12:00",
+      effective_start: "2026-08-10",
+      effective_end: "2026-08-10",
+    });
+    const result = getCrewAvailability("crew-1", localDate("2026-08-10"), [rule], []);
+    expect(result.available).toBe(true); // rest of day stays open
+    expect(result.blockingKind).toBeUndefined();
+    expect(result.unavailableBlocks.has("9-10")).toBe(true);
+    expect(result.unavailableBlocks.has("10-12")).toBe(true);
+    expect(result.unavailableBlocks.has("2-4")).toBe(false);
+  });
+
+  it("lets PTO win over a coinciding all-day office day", () => {
+    const office = makeRule({
+      id: "rule-office",
+      kind: "office_day",
+      effective_start: "2026-08-10",
+      effective_end: "2026-08-10",
+    });
+    const pto = makeRule({
+      id: "rule-pto",
+      kind: "pto",
+      reason: "Vacation",
+      effective_start: "2026-08-10",
+      effective_end: "2026-08-10",
+    });
+    const result = getCrewAvailability("crew-1", localDate("2026-08-10"), [office, pto], []);
+    expect(result.available).toBe(false);
+    expect(result.blockingKind).toBe("pto");
+    expect(result.reason).toBe("Vacation");
+  });
 });
 
 describe("isTimeBlockAvailable", () => {
@@ -164,5 +213,64 @@ describe("isTimeBlockAvailable", () => {
       unavailableBlocks: new Set<import("./types").TimeBlock>(),
     };
     expect(isTimeBlockAvailable(avail, "9-10")).toBe(false);
+  });
+});
+
+describe("checkAvailabilityConflict", () => {
+  it("returns null when the day is clear", () => {
+    const conflict = checkAvailabilityConflict(
+      "crew-1", "2026-08-10", 1, "10-12", null, [], []
+    );
+    expect(conflict).toBeNull();
+  });
+
+  it("flags scheduling onto an all-day office day", () => {
+    const rule = makeRule({
+      kind: "office_day",
+      effective_start: "2026-08-10",
+      effective_end: "2026-08-10",
+    });
+    const conflict = checkAvailabilityConflict(
+      "crew-1", "2026-08-10", 1, "10-12", null, [rule], []
+    );
+    expect(conflict).not.toBeNull();
+    expect(conflict!.fullDay).toBe(true);
+    expect(conflict!.reason).toBe("Office");
+  });
+
+  it("flags a block inside a timed late-day window but not outside it", () => {
+    const rule = makeRule({
+      kind: "late_day",
+      start_time: "08:00",
+      end_time: "12:00",
+      effective_start: "2026-08-10",
+      effective_end: "2026-08-10",
+    });
+    const inside = checkAvailabilityConflict(
+      "crew-1", "2026-08-10", 1, "10-12", null, [rule], []
+    );
+    expect(inside).not.toBeNull();
+    expect(inside!.fullDay).toBe(false);
+
+    const outside = checkAvailabilityConflict(
+      "crew-1", "2026-08-10", 1, "2-4", null, [rule], []
+    );
+    expect(outside).toBeNull();
+  });
+
+  it("flags a full-day block on any day a multi-day job spans", () => {
+    const rule = makeRule({
+      kind: "pto",
+      reason: "Vacation",
+      effective_start: "2026-08-12",
+      effective_end: "2026-08-12",
+    });
+    // 3-day job starting 8/10 spans 8/10, 8/11, 8/12 — PTO is on day 3.
+    const conflict = checkAvailabilityConflict(
+      "crew-1", "2026-08-10", 3, "full_day", null, [rule], []
+    );
+    expect(conflict).not.toBeNull();
+    expect(conflict!.date).toBe("2026-08-12");
+    expect(conflict!.fullDay).toBe(true);
   });
 });

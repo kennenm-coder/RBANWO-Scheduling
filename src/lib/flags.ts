@@ -231,7 +231,8 @@ function detectLiveAppFlags(
     }
 
     // ── Availability conflict (crew scheduled during PTO/block rule) ──
-    if (availabilityRules && availabilityRules.length > 0 && appt.time_block) {
+    // Skipped when the scheduler knowingly booked over the block (override flow).
+    if (availabilityRules && availabilityRules.length > 0 && appt.time_block && !appt.allow_availability_conflict) {
       const date = parseISO(appt.scheduled_date);
       const dayAvail = getCrewAvailability(
         appt.crew_id,

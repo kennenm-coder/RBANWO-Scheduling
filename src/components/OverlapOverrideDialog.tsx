@@ -9,6 +9,12 @@ interface Props {
   /** Runs the move again with the overlap override. Should resolve when done. */
   onConfirm: () => Promise<void>;
   onCancel: () => void;
+  /** Dialog heading. Defaults to the double-booking wording. */
+  title?: string;
+  /** Line shown above the highlighted message. */
+  intro?: string;
+  /** Checkbox label the scheduler must tick to enable the override. */
+  checkboxLabel?: string;
 }
 
 /**
@@ -17,7 +23,14 @@ interface Props {
  * move tagged `allow_overlap`. Mirrors the rForce-approval override flow so the two
  * paths behave the same way.
  */
-export default function OverlapOverrideDialog({ message, onConfirm, onCancel }: Props) {
+export default function OverlapOverrideDialog({
+  message,
+  onConfirm,
+  onCancel,
+  title = "Slot already booked",
+  intro = "The crew is already booked here:",
+  checkboxLabel = "Yes, book both here on purpose (allow the overlap).",
+}: Props) {
   const [override, setOverride] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,10 +59,10 @@ export default function OverlapOverrideDialog({ message, onConfirm, onCancel }: 
       >
         <div className="mb-2 flex items-center gap-2">
           <AlertTriangle size={16} className="text-amber-500 shrink-0" />
-          <h3 className="text-sm font-semibold">Slot already booked</h3>
+          <h3 className="text-sm font-semibold">{title}</h3>
         </div>
         <p className="mb-1 text-xs text-foreground/80">
-          The crew is already booked here:
+          {intro}
         </p>
         <p className="mb-3 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs">
           {message}
@@ -62,7 +75,7 @@ export default function OverlapOverrideDialog({ message, onConfirm, onCancel }: 
             onChange={(e) => setOverride(e.target.checked)}
             className="mt-0.5 shrink-0"
           />
-          <span>Yes, book both here on purpose (allow the overlap).</span>
+          <span>{checkboxLabel}</span>
         </label>
         {error && <div className="mb-2 text-[11px] text-red-500">{error}</div>}
         <div className="flex gap-2">

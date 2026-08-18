@@ -19,6 +19,7 @@ import {
 } from "@/lib/calendar-utils";
 import { buildSalesforceUrl } from "@/lib/salesforce";
 import { validateAppointment } from "@/lib/scheduling-rules";
+import { checkAvailabilityConflict } from "@/lib/availability";
 import { getEligibleCrews } from "@/lib/crew-utils";
 import {
   getSchedulingMode,
@@ -66,6 +67,8 @@ export default function ScheduleModal({
     appointments,
     rforceOrders,
     timeOffRequests,
+    availabilityRules,
+    availabilityExceptions,
     createAppointment,
     updateAppointment,
   } = useData();
@@ -170,6 +173,11 @@ export default function ScheduleModal({
   // sentence so the scheduler can confirm an intentional overlap (retries the
   // save with allow_overlap). Only reachable when editing an existing appt.
   const [overlapPrompt, setOverlapPrompt] = useState<string | null>(null);
+  // Holds the availability-block sentence when a save would land on PTO / an
+  // Unavailable rule / a Late or Office day. The scheduler must tick the
+  // override box to proceed, mirroring the double-booking flow.
+  const [availabilityPrompt, setAvailabilityPrompt] = useState<string | null>(null);
+  const [availabilityOverridden, setAvailabilityOverridden] = useState(false);
 
   const [accountSuggestions, setAccountSuggestions] = useState<AccountSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -184,6 +192,12 @@ export default function ScheduleModal({
       });
     }
   }, [prefill, editingAppointment, suggestionsLoaded]);
+
+  // A confirmed availability override applies only to the target it was granted
+  // for — re-arm the gate whenever the crew, date, block, or span changes.
+  useEffect(() => {
+    setAvailabilityOverridden(false);
+  }, [selectedCrewId, selectedDate, selectedBlock, durationDays]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -245,7 +259,8 @@ export default function ScheduleModal({
 
   // `allowOverlap` is set only by the overlap-override confirmation, letting an
   // edit/reschedule intentionally double-book an already-occupied slot.
-  const doSave = async (allowOverlap: boolean) => {
+  // `bypassAvailability` is set once the availability-block override is confirmed.
+  const doSave = async (allowOverlap: boolean, bypassAvailability = false) => {
     if (!selectedCrewId || !customerName || !address) return;
     if (rescheduleMode && !rescheduleReason.trim()) {
       setError("A reason is required when rescheduling.");
@@ -267,6 +282,30 @@ export default function ScheduleModal({
     const start = resolved.start;
     const end = resolved.end;
     const resolvedBlock = resolved.timeBlock ?? selectedBlock;
+
+    // Availability gate — scheduling onto PTO / an Unavailable rule / a Late or
+    // Office day requires an explicit override, just like double-booking.
+    if (!bypassAvailability && !availabilityOverridden) {
+      const block = checkAvailabilityConflict(
+        selectedCrewId,
+        selectedDate,
+        parseInt(durationDays) || 1,
+        resolvedBlock,
+        editingAppointment?.time_block_end ?? null,
+        availabilityRules,
+        availabilityExceptions
+      );
+      if (block) {
+        const crewName = selectedCrew?.name || "This crew";
+        setAvailabilityPrompt(
+          block.fullDay
+            ? `${crewName} is ${block.reason} on ${block.date} (whole day blocked).`
+            : `${crewName} is ${block.reason} during this time on ${block.date}.`
+        );
+        setSaving(false);
+        return;
+      }
+    }
 
     const salesforceUrl = workOrderNumber
       ? buildSalesforceUrl(workOrderNumber)
@@ -306,6 +345,7 @@ export default function ScheduleModal({
             endTime: end,
             durationDays: parseInt(durationDays) || 1,
             allowOverlap,
+            allowAvailabilityConflict: bypassAvailability || availabilityOverridden,
             additionalUpdates: nonSchedulingUpdates,
             auditAction: rescheduleMode ? "rescheduled" : "updated",
             reason: rescheduleMode ? rescheduleReason.trim() : null,
@@ -315,12 +355,16 @@ export default function ScheduleModal({
           crews,
           rforceOrders,
           updateAppointment,
-          { id: actorId, name: actorName }
+          { id: actorId, name: actorName },
+          availabilityRules,
+          availabilityExceptions
         );
         if (!moveResult.ok) {
           // Offer an intentional-overlap override rather than a dead-end error.
           if (moveResult.error.code === "SCHEDULING_CONFLICT" && !allowOverlap) {
             setOverlapPrompt(moveResult.error.message);
+          } else if (moveResult.error.code === "AVAILABILITY_CONFLICT") {
+            setAvailabilityPrompt(moveResult.error.message);
           } else {
             setError(moveResult.error.message);
           }
@@ -349,6 +393,9 @@ export default function ScheduleModal({
           reschedule_reason: null,
           scheduled_by: actorId || null,
           merge_source_wo: null,
+          // Tag when the scheduler knowingly booked over a blocked availability
+          // window so the availability_conflict flag is suppressed.
+          allow_availability_conflict: bypassAvailability || availabilityOverridden,
           // Capture immutable snapshot of manual entry for later reconciliation
           original_entry_snapshot: captureOriginalEntry({
             customer_name: customerName,
@@ -818,6 +865,21 @@ export default function ScheduleModal({
             await doSave(true);
           }}
           onCancel={() => setOverlapPrompt(null)}
+        />
+      )}
+
+      {availabilityPrompt !== null && (
+        <OverlapOverrideDialog
+          title="Crew is blocked off"
+          intro="This lands on a blocked window:"
+          checkboxLabel="Yes, schedule over this block on purpose."
+          message={availabilityPrompt}
+          onConfirm={async () => {
+            setAvailabilityPrompt(null);
+            setAvailabilityOverridden(true);
+            await doSave(false, true);
+          }}
+          onCancel={() => setAvailabilityPrompt(null)}
         />
       )}
     </div>
