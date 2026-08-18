@@ -41,7 +41,7 @@ import { useSchedulerDrag } from "@/lib/drag-context";
 import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { getSchedulingMode } from "@/lib/scheduling-policy";
 import { useToast } from "./Toast";
-import { getAllCrewsAvailabilityForWeek, CrewDayAvailability, getCrewDayLabels, LABEL_KIND_TEXT } from "@/lib/availability";
+import { getAllCrewsAvailabilityForWeek, CrewDayAvailability, getCrewDayLabels, LABEL_KIND_TEXT, labelForBlockingKind } from "@/lib/availability";
 
 interface Props {
   currentDate: Date;
@@ -97,6 +97,14 @@ export default function CrewLaneWeekView({
   } | null>(null);
   // A drop/resize that hit an occupied slot, awaiting confirmation to overlap.
   const [pendingOverlap, setPendingOverlap] = useState<{
+    target: ScheduleMoveTarget;
+    appt: Appointment;
+    message: string;
+    successMessage: string;
+  } | null>(null);
+  // A drop onto a blocked availability window (PTO / Late / Office), awaiting
+  // confirmation to schedule over it.
+  const [pendingAvailability, setPendingAvailability] = useState<{
     target: ScheduleMoveTarget;
     appt: Appointment;
     message: string;
@@ -316,21 +324,31 @@ export default function CrewLaneWeekView({
   // Run a move; on a slot conflict, stash it so the scheduler can confirm an
   // intentional overlap (retries with allowOverlap). `override` is set only by
   // that confirmation path.
-  async function runMove(target: ScheduleMoveTarget, appt: Appointment, successMessage: string, override = false) {
+  async function runMove(
+    target: ScheduleMoveTarget,
+    appt: Appointment,
+    successMessage: string,
+    override = false,
+    availabilityOverride = false
+  ) {
     const result = await executeScheduleMove(
-      { ...target, allowOverlap: override },
+      { ...target, allowOverlap: override, allowAvailabilityConflict: availabilityOverride },
       appt,
       appointments,
       crews,
       rforceOrders,
       updateAppointment,
-      { id: actorId, name: actorName }
+      { id: actorId, name: actorName },
+      availabilityRules,
+      availabilityExceptions
     );
 
     if (result.ok) {
       showToast(successMessage, "success");
     } else if (result.error.code === "SCHEDULING_CONFLICT" && !override) {
       setPendingOverlap({ target, appt, message: result.error.message, successMessage });
+    } else if (result.error.code === "AVAILABILITY_CONFLICT" && !availabilityOverride) {
+      setPendingAvailability({ target, appt, message: result.error.message, successMessage });
     } else {
       const severity = result.error.code === "VERSION_CONFLICT" ? "warning" : "error";
       showToast(result.error.message, severity);
@@ -488,7 +506,11 @@ export default function CrewLaneWeekView({
                       const hasConflict = off && cellAppts.length > 0;
                       const crewObj = crews.find((c) => c.id === crew.id);
                       const dayAvail = crewAvailability.get(crew.id)?.get(dateStr);
-                      const dayLabels = getCrewDayLabels(crew.id, day, availabilityRules, availabilityExceptions);
+                      // Suppress Late/Office badges when the crew is off for PTO —
+                      // PTO takes precedence over the Late Day / Office Day tag.
+                      const dayLabels = off
+                        ? []
+                        : getCrewDayLabels(crew.id, day, availabilityRules, availabilityExceptions);
 
                       if (showTimeLanes) {
                         const blockedFromOtherSections = !isMeasure
@@ -662,6 +684,21 @@ export default function CrewLaneWeekView({
             setPendingOverlap(null);
           }}
           onCancel={() => setPendingOverlap(null)}
+        />
+      )}
+
+      {pendingAvailability && (
+        <OverlapOverrideDialog
+          title="Crew is blocked off"
+          intro="This lands on a blocked window:"
+          checkboxLabel="Yes, schedule over this block on purpose."
+          message={pendingAvailability.message}
+          onConfirm={async () => {
+            const p = pendingAvailability;
+            await runMove(p.target, p.appt, p.successMessage, false, true);
+            setPendingAvailability(null);
+          }}
+          onCancel={() => setPendingAvailability(null)}
         />
       )}
     </div>
@@ -1238,16 +1275,39 @@ function StandardCell({
   }
 
   if (crewUnavailable && !hasContent) {
+    const bk = availability?.blockingKind;
+    const isLate = bk === "late_day";
+    const isOffice = bk === "office_day";
+    const isLabelBlock = isLate || isOffice;
+    // Office/Late full-day blocks get their own colored, labeled tile (teal /
+    // amber); PTO/Unavailable keep the neutral Ban tile.
+    const wrapCls = isLate
+      ? "bg-amber-50 dark:bg-amber-900/20"
+      : isOffice
+        ? "bg-teal-50 dark:bg-teal-900/20"
+        : "bg-muted/5";
+    const tileCls = isLate
+      ? "bg-amber-100/60 dark:bg-amber-900/30 border-amber-300/50 dark:border-amber-700/40 text-amber-700 dark:text-amber-300"
+      : isOffice
+        ? "bg-teal-100/60 dark:bg-teal-900/30 border-teal-300/50 dark:border-teal-700/40 text-teal-700 dark:text-teal-300"
+        : "bg-muted/5 border-muted/20 text-muted/40";
     return (
       <div
-        className={`p-0.5 border-b border-border border-l border-l-border/30 bg-muted/5 ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+        className={`p-0.5 border-b border-border border-l border-l-border/30 ${wrapCls} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <DayLabelBadges labels={dayLabels} />
-        <div className="w-full h-6 rounded-sm flex items-center justify-center border border-dashed bg-muted/5 border-muted/20">
-          <Ban size={9} className="text-muted/30" />
+        {/* colored tile already carries the label; skip the small badge to avoid duplication */}
+        {!isLabelBlock && <DayLabelBadges labels={dayLabels} />}
+        <div className={`w-full h-6 rounded-sm flex items-center justify-center gap-1 border border-dashed ${tileCls}`}>
+          {isLabelBlock ? (
+            <span className="text-[8px] font-semibold leading-none">
+              {labelForBlockingKind(bk)}
+            </span>
+          ) : (
+            <Ban size={9} className="text-muted/30" />
+          )}
         </div>
       </div>
     );

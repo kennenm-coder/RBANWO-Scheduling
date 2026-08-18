@@ -1,6 +1,27 @@
 import { describe, it, expect, vi } from "vitest";
 import { validateMove, buildMoveUpdates, executeScheduleMove } from "./schedule-command";
-import { Appointment, Crew } from "./types";
+import { Appointment, AvailabilityRule, Crew } from "./types";
+
+function makeAvailabilityRule(overrides: Partial<AvailabilityRule> = {}): AvailabilityRule {
+  return {
+    id: "rule-1",
+    crew_id: "crew-1",
+    kind: "office_day",
+    department: null,
+    start_time: null,
+    end_time: null,
+    weekdays: [],
+    repeat_interval: 1,
+    effective_start: "2026-01-01",
+    effective_end: null,
+    reason: null,
+    is_active: true,
+    created_by: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
 
 // ── Test fixtures ──
 
@@ -125,6 +146,58 @@ describe("validateMove", () => {
     expect(result).not.toBeNull();
     expect(result!.code).toBe("SCHEDULING_CONFLICT");
   });
+
+  it("returns AVAILABILITY_CONFLICT when moving onto an all-day office day", () => {
+    const appt = makeAppointment({ appointment_type: "tech_measure" });
+    const rule = makeAvailabilityRule({
+      kind: "office_day",
+      crew_id: "crew-1",
+      effective_start: "2026-08-15",
+      effective_end: "2026-08-15",
+    });
+    const result = validateMove(
+      {
+        appointmentId: appt.id,
+        expectedVersion: 1,
+        crewId: "crew-1",
+        scheduledDate: "2026-08-15",
+        timeBlock: "9-10",
+      },
+      appt,
+      [appt],
+      allCrews,
+      [rule],
+      []
+    );
+    expect(result).not.toBeNull();
+    expect(result!.code).toBe("AVAILABILITY_CONFLICT");
+  });
+
+  it("allows the move onto a blocked day when the override is set", () => {
+    const appt = makeAppointment({ appointment_type: "tech_measure" });
+    const rule = makeAvailabilityRule({
+      kind: "office_day",
+      crew_id: "crew-1",
+      effective_start: "2026-08-15",
+      effective_end: "2026-08-15",
+    });
+    const result = validateMove(
+      {
+        appointmentId: appt.id,
+        expectedVersion: 1,
+        crewId: "crew-1",
+        scheduledDate: "2026-08-15",
+        timeBlock: "9-10",
+        allowAvailabilityConflict: true,
+      },
+      appt,
+      [appt],
+      allCrews,
+      [rule],
+      []
+    );
+    expect(result).toBeNull();
+  });
 });
 
 describe("buildMoveUpdates", () => {
@@ -145,6 +218,22 @@ describe("buildMoveUpdates", () => {
     expect(updates.start_time).toBe("09:00");
     expect(updates.end_time).toBe("10:00");
     expect(updates.scheduled_date).toBe("2026-08-15");
+  });
+
+  it("tags allow_availability_conflict from the target override", () => {
+    const appt = makeAppointment({ appointment_type: "tech_measure" });
+    const base = {
+      appointmentId: appt.id,
+      expectedVersion: 1,
+      crewId: "crew-1",
+      scheduledDate: "2026-08-15",
+      timeBlock: "9-10" as const,
+    };
+    expect(buildMoveUpdates(base, appt, allCrews).allow_availability_conflict).toBe(false);
+    expect(
+      buildMoveUpdates({ ...base, allowAvailabilityConflict: true }, appt, allCrews)
+        .allow_availability_conflict
+    ).toBe(true);
   });
 
   it("builds timed update preserving original duration", () => {

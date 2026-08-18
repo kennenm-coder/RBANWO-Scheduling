@@ -97,6 +97,10 @@ export interface Appointment {
   /** When true, this appointment is excluded from the double-booking unique index
    *  (an intentional same-slot overlap approved via the conflict-override flow). */
   allow_overlap?: boolean;
+  /** When true, the scheduler knowingly booked this appointment onto a blocked
+   *  availability window (PTO / Unavailable / Late Day / Office Day). Suppresses
+   *  the availability_conflict flag for this intentional override. */
+  allow_availability_conflict?: boolean;
   status: AppointmentStatus;
   notes: string | null;
   reschedule_reason: string | null;

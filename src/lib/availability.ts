@@ -1,6 +1,6 @@
 import { AvailabilityRule, AvailabilityException, TimeBlock, AvailabilityKind } from "./types";
 import { parseISO, differenceInCalendarWeeks, format, addDays } from "date-fns";
-import { MEASURE_TIME_BLOCKS, timeBlockStartEnd } from "./calendar-utils";
+import { MEASURE_TIME_BLOCKS, timeBlockStartEnd, getSpannedBlocks } from "./calendar-utils";
 
 export interface CrewDayAvailability {
   available: boolean;
@@ -8,7 +8,23 @@ export interface CrewDayAvailability {
   workEnd: string;
   unavailableBlocks: Set<TimeBlock>;
   reason?: string;
+  /**
+   * The rule kind responsible for a FULL-day block (available === false).
+   * Used by the calendar to pick the right visual (PTO/unavailable vs. the
+   * amber Late Day / teal Office Day treatment) and to enforce precedence:
+   * pto > unavailable > office_day > late_day.
+   */
+  blockingKind?: AvailabilityKind;
 }
+
+// Higher wins when several full-day rules land on the same day. External PTO
+// (time-off requests, handled in the views) sits above all of these.
+const FULL_DAY_PRIORITY: Partial<Record<AvailabilityKind, number>> = {
+  pto: 4,
+  unavailable: 3,
+  office_day: 2,
+  late_day: 1,
+};
 
 const DEFAULT_WORK_START = "08:00";
 const DEFAULT_WORK_END = "18:00";
@@ -79,19 +95,41 @@ export function getCrewAvailability(
 
   let workStart = DEFAULT_WORK_START;
   let workEnd = DEFAULT_WORK_END;
-  let fullyUnavailable = false;
+  let blockingKind: AvailabilityKind | undefined;
   let reason: string | undefined;
   const unavailableBlocks = new Set<TimeBlock>();
+
+  // Kinds that block scheduling. Late Day / Office Day now behave like PTO /
+  // Unavailable: no times → the whole day is blocked; with times → only the
+  // overlapping 2-hour blocks are blocked.
+  const BLOCKING_KINDS: AvailabilityKind[] = [
+    "pto",
+    "unavailable",
+    "late_day",
+    "office_day",
+  ];
+
+  function defaultReasonFor(kind: AvailabilityKind): string {
+    if (kind === "pto") return "PTO";
+    if (kind === "unavailable") return "Unavailable";
+    return LABEL_KIND_TEXT[kind] || kind;
+  }
 
   for (const rule of crewRules) {
     const result = ruleAppliesToDate(rule, dateStr, dayOfWeek, crewExceptions);
     if (!result) continue;
 
-    if (rule.kind === "unavailable" || rule.kind === "pto") {
+    if (BLOCKING_KINDS.includes(rule.kind)) {
       if (!rule.start_time && !rule.end_time) {
-        fullyUnavailable = true;
-        reason = rule.reason || (rule.kind === "pto" ? "PTO" : "Unavailable");
-        break;
+        // Full-day block — keep the highest-precedence kind so a coinciding
+        // PTO wins the display over an Office Day, etc.
+        const priority = FULL_DAY_PRIORITY[rule.kind] ?? 0;
+        const currentPriority = blockingKind ? (FULL_DAY_PRIORITY[blockingKind] ?? 0) : -1;
+        if (priority > currentPriority) {
+          blockingKind = rule.kind;
+          reason = rule.reason || defaultReasonFor(rule.kind);
+        }
+        continue;
       }
       const ruleStart =
         result.modified && result.exception.override_start_time
@@ -129,9 +167,9 @@ export function getCrewAvailability(
     }
   }
 
-  if (fullyUnavailable) {
+  if (blockingKind) {
     MEASURE_TIME_BLOCKS.forEach((b) => unavailableBlocks.add(b));
-    return { available: false, workStart, workEnd, unavailableBlocks, reason };
+    return { available: false, workStart, workEnd, unavailableBlocks, reason, blockingKind };
   }
 
   return { available: true, workStart, workEnd, unavailableBlocks, reason };
@@ -189,6 +227,14 @@ export const LABEL_KIND_TEXT: Record<string, string> = {
   late_day: "Late Day",
   office_day: "Office",
 };
+
+/** Human label for whatever kind is fully blocking a day (for full-day tiles). */
+export function labelForBlockingKind(kind?: AvailabilityKind): string {
+  if (kind === "pto") return "PTO";
+  if (kind === "late_day") return "Late Day";
+  if (kind === "office_day") return "Office";
+  return "Unavailable";
+}
 
 const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -264,6 +310,63 @@ export function getCrewRoleForDate(
     if (!result) continue;
     // role_assignment rule applies — return the department
     return rule.department || null;
+  }
+
+  return null;
+}
+
+export interface AvailabilityConflictInfo {
+  /** Human sentence, e.g. "out for PTO" or "on an Office day". */
+  reason: string;
+  /** The date the block falls on (YYYY-MM-DD). */
+  date: string;
+  /** True when the whole day is blocked; false when only some blocks are. */
+  fullDay: boolean;
+}
+
+/**
+ * Would scheduling this appointment land on a blocked availability window?
+ *
+ * Mirrors the double-booking pre-check: returns the first blocking window so the
+ * scheduler can require an explicit override before saving over PTO, an
+ * Unavailable rule, or a Late Day / Office Day block. Returns null when clear.
+ */
+export function checkAvailabilityConflict(
+  crewId: string,
+  startDate: string,
+  durationDays: number,
+  timeBlock: TimeBlock | null,
+  timeBlockEnd: TimeBlock | null | undefined,
+  rules: AvailabilityRule[],
+  exceptions: AvailabilityException[]
+): AvailabilityConflictInfo | null {
+  if (!crewId || !startDate) return null;
+
+  const occupiedBlocks: TimeBlock[] =
+    timeBlock === "full_day"
+      ? [...MEASURE_TIME_BLOCKS]
+      : timeBlock
+        ? getSpannedBlocks({ time_block: timeBlock, time_block_end: timeBlockEnd ?? null } as never)
+        : [];
+
+  const start = parseISO(startDate);
+  for (let d = 0; d < Math.max(1, durationDays); d++) {
+    const day = addDays(start, d);
+    const dateStr = format(day, "yyyy-MM-dd");
+    const avail = getCrewAvailability(crewId, day, rules, exceptions);
+
+    // Whole-day block (PTO / Unavailable / all-day Office or Late) blocks every day of the span.
+    if (!avail.available) {
+      return { reason: avail.reason || "unavailable", date: dateStr, fullDay: true };
+    }
+
+    // Partial windows only matter on the day the appointment actually occupies.
+    if (d === 0) {
+      const hit = occupiedBlocks.find((b) => avail.unavailableBlocks.has(b));
+      if (hit) {
+        return { reason: avail.reason || "blocked", date: dateStr, fullDay: false };
+      }
+    }
   }
 
   return null;
