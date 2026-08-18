@@ -7,7 +7,7 @@ import {
   upsertAvailabilityRule,
   deleteAvailabilityRule,
 } from "@/lib/store";
-import { Plus, Trash2, Clock, CalendarOff, Pencil, Save, Briefcase } from "lucide-react";
+import { Plus, Trash2, Clock, CalendarOff, Pencil, Save, Briefcase, Sunset, Building2 } from "lucide-react";
 import { format } from "date-fns";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -16,6 +16,8 @@ const KIND_OPTIONS: { value: AvailabilityKind; label: string }[] = [
   { value: "unavailable", label: "Day Off" },
   { value: "block", label: "Custom Hours" },
   { value: "role_assignment", label: "Department Assignment" },
+  { value: "late_day", label: "Late Day" },
+  { value: "office_day", label: "Office Day" },
 ];
 
 const DEPARTMENT_OPTIONS: { value: string; label: string }[] = [
@@ -51,6 +53,14 @@ function ruleDescription(rule: AvailabilityRule): string {
   if (rule.kind === "role_assignment" && rule.department) {
     const deptLabel = DEPARTMENT_OPTIONS.find((d) => d.value === rule.department)?.label || rule.department;
     return `${deptLabel} on ${days}${interval}`;
+  }
+
+  if (rule.kind === "late_day") {
+    return `Late Day on ${days}${interval}`;
+  }
+
+  if (rule.kind === "office_day") {
+    return `Office Day on ${days}${interval}`;
   }
 
   return `${rule.kind} — ${days}${interval}`;
@@ -191,6 +201,10 @@ export default function AvailabilityEditor({
                 <Briefcase size={12} className="text-purple-500 shrink-0" />
               ) : rule.kind === "block" ? (
                 <Clock size={12} className="text-blue-500 shrink-0" />
+              ) : rule.kind === "late_day" ? (
+                <Sunset size={12} className="text-amber-500 shrink-0" />
+              ) : rule.kind === "office_day" ? (
+                <Building2 size={12} className="text-teal-500 shrink-0" />
               ) : (
                 <CalendarOff size={12} className="text-muted shrink-0" />
               )}

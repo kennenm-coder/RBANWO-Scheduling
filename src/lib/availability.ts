@@ -1,4 +1,4 @@
-import { AvailabilityRule, AvailabilityException, TimeBlock } from "./types";
+import { AvailabilityRule, AvailabilityException, TimeBlock, AvailabilityKind } from "./types";
 import { parseISO, differenceInCalendarWeeks, format, addDays } from "date-fns";
 import { MEASURE_TIME_BLOCKS, timeBlockStartEnd } from "./calendar-utils";
 
@@ -183,6 +183,67 @@ export function isTimeBlockAvailable(
  * "Measure Tech on Tue/Thu". Returns the department string (e.g.
  * "service", "measure") or null if no role_assignment rule applies.
  */
+const LABEL_KINDS: AvailabilityKind[] = ["late_day", "office_day"];
+
+export const LABEL_KIND_TEXT: Record<string, string> = {
+  late_day: "Late Day",
+  office_day: "Office",
+};
+
+const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * Which label-only tags (Late Day / Office Day) apply to a crew on a given
+ * date. These do not affect availability — they're display markers shown as
+ * badges on the calendar row.
+ */
+export function getCrewDayLabels(
+  crewId: string,
+  date: Date,
+  rules: AvailabilityRule[],
+  exceptions: AvailabilityException[]
+): AvailabilityKind[] {
+  const dateStr = format(date, "yyyy-MM-dd");
+  const dayOfWeek = date.getDay();
+  const crewRules = rules.filter(
+    (r) => r.crew_id === crewId && r.is_active && LABEL_KINDS.includes(r.kind)
+  );
+  const crewExceptions = exceptions.filter((e) =>
+    crewRules.some((r) => r.id === e.rule_id)
+  );
+
+  const tags: AvailabilityKind[] = [];
+  for (const rule of crewRules) {
+    if (!ruleAppliesToDate(rule, dateStr, dayOfWeek, crewExceptions)) continue;
+    if (!tags.includes(rule.kind)) tags.push(rule.kind);
+  }
+  return tags;
+}
+
+/**
+ * Compact, date-independent summary of a crew's Late Day / Office Day rules,
+ * e.g. "Office Wed, Late Day Thu". Used in the resource list summary line.
+ */
+export function summarizeLabelRules(
+  crewId: string,
+  rules: AvailabilityRule[]
+): string {
+  const parts: string[] = [];
+  for (const kind of LABEL_KINDS) {
+    const days = [
+      ...new Set(
+        rules
+          .filter((r) => r.crew_id === crewId && r.is_active && r.kind === kind)
+          .flatMap((r) => r.weekdays)
+      ),
+    ]
+      .sort((a, b) => a - b)
+      .map((d) => DAY_ABBR[d]);
+    if (days.length > 0) parts.push(`${LABEL_KIND_TEXT[kind]} ${days.join("/")}`);
+  }
+  return parts.join(", ");
+}
+
 export function getCrewRoleForDate(
   crewId: string,
   date: Date,

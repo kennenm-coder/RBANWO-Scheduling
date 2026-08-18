@@ -225,7 +225,7 @@ CREATE TABLE sched_csv_imports (
 CREATE TABLE sched_availability_rules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   crew_id UUID NOT NULL REFERENCES sched_crews(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('pto', 'unavailable', 'role_assignment', 'block')),
+  kind TEXT NOT NULL CHECK (kind IN ('pto', 'unavailable', 'role_assignment', 'block', 'late_day', 'office_day')),
   department TEXT,
   start_time TIME,
   end_time TIME,

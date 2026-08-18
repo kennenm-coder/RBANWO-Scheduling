@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import { useData } from "./DataProvider";
 import AppointmentSheet from "./AppointmentSheet";
 import ScheduleModal from "./ScheduleModal";
@@ -10,6 +10,7 @@ import {
   TimeBlock,
   AppointmentType,
   RForceOrder,
+  AvailabilityKind,
 } from "@/lib/types";
 import {
   getAppointmentsForCrewAndDay,
@@ -20,7 +21,9 @@ import {
 import { getTimeOffForDate } from "@/lib/store";
 import { crewHasType, sortByFirstName, getDepartmentSectionsForDate } from "@/lib/crew-utils";
 import { useSchedulerDrag } from "@/lib/drag-context";
+import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { Palmtree } from "lucide-react";
+import { getCrewDayLabels, LABEL_KIND_TEXT } from "@/lib/availability";
 import {
   format,
   startOfWeek,
@@ -57,6 +60,27 @@ const SERVICE_HOUR_LABELS: Record<number, string> = {
 // Row mode: "single" = one row, "measure_blocks" = 5 two-hour blocks, "hourly" = 9 hourly slots
 type RowMode = "single" | "measure_blocks" | "hourly";
 
+/** Compact Late Day / Office badges for a block-view day cell. */
+function BlockDayLabels({ labels }: { labels: AvailabilityKind[] }) {
+  if (labels.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-0.5 mb-0.5">
+      {labels.map((k) => (
+        <span
+          key={k}
+          className={`text-[8px] font-semibold leading-none px-0.5 py-px rounded ${
+            k === "late_day"
+              ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+              : "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300"
+          }`}
+        >
+          {LABEL_KIND_TEXT[k]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 interface Props {
   currentDate: Date;
   filterType?: AppointmentType | "all";
@@ -79,6 +103,11 @@ export default function CrewBlockView({
   } = useData();
   useCurrentActor(); // keep hook call order stable
   useToast(); // keep hook call order stable
+  // Auto-scroll the grid while dragging a tile toward its top/bottom edge so
+  // off-screen crews become reachable as drop targets.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { draggedAppointment: activeDrag, draggedOrder: activeOrder } = useSchedulerDrag();
+  useDragAutoScroll(scrollRef, !!activeDrag || !!activeOrder);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
@@ -126,6 +155,12 @@ export default function CrewBlockView({
     }
     return map;
   }, [timeOffRequests, weekDays]);
+
+  const getDayLabels = useCallback(
+    (crewId: string, day: Date) =>
+      getCrewDayLabels(crewId, day, availabilityRules, availabilityExceptions),
+    [availabilityRules, availabilityExceptions]
+  );
 
   function isCrewOffOnDay(crew: Crew, day: Date): boolean {
     const dateStr = format(day, "yyyy-MM-dd");
@@ -194,7 +229,7 @@ export default function CrewBlockView({
   }
 
   return (
-    <div className="flex-1 overflow-auto">
+    <div ref={scrollRef} className="flex-1 overflow-auto">
       <table className="w-full border-collapse text-xs">
         {/* Header: Sun–Sat */}
         <thead className="sticky top-0 z-10 bg-surface">
@@ -235,6 +270,7 @@ export default function CrewBlockView({
               appointments={appointments}
               rowMode={section.rowMode}
               isCrewOffOnDay={isCrewOffOnDay}
+              getDayLabels={getDayLabels}
               customerLastName={customerLastName}
               multiDayLabel={multiDayLabel}
               crewShortName={crewShortName}
@@ -354,6 +390,7 @@ interface SectionBlockProps {
   appointments: Appointment[];
   rowMode: RowMode;
   isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   customerLastName: (appt: Appointment) => string;
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
@@ -370,6 +407,7 @@ function SectionBlock({
   appointments,
   rowMode,
   isCrewOffOnDay,
+  getDayLabels,
   customerLastName,
   multiDayLabel,
   crewShortName,
@@ -398,6 +436,7 @@ function SectionBlock({
             weekDays={weekDays}
             appointments={appointments}
             isCrewOffOnDay={isCrewOffOnDay}
+            getDayLabels={getDayLabels}
             multiDayLabel={multiDayLabel}
             crewShortName={crewShortName}
             onAppointmentClick={onAppointmentClick}
@@ -412,6 +451,7 @@ function SectionBlock({
             weekDays={weekDays}
             appointments={appointments}
             isCrewOffOnDay={isCrewOffOnDay}
+            getDayLabels={getDayLabels}
             multiDayLabel={multiDayLabel}
             crewShortName={crewShortName}
             onAppointmentClick={onAppointmentClick}
@@ -426,6 +466,7 @@ function SectionBlock({
             weekDays={weekDays}
             appointments={appointments}
             isCrewOffOnDay={isCrewOffOnDay}
+            getDayLabels={getDayLabels}
             customerLastName={customerLastName}
             multiDayLabel={multiDayLabel}
             crewShortName={crewShortName}
@@ -447,6 +488,7 @@ interface CrewRowProps {
   weekDays: Date[];
   appointments: Appointment[];
   isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   customerLastName: (appt: Appointment) => string;
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
@@ -461,6 +503,7 @@ function CrewRow({
   weekDays,
   appointments,
   isCrewOffOnDay,
+  getDayLabels,
   multiDayLabel,
   crewShortName,
   onAppointmentClick,
@@ -496,6 +539,7 @@ function CrewRow({
           crew.id,
           day
         ).filter(a => a.status !== "cancelled" && a.status !== "unscheduled");
+        const dayLabels = getDayLabels(crew.id, day);
 
         return (
           <td
@@ -530,6 +574,7 @@ function CrewRow({
               }
             }}
           >
+            <BlockDayLabels labels={dayLabels} />
             {off ? (
               <div className="flex items-center justify-center h-full text-muted opacity-60 py-1">
                 <Palmtree size={12} className="mr-1" />
@@ -565,6 +610,7 @@ interface MeasureCrewRowsProps {
   weekDays: Date[];
   appointments: Appointment[];
   isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
@@ -578,6 +624,7 @@ function MeasureCrewRows({
   weekDays,
   appointments,
   isCrewOffOnDay,
+  getDayLabels,
   multiDayLabel,
   crewShortName,
   onAppointmentClick,
@@ -649,6 +696,7 @@ function MeasureCrewRows({
                     rowSpan={blocks.length}
                     className={`border border-border p-0.5 text-center align-middle ${isToday ? "bg-primary/5" : ""}`}
                   >
+                    <BlockDayLabels labels={getDayLabels(crew.id, day)} />
                     <div className="flex items-center justify-center text-muted opacity-60">
                       <Palmtree size={12} className="mr-1" />
                       <span className="text-[10px]">OFF</span>
@@ -699,6 +747,7 @@ function MeasureCrewRows({
                   }
                 }}
               >
+                {blockIdx === 0 && <BlockDayLabels labels={getDayLabels(crew.id, day)} />}
                 {fullDayAppts.map((appt) => (
                   <BlockCell
                     key={appt.id}
@@ -741,6 +790,7 @@ interface HourlyCrewRowsProps {
   weekDays: Date[];
   appointments: Appointment[];
   isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
@@ -769,6 +819,7 @@ function HourlyCrewRows({
   weekDays,
   appointments,
   isCrewOffOnDay,
+  getDayLabels,
   multiDayLabel,
   crewShortName,
   onAppointmentClick,
@@ -891,6 +942,7 @@ function HourlyCrewRows({
                     rowSpan={hours.length}
                     className={`border border-border p-0.5 text-center align-middle ${isToday ? "bg-primary/5" : ""}`}
                   >
+                    <BlockDayLabels labels={getDayLabels(crew.id, day)} />
                     <div className="flex items-center justify-center text-muted opacity-60">
                       <Palmtree size={12} className="mr-1" />
                       <span className="text-[10px]">OFF</span>
@@ -943,6 +995,7 @@ function HourlyCrewRows({
                   }
                 }}
               >
+                {hourIdx === 0 && <BlockDayLabels labels={getDayLabels(crew.id, day)} />}
                 {plan.appts.length === 0 ? (
                   <div className="min-h-[18px]" />
                 ) : (

@@ -31,6 +31,7 @@ import {
 } from "@/lib/scheduling-policy";
 import { fetchAccountSuggestions, AccountSuggestion, createAppointmentEvent } from "@/lib/store";
 import { executeScheduleMove } from "@/lib/schedule-command";
+import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { deriveTimesFromOrder } from "@/lib/rforce-times";
 import { useData } from "./DataProvider";
 import { useCurrentActor } from "./AuthProvider";
@@ -165,6 +166,10 @@ export default function ScheduleModal({
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // When a reschedule/move lands on an already-booked slot, holds the conflict
+  // sentence so the scheduler can confirm an intentional overlap (retries the
+  // save with allow_overlap). Only reachable when editing an existing appt.
+  const [overlapPrompt, setOverlapPrompt] = useState<string | null>(null);
 
   const [accountSuggestions, setAccountSuggestions] = useState<AccountSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -235,6 +240,12 @@ export default function ScheduleModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    await doSave(false);
+  };
+
+  // `allowOverlap` is set only by the overlap-override confirmation, letting an
+  // edit/reschedule intentionally double-book an already-occupied slot.
+  const doSave = async (allowOverlap: boolean) => {
     if (!selectedCrewId || !customerName || !address) return;
     if (rescheduleMode && !rescheduleReason.trim()) {
       setError("A reason is required when rescheduling.");
@@ -294,6 +305,7 @@ export default function ScheduleModal({
             startTime: start,
             endTime: end,
             durationDays: parseInt(durationDays) || 1,
+            allowOverlap,
             additionalUpdates: nonSchedulingUpdates,
             auditAction: rescheduleMode ? "rescheduled" : "updated",
             reason: rescheduleMode ? rescheduleReason.trim() : null,
@@ -306,7 +318,12 @@ export default function ScheduleModal({
           { id: actorId, name: actorName }
         );
         if (!moveResult.ok) {
-          setError(moveResult.error.message);
+          // Offer an intentional-overlap override rather than a dead-end error.
+          if (moveResult.error.code === "SCHEDULING_CONFLICT" && !allowOverlap) {
+            setOverlapPrompt(moveResult.error.message);
+          } else {
+            setError(moveResult.error.message);
+          }
           setSaving(false);
           return;
         }
@@ -792,6 +809,17 @@ export default function ScheduleModal({
           </button>
         </form>
       </div>
+
+      {overlapPrompt !== null && (
+        <OverlapOverrideDialog
+          message={overlapPrompt}
+          onConfirm={async () => {
+            setOverlapPrompt(null);
+            await doSave(true);
+          }}
+          onCancel={() => setOverlapPrompt(null)}
+        />
+      )}
     </div>
   );
 }
