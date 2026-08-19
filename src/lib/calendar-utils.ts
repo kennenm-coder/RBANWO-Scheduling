@@ -245,6 +245,8 @@ export function typeColor(type: AppointmentType): string {
       return "bg-cyan-500";
     case "paint_stain":
       return "bg-rose-500";
+    case "job_site_visit":
+      return "bg-violet-500";
     default:
       return "bg-gray-500";
   }
@@ -266,6 +268,8 @@ export function typeColorText(type: AppointmentType): string {
       return "text-cyan-600";
     case "paint_stain":
       return "text-rose-600";
+    case "job_site_visit":
+      return "text-violet-600";
     default:
       return "text-gray-600";
   }
@@ -287,6 +291,8 @@ export function typeLabel(type: AppointmentType): string {
       return "HOA";
     case "paint_stain":
       return "Paint/Stain";
+    case "job_site_visit":
+      return "Job Site Visit";
     default:
       return type;
   }

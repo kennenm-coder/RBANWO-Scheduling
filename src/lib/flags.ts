@@ -192,7 +192,8 @@ function detectLiveAppFlags(
         lswp: ["install_in_house", "install_sub", MANAGEMENT],
         hoa: ["install_in_house", "install_sub", MANAGEMENT],
         paint_stain: ["install_in_house", "install_sub", MANAGEMENT],
-        job_site_visit: ["jip", MANAGEMENT],
+        // Job Site Visits are universal — anyone can do one. Empty = no restriction.
+        job_site_visit: [],
       };
       const eligible = ELIGIBLE[appt.appointment_type] || [];
       const allCrewTypes = [crew.crew_type, ...(crew.additional_types || [])];

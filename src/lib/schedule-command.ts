@@ -330,13 +330,18 @@ export async function executeScheduleMove(
   const schedulingUpdates = buildMoveUpdates(target, currentAppointment, allCrews, rforceOrders);
   const updates = { ...schedulingUpdates, ...(target.additionalUpdates || {}) };
 
-  // 3. Check for no-op
+  // 3. Check for no-op. Overlap / availability overrides must always persist
+  // (they flip allow_overlap / allow_availability_conflict), so exclude them —
+  // otherwise confirming an override reports success but writes nothing.
   if (
     updates.crew_id === currentAppointment.crew_id &&
     updates.scheduled_date === currentAppointment.scheduled_date &&
     updates.start_time === currentAppointment.start_time &&
     updates.end_time === currentAppointment.end_time &&
     updates.time_block === currentAppointment.time_block &&
+    updates.time_block_end === currentAppointment.time_block_end &&
+    !!updates.allow_overlap === !!currentAppointment.allow_overlap &&
+    !!updates.allow_availability_conflict === !!currentAppointment.allow_availability_conflict &&
     !target.additionalUpdates
   ) {
     return { ok: true, appointment: currentAppointment };

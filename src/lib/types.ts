@@ -15,7 +15,8 @@ export type AppointmentType =
   | "jip"
   | "lswp"
   | "hoa"
-  | "paint_stain";
+  | "paint_stain"
+  | "job_site_visit";
 
 export type AppointmentStatus =
   | "scheduled"
