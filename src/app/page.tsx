@@ -250,7 +250,7 @@ export default function CalendarPage() {
 
         <div
           ref={swipeRef}
-          className={`flex-1 overflow-auto ${
+          className={`flex-1 flex flex-col min-h-0 overflow-hidden ${
             slideDir === "next"
               ? "slide-next"
               : slideDir === "prev"

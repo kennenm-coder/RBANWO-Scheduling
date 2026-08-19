@@ -413,7 +413,7 @@ export default function CrewLaneWeekView({
   }
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-auto">
+    <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
       <div
         className="grid min-w-[1120px]"
         style={{ gridTemplateColumns }}

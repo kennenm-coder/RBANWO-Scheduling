@@ -134,6 +134,20 @@ describe("getEligibleCrews", () => {
     ];
     expect(getEligibleCrews(crews, "tech_measure")).toHaveLength(0);
   });
+
+  it("treats management crews as eligible for every appointment type", () => {
+    // Managers cover any role — this must match the flag engine so a measure
+    // scheduled on a manager doesn't fail validation when it's later edited.
+    const crews = [
+      makeCrew({ id: "mgr", crew_type: "management", manages: ["measure"] }),
+      makeCrew({ id: "mgr2", crew_type: "management", manages: null }),
+    ];
+    for (const type of ["tech_measure", "install", "service", "jip", "lswp"] as const) {
+      const ids = getEligibleCrews(crews, type).map((c) => c.id);
+      expect(ids).toContain("mgr");
+      expect(ids).toContain("mgr2");
+    }
+  });
 });
 
 describe("getBlockedTimeBlocks", () => {

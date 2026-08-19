@@ -229,7 +229,7 @@ export default function CrewBlockView({
   }
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-auto">
+    <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
       <table className="w-full border-collapse text-xs">
         {/* Header: Sun–Sat */}
         <thead className="sticky top-0 z-10 bg-surface">

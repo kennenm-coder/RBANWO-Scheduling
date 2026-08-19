@@ -254,7 +254,7 @@ export default function CrewLaneDayView({
   }
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-auto">
+    <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
       {sections
         .filter((s) => filterType === "all" || filterType === s.filterType)
         .map((s) => (
