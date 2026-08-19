@@ -181,7 +181,15 @@ const ELIGIBLE_CREW_TYPES: Record<AppointmentType, CrewType[]> = {
 export function getEligibleCrews(crews: Crew[], appointmentType: AppointmentType): Crew[] {
   const eligible = ELIGIBLE_CREW_TYPES[appointmentType] || [];
   return crews.filter(
-    (c) => c.is_active && (eligible.length === 0 || crewHasType(c, ...eligible))
+    (c) =>
+      c.is_active &&
+      (eligible.length === 0 ||
+        // Managers cover any role, so they're eligible for every appointment
+        // type. This must match the flag engine (flags.ts), which likewise
+        // treats management as universally eligible — otherwise creating an
+        // appointment succeeds but editing it later fails validation.
+        c.crew_type === "management" ||
+        crewHasType(c, ...eligible)),
   );
 }
 
