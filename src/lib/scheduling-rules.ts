@@ -57,7 +57,9 @@ export function validateAppointment(
       (a) => a.crew_id === crew.id && a.time_block === "full_day"
     );
     if (crewAppts.length > 0) {
-      errors.push(
+      // Warning, not a hard error: the save flow offers an explicit
+      // double-booking override, so this must not disable the Save button.
+      warnings.push(
         `${crew.name} is already booked for a full-day install on this date`
       );
     }
@@ -77,7 +79,9 @@ export function validateAppointment(
       a.time_block === appointment.time_block
   );
   if (blockConflict) {
-    errors.push(
+    // Warning, not a hard error: double-booking is allowed via the explicit
+    // override in the save flow, so this must not disable the Save button.
+    warnings.push(
       `${crew.name} already has an appointment in this time block`
     );
   }

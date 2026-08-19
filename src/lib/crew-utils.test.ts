@@ -135,6 +135,18 @@ describe("getEligibleCrews", () => {
     expect(getEligibleCrews(crews, "tech_measure")).toHaveLength(0);
   });
 
+  it("treats every active crew as eligible for a job site visit", () => {
+    const crews = [
+      makeCrew({ id: "c1", crew_type: "measure_tech" }),
+      makeCrew({ id: "c2", crew_type: "install_in_house" }),
+      makeCrew({ id: "c3", crew_type: "svc" }),
+      makeCrew({ id: "c4", crew_type: "management" }),
+      makeCrew({ id: "c5", crew_type: "measure_tech", is_active: false }),
+    ];
+    const ids = getEligibleCrews(crews, "job_site_visit").map((c) => c.id);
+    expect(ids).toEqual(["c1", "c2", "c3", "c4"]); // all active, no restriction
+  });
+
   it("treats management crews as eligible for every appointment type", () => {
     // Managers cover any role — this must match the flag engine so a measure
     // scheduled on a manager doesn't fail validation when it's later edited.

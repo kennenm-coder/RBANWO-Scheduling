@@ -176,6 +176,9 @@ const ELIGIBLE_CREW_TYPES: Record<AppointmentType, CrewType[]> = {
   lswp: ["install_in_house", "install_sub"],
   hoa: ["install_in_house", "install_sub"],
   paint_stain: ["install_in_house", "install_sub"],
+  // Job Site Visits are universal — anyone can do one, no crew-type restriction.
+  // An empty list means every active crew is eligible.
+  job_site_visit: [],
 };
 
 export function getEligibleCrews(crews: Crew[], appointmentType: AppointmentType): Crew[] {

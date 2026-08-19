@@ -21,6 +21,7 @@ const TYPE_MODE: Record<AppointmentType, SchedulingMode> = {
   lswp: "full_day",
   hoa: "timed",
   paint_stain: "timed",
+  job_site_visit: "timed",
 };
 
 /** Get the scheduling mode for an appointment type. */

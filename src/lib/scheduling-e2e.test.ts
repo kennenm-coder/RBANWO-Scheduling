@@ -310,7 +310,10 @@ describe("E2E Scheduling Flow", () => {
 
     it("normalizes JIP variants", () => {
       expect(normalizeWoType("JIP")).toBe("jip");
-      expect(normalizeWoType("Job Site Visit")).toBe("jip");
+    });
+
+    it("normalizes Job Site Visit to its own type", () => {
+      expect(normalizeWoType("Job Site Visit")).toBe("job_site_visit");
     });
 
     it("normalizes paint/stain", () => {

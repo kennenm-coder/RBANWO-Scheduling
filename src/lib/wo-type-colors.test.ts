@@ -12,9 +12,9 @@ describe("normalizeWoType", () => {
     expect(normalizeWoType("Paint/Stain")).toBe("paint_stain");
   });
 
-  it("normalizes JIP aliases", () => {
-    expect(normalizeWoType("Job Site Visit")).toBe("jip");
-    expect(normalizeWoType("Job Site Visit/JIP")).toBe("jip");
+  it("normalizes Job Site Visit variants to job_site_visit", () => {
+    expect(normalizeWoType("Job Site Visit")).toBe("job_site_visit");
+    expect(normalizeWoType("Job Site Visit/JIP")).toBe("job_site_visit");
   });
 
   it("normalizes Paint and Stain variants", () => {

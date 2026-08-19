@@ -65,6 +65,13 @@ export const WO_TYPE_COLORS: Record<string, WoTypeColor> = {
     text: "text-pink-800 dark:text-pink-200",
     hex: "#ec4899",
   },
+  job_site_visit: {
+    label: "Job Site Visit",
+    border: "border-l-violet-500",
+    bg: "bg-violet-100 dark:bg-violet-900/30",
+    text: "text-violet-800 dark:text-violet-200",
+    hex: "#8b5cf6",
+  },
   unknown: {
     label: "Unknown",
     border: "border-l-gray-400",

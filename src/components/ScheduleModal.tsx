@@ -488,6 +488,7 @@ export default function ScheduleModal({
                 <option value="install">Install</option>
                 <option value="service">Service</option>
                 <option value="jip">JIP</option>
+                <option value="job_site_visit">Job Site Visit</option>
                 <option value="lswp">LSWP</option>
                 <option value="hoa">HOA</option>
                 <option value="paint_stain">Paint/Stain</option>

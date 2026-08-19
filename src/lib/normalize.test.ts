@@ -23,9 +23,10 @@ describe("normalizeWoType", () => {
     expect(normalizeWoType("JIP")).toBe("jip");
   });
 
-  it("normalizes JIP aliases", () => {
-    expect(normalizeWoType("Job Site Visit")).toBe("jip");
-    expect(normalizeWoType("Job Site Visit/JIP")).toBe("jip");
+  it("normalizes Job Site Visit variants to job_site_visit", () => {
+    expect(normalizeWoType("Job Site Visit")).toBe("job_site_visit");
+    expect(normalizeWoType("Job Site Visit/JIP")).toBe("job_site_visit");
+    expect(normalizeWoType("JSV")).toBe("job_site_visit");
   });
 
   it("normalizes extended types (LSWP, HOA, Paint/Stain)", () => {
@@ -58,7 +59,7 @@ describe("normalizeWoType", () => {
     expect(normalizeWoType("hoa")).toBe("hoa");
     expect(normalizeWoType("paint/stain")).toBe("paint_stain");
     expect(normalizeWoType("SERVICE")).toBe("service");
-    expect(normalizeWoType("job site visit")).toBe("jip");
+    expect(normalizeWoType("job site visit")).toBe("job_site_visit");
   });
 });
 
