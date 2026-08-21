@@ -21,6 +21,7 @@ import {
 import { useData } from "./DataProvider";
 import FreshnessIndicator from "./FreshnessIndicator";
 import ProfileMenu from "./ProfileMenu";
+import PresenceAvatars from "./PresenceAvatars";
 import { parseISO, format } from "date-fns";
 import { Theme, getSavedTheme, applyTheme } from "@/lib/theme";
 
@@ -301,6 +302,7 @@ export default function CalendarHeader({
             <span>rF</span>
           </button>
         )}
+        <PresenceAvatars viewMode={viewMode} currentDate={currentDate} />
         <FreshnessIndicator />
         <div className="flex rounded-full border border-border overflow-hidden">
           <button

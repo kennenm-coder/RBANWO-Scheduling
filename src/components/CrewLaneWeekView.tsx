@@ -35,6 +35,7 @@ import { useCurrentActor } from "./AuthProvider";
 import { getDepartmentSectionsForDate, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences } from "@/lib/preferences";
+import { usePresence } from "@/lib/presence";
 import { format, isToday, parseISO, addDays } from "date-fns";
 import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle } from "lucide-react";
 import { useSchedulerDrag } from "@/lib/drag-context";
@@ -1117,6 +1118,19 @@ function StandardCell({
   const [dragOver, setDragOver] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
 
+  // Live presence (visual-only): report the hovered cell and highlight a cell a
+  // peer is hovering. Never affects data or drag behavior.
+  const { setHoveredCell, hoverColorFor } = usePresence();
+  const presenceCellKey = `${crew.id}|${dateStr}`;
+  const peerColor = hoverColorFor(presenceCellKey);
+  const presenceHandlers = {
+    onMouseEnter: () => setHoveredCell(presenceCellKey),
+    onMouseLeave: () => setHoveredCell(null),
+  };
+  const ringStyle = peerColor
+    ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" as const }
+    : undefined;
+
   const approvalItems = cellDisplayItems.filter((d) => d.displayMode === "approval");
   const discrepancyItems = cellDisplayItems.filter((d) => d.displayMode === "discrepancy");
   const visibleRForce = showRForce
@@ -1253,7 +1267,8 @@ function StandardCell({
     return (
       <div
         className={`p-0.5 border-b border-border border-l border-l-border/30 ${timeOffColor ? "" : "bg-time-off-light/40"} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
-        style={timeOffColor ? offStyle : undefined}
+        style={{ ...(timeOffColor ? offStyle : undefined), ...ringStyle }}
+        {...presenceHandlers}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1289,6 +1304,8 @@ function StandardCell({
     return (
       <div
         className={`p-0.5 border-b border-border border-l border-l-border/30 ${wrapCls} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+        style={ringStyle}
+        {...presenceHandlers}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1317,13 +1334,15 @@ function StandardCell({
             ? (timeOffColor ? "" : "bg-time-off-light/40")
             : ""
       } ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
-      style={
-        hasConflict && timeOffColor
+      style={{
+        ...(hasConflict && timeOffColor
           ? { backgroundColor: `${timeOffColor}20` }
           : off && timeOffColor
             ? offStyle
-            : undefined
-      }
+            : undefined),
+        ...ringStyle,
+      }}
+      {...presenceHandlers}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}

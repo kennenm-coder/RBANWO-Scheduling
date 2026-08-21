@@ -15,6 +15,7 @@ import UnscheduledQueue from "@/components/UnscheduledQueue";
 import { ViewMode, AppointmentType } from "@/lib/types";
 import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff, ExternalLink } from "lucide-react";
 import { SchedulerDragProvider } from "@/lib/drag-context";
+import PresenceProvider from "@/components/PresenceProvider";
 
 const DUCK_FORCE_PTO_URL = "https://betterthengooglecal-5taw.vercel.app/time-off?from=scheduler";
 
@@ -215,6 +216,7 @@ export default function CalendarPage() {
       </div>
 
       {/* Calendar */}
+      <PresenceProvider viewMode={viewMode} currentDate={currentDate}>
       <div className="flex-1 flex flex-col min-w-0">
         <CalendarHeader
           currentDate={currentDate}
@@ -289,6 +291,7 @@ export default function CalendarPage() {
           )}
         </div>
       </div>
+      </PresenceProvider>
     </div>
     </SchedulerDragProvider>
   );
