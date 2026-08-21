@@ -247,14 +247,9 @@ export default function CrewLaneWeekView({
               cellMax = Math.max(cellMax, ba + br);
             }
           } else {
-            // Standard cells stack vertically by start time, so the column only
-            // has to widen for the busiest same-start group, not the total count.
-            const byTime = new Map<string, number>();
-            const bump = (t: string) => byTime.set(t || "~~", (byTime.get(t || "~~") || 0) + 1);
-            for (const a of cellAppts) bump(a.start_time || (a.time_block ? timeBlockStartEnd(a.time_block).start : ""));
-            for (const r of approvals) bump(r.rforceOrder.scheduled_start?.slice(11, 16) || timeBlockStartEnd(r.timeBlock).start);
-            if (showRForce) for (const r of visible) bump(r.rforceOrder.scheduled_start?.slice(11, 16) || timeBlockStartEnd(r.timeBlock).start);
-            cellMax = Math.max(1, ...byTime.values());
+            // Standard cells stack every card vertically (including same-start
+            // groups), so the column never has to widen — one lane is enough.
+            cellMax = 1;
           }
           lanes.set(dateStr, Math.max(lanes.get(dateStr) || 1, cellMax));
         }
@@ -1341,11 +1336,12 @@ function StandardCell({
         </div>
       )}
       {hasContent ? (
-        // Cards stack vertically by start time; only cards sharing an exact
-        // start time sit side-by-side in one row. The + row sits at the bottom.
+        // Every card stacks vertically by start time; cards sharing an exact
+        // start time also stack (one over the other) rather than sitting
+        // side-by-side. The + row sits at the bottom.
         <div className="space-y-0.5">
           {startTimeGroups.map(([key, nodes]) => (
-            <div key={key} className="flex items-start gap-0.5">
+            <div key={key} className="flex flex-col gap-0.5">
               {nodes}
             </div>
           ))}
