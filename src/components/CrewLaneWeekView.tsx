@@ -35,6 +35,7 @@ import { useCurrentActor } from "./AuthProvider";
 import { getDepartmentSectionsForDate, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences } from "@/lib/preferences";
+import { usePresence } from "@/lib/presence";
 import { format, isToday, parseISO, addDays } from "date-fns";
 import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle } from "lucide-react";
 import { useSchedulerDrag } from "@/lib/drag-context";
@@ -247,14 +248,9 @@ export default function CrewLaneWeekView({
               cellMax = Math.max(cellMax, ba + br);
             }
           } else {
-            // Standard cells stack vertically by start time, so the column only
-            // has to widen for the busiest same-start group, not the total count.
-            const byTime = new Map<string, number>();
-            const bump = (t: string) => byTime.set(t || "~~", (byTime.get(t || "~~") || 0) + 1);
-            for (const a of cellAppts) bump(a.start_time || (a.time_block ? timeBlockStartEnd(a.time_block).start : ""));
-            for (const r of approvals) bump(r.rforceOrder.scheduled_start?.slice(11, 16) || timeBlockStartEnd(r.timeBlock).start);
-            if (showRForce) for (const r of visible) bump(r.rforceOrder.scheduled_start?.slice(11, 16) || timeBlockStartEnd(r.timeBlock).start);
-            cellMax = Math.max(1, ...byTime.values());
+            // Standard cells stack every card vertically (including same-start
+            // groups), so the column never has to widen — one lane is enough.
+            cellMax = 1;
           }
           lanes.set(dateStr, Math.max(lanes.get(dateStr) || 1, cellMax));
         }
@@ -1122,6 +1118,19 @@ function StandardCell({
   const [dragOver, setDragOver] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
 
+  // Live presence (visual-only): report the hovered cell and highlight a cell a
+  // peer is hovering. Never affects data or drag behavior.
+  const { setHoveredCell, hoverColorFor } = usePresence();
+  const presenceCellKey = `${crew.id}|${dateStr}`;
+  const peerColor = hoverColorFor(presenceCellKey);
+  const presenceHandlers = {
+    onMouseEnter: () => setHoveredCell(presenceCellKey),
+    onMouseLeave: () => setHoveredCell(null),
+  };
+  const ringStyle = peerColor
+    ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" as const }
+    : undefined;
+
   const approvalItems = cellDisplayItems.filter((d) => d.displayMode === "approval");
   const discrepancyItems = cellDisplayItems.filter((d) => d.displayMode === "discrepancy");
   const visibleRForce = showRForce
@@ -1258,7 +1267,8 @@ function StandardCell({
     return (
       <div
         className={`p-0.5 border-b border-border border-l border-l-border/30 ${timeOffColor ? "" : "bg-time-off-light/40"} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
-        style={timeOffColor ? offStyle : undefined}
+        style={{ ...(timeOffColor ? offStyle : undefined), ...ringStyle }}
+        {...presenceHandlers}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1294,6 +1304,8 @@ function StandardCell({
     return (
       <div
         className={`p-0.5 border-b border-border border-l border-l-border/30 ${wrapCls} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+        style={ringStyle}
+        {...presenceHandlers}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1322,13 +1334,15 @@ function StandardCell({
             ? (timeOffColor ? "" : "bg-time-off-light/40")
             : ""
       } ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
-      style={
-        hasConflict && timeOffColor
+      style={{
+        ...(hasConflict && timeOffColor
           ? { backgroundColor: `${timeOffColor}20` }
           : off && timeOffColor
             ? offStyle
-            : undefined
-      }
+            : undefined),
+        ...ringStyle,
+      }}
+      {...presenceHandlers}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -1341,11 +1355,12 @@ function StandardCell({
         </div>
       )}
       {hasContent ? (
-        // Cards stack vertically by start time; only cards sharing an exact
-        // start time sit side-by-side in one row. The + row sits at the bottom.
+        // Every card stacks vertically by start time; cards sharing an exact
+        // start time also stack (one over the other) rather than sitting
+        // side-by-side. The + row sits at the bottom.
         <div className="space-y-0.5">
           {startTimeGroups.map(([key, nodes]) => (
-            <div key={key} className="flex items-start gap-0.5">
+            <div key={key} className="flex flex-col gap-0.5">
               {nodes}
             </div>
           ))}

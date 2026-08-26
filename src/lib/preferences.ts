@@ -36,6 +36,27 @@ function saveLocal(prefs: UserPreferences) {
   localStorage.setItem(LOCAL_KEY, JSON.stringify(prefs));
 }
 
+// ─── Active user + cloud sync ───────────────────────────────────────────────
+// The scheduling app stores prefs in localStorage for instant reads and mirrors
+// them to sched_user_preferences per signed-in user. AuthProvider registers the
+// active user id; setPreferences then debounces a push to Supabase.
+let _activeUserId: string | null = null;
+let _pushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Register (or clear) the signed-in user whose prefs sync to the cloud. */
+export function setPreferencesUser(userId: string | null) {
+  _activeUserId = userId;
+}
+
+function schedulePush() {
+  if (!_activeUserId) return;
+  if (_pushTimer) clearTimeout(_pushTimer);
+  const uid = _activeUserId;
+  _pushTimer = setTimeout(() => {
+    void syncPreferencesToSupabase(uid, loadLocal());
+  }, 800);
+}
+
 export function getPreferences(): UserPreferences {
   return loadLocal();
 }
@@ -44,7 +65,19 @@ export function setPreferences(prefs: Partial<UserPreferences>): UserPreferences
   const current = loadLocal();
   const merged = { ...current, ...prefs };
   saveLocal(merged);
+  schedulePush();
   return merged;
+}
+
+/** Stable per-user color for presence avatars/cursors (deterministic hash). */
+const PRESENCE_COLORS = [
+  "#2563eb", "#7c3aed", "#db2777", "#dc2626", "#ea580c",
+  "#ca8a04", "#16a34a", "#0891b2", "#4f46e5", "#0d9488",
+];
+export function presenceColorForUser(userId: string): string {
+  let h = 0;
+  for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
+  return PRESENCE_COLORS[h % PRESENCE_COLORS.length];
 }
 
 export async function syncPreferencesToSupabase(userId: string, prefs: UserPreferences): Promise<void> {

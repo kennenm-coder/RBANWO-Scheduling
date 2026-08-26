@@ -36,6 +36,7 @@ import { Palmtree, MapPinned, Ban, Sunset, Building2 } from "lucide-react";
 import { format } from "date-fns";
 import { getCrewAvailability, getCrewDayLabels, LABEL_KIND_TEXT, labelForBlockingKind } from "@/lib/availability";
 import { useSchedulerDrag } from "@/lib/drag-context";
+import { usePresence } from "@/lib/presence";
 import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { useToast } from "./Toast";
 import dynamic from "next/dynamic";
@@ -500,6 +501,11 @@ function CrewSection({
     return map;
   }, [rforceOrders]);
 
+  // Live presence (visual-only): hovering a crew's row reports the crew×day
+  // cell so peers (in day or week view) see it highlighted. Never affects data.
+  const { setHoveredCell, hoverColorFor } = usePresence();
+  const presenceDateStr = format(date, "yyyy-MM-dd");
+
   return (
     <div className="mb-6">
       <div className="flex items-center justify-between px-4 py-2 bg-surface sticky top-0 z-10">
@@ -829,8 +835,17 @@ function CrewSection({
                 });
               }
 
+              const presenceCellKey = `${crew.id}|${presenceDateStr}`;
+              const peerColor = hoverColorFor(presenceCellKey);
               return (
-                <div key={crew.id} data-crew-row={crew.id} className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : crewUnavailable ? "bg-muted/5" : ""}`}>
+                <div
+                  key={crew.id}
+                  data-crew-row={crew.id}
+                  onMouseEnter={() => setHoveredCell(presenceCellKey)}
+                  onMouseLeave={() => setHoveredCell(null)}
+                  style={peerColor ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" } : undefined}
+                  className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : crewUnavailable ? "bg-muted/5" : ""}`}
+                >
                   <div className={`w-36 shrink-0 p-2 text-xs font-medium ${off ? "bg-amber-100 dark:bg-amber-900/40" : crewUnavailable ? "bg-muted/5" : "bg-background"}`}>
                     <div className="flex items-center gap-1.5">
                       <div
