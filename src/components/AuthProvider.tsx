@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { getSupabase } from "@/lib/supabase";
 import {
   fetchProfile,
@@ -73,8 +73,35 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
   const dev = typeof window !== "undefined" ? isDevBypass() : false;
 
-  const resolve = useCallback(async (u: User | null) => {
+  // Latest status/user id readable from inside resolve() without re-creating it.
+  // onAuthStateChange fires repeatedly for a long-open tab (token refreshes), so
+  // resolve() must be able to see the *current* session and refuse to tear it
+  // down over a benign event.
+  const statusRef = useRef<AuthStatus>("loading");
+  const userIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  const resolve = useCallback(async (event: string, u: User | null) => {
+    // Same user, already authed → this is a token refresh, not a re-login.
+    // Keep the fresh user object but skip the network re-gate entirely. This is
+    // the fix for tiles vanishing on a stale tab: a routine refresh must never
+    // be able to flip access off (which would unmount the whole calendar).
+    if (u && u.id === userIdRef.current && statusRef.current === "authed") {
+      setUser(u);
+      return;
+    }
+
+    // supabase can emit a momentarily-null session during token rotation. Unless
+    // it's an explicit sign-out, don't knock a good session to the login screen.
+    if (!u && event !== "SIGNED_OUT" && event !== "INITIAL_SESSION" && statusRef.current === "authed") {
+      return;
+    }
+
     setUser(u);
+    userIdRef.current = u?.id ?? null;
+
     if (!u?.email) {
       setProfile(null);
       setRoles([]);
@@ -82,11 +109,25 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       setStatus("unauthed");
       return;
     }
+
     // Duck Force allowlist is the access gate; sched_profiles is optional display.
-    const [allow, prof] = await Promise.all([
-      fetchAllowlist(u.email),
-      fetchProfile(u.id).catch(() => null),
-    ]);
+    let allow: Awaited<ReturnType<typeof fetchAllowlist>>;
+    let prof: UserProfile | null;
+    try {
+      [allow, prof] = await Promise.all([
+        fetchAllowlist(u.email),
+        fetchProfile(u.id).catch(() => null),
+      ]);
+    } catch {
+      // The allowlist re-check itself failed (e.g. network blip on wake).
+      // Preserve whatever access we already had instead of falsely dropping to
+      // "not-allowed" and unmounting the app. If we weren't authed yet, fall
+      // back to unauthed so the login flow can retry.
+      if (statusRef.current === "authed") return;
+      setStatus("unauthed");
+      return;
+    }
+
     const roleSet = allow?.roles ?? [];
     setProfile(prof);
     setRoles(roleSet);
@@ -112,9 +153,9 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       setStatus("unauthed");
       return;
     }
-    sb.auth.getSession().then(({ data }) => resolve(data.session?.user ?? null));
-    const { data: { subscription } } = sb.auth.onAuthStateChange((_e, session) =>
-      resolve(session?.user ?? null)
+    sb.auth.getSession().then(({ data }) => resolve("INITIAL_SESSION", data.session?.user ?? null));
+    const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) =>
+      resolve(event, session?.user ?? null)
     );
     return () => subscription.unsubscribe();
   }, [dev, resolve]);

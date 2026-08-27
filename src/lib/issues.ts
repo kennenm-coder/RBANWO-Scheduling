@@ -28,7 +28,7 @@ import {
   CANCELLED_STATUSES,
 } from "./normalize";
 import { matchCrewByName, timeToBlock } from "./crew-match";
-import { latestImportTime, isOrderStale } from "./rforce-staleness";
+import { missedExportCount, MISSED_EXPORTS_FOR_RED } from "./rforce-staleness";
 
 export type IssueType = "missing" | "mismatch";
 
@@ -209,22 +209,28 @@ export interface DroppedTileIssue {
   scheduledDate: string;
   /** Last time this order appeared in an import (its updated_at). */
   lastSeen: string;
+  /** How many daily exports the order has missed (≥ MISSED_EXPORTS_FOR_RED). */
+  missedExports: number;
 }
 
 /**
  * Detect active calendar tiles whose linked rForce order has stopped appearing in
- * imports (heuristic: its updated_at has fallen behind the newest imported order by
- * more than STALE_THRESHOLD_MS). These are candidates for cancellation review.
+ * the daily full export — the 🔴 "likely cancel" tier: the order has missed at
+ * least MISSED_EXPORTS_FOR_RED (2) daily exports. (The 🟡 "possible cancel" tier —
+ * one missed export — shows only as an amber tag on the overlay tile, not here.)
  *
- * This is the Phase 1 heuristic. Its limitation (can't tell a complete import from a
- * partial one) and the Phase 2 plan for precise consecutive-miss counting are
- * documented in docs/phase2-dropped-from-rforce.md.
+ * Miss counting is by export *event*, using the observed export dates from
+ * `sched_import_runs`; a day the export failed to run simply isn't in the list, so
+ * it never counts as a miss. See src/lib/rforce-staleness.ts and
+ * docs/phase2-dropped-from-rforce.md.
  *
  * Deliberately excluded:
  *  - Orders explicitly cancelled/completed in rForce — handled by the Issue Center's
  *    rforce_cancellation_mismatch flow, not a *silent* drop.
- *  - Orders still appearing recently (not stale).
+ *  - Orders that haven't missed enough exports yet.
  *  - Tiles the scheduler already dismissed/kept (WO + date in `dismissals`).
+ *  - Completed/record-keeping tiles: an appointment marked `complete` stays for
+ *    history and is never a cancellation candidate.
  *  - Past-dated tiles: a job whose date has passed naturally stops importing once
  *    it's completed, so a drop there is just history, not a cancellation to review.
  *    Only upcoming (today-onward) tiles are actionable.
@@ -233,13 +239,13 @@ export function deriveDroppedTiles(
   appointments: Appointment[],
   rforceOrders: RForceOrder[],
   dismissals: RForceDismissal[] = [],
+  exportDates: string[] = [],
   todayISO: string = new Date().toISOString().slice(0, 10)
 ): DroppedTileIssue[] {
   const normalizeWo = (value: string | null | undefined) =>
     (value || "").trim().toLowerCase();
 
-  const newest = latestImportTime(rforceOrders);
-  if (!newest) return []; // no imports to compare against → nothing is "dropped"
+  if (exportDates.length === 0) return []; // no export history yet → can't count misses
 
   const orderByWo = new Map<string, RForceOrder>();
   for (const rf of rforceOrders) {
@@ -253,8 +259,15 @@ export function deriveDroppedTiles(
   const dropped: DroppedTileIssue[] = [];
 
   for (const appt of appointments) {
-    // Active, scheduled, linked tiles only.
-    if (appt.status === "cancelled" || appt.status === "unscheduled") continue;
+    // Active, scheduled, linked tiles only. `complete` tiles stay for record
+    // keeping and are never cancellation candidates (belt-and-suspenders: they're
+    // also past-dated, so the date guard below would catch them too).
+    if (
+      appt.status === "cancelled" ||
+      appt.status === "unscheduled" ||
+      appt.status === "complete"
+    )
+      continue;
     if (!appt.scheduled_date || !appt.work_order_number) continue;
 
     // Only upcoming tiles — a past job dropping out is just it being completed.
@@ -274,7 +287,9 @@ export function deriveDroppedTiles(
       continue;
     }
 
-    if (!isOrderStale(rf, newest)) continue; // still appearing → fine
+    // 🔴 red tier only: must have missed at least MISSED_EXPORTS_FOR_RED exports.
+    const missed = missedExportCount(rf, exportDates);
+    if (missed < MISSED_EXPORTS_FOR_RED) continue; // still present, or only amber
 
     // Already dismissed or explicitly kept.
     if (dismissedKeys.has(`${rf.work_order_number}|${appt.scheduled_date}`)) continue;
@@ -288,6 +303,7 @@ export function deriveDroppedTiles(
       address: appt.address || rf.address || "",
       scheduledDate: appt.scheduled_date,
       lastSeen: rf.updated_at,
+      missedExports: missed,
     });
   }
 

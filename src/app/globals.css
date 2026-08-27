@@ -85,6 +85,27 @@ body {
   --time-off-conflict: #dc2626;
 }
 
+/* Cream — warm "paper" theme: ivory background, warm brown text, muted tan
+   surfaces. Category accents (install/service/jsv/measure) stay as-is so the
+   calendar reads the same across themes. */
+:root.cream {
+  --background: #f4ecda;
+  --foreground: #44392c;
+  --primary: #1a73e8;
+  --primary-light: #ebe0c9;
+  --border: #ddcfb4;
+  --muted: #7a6d56;
+  --surface: #ece0c7;
+  --success: #34a853;
+  --warning: #d98c1f;
+  --danger: #d94f3d;
+  --rba-green: #4a7c2e;
+  --rba-green-light: #e6edd4;
+  --time-off: #c77f16;
+  --time-off-light: #f0e4c6;
+  --time-off-conflict: #d94f3d;
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
 }

@@ -1,6 +1,38 @@
-# Phase 2 — "Dropped from rForce" cancellation detection (future work)
+# Phase 2 — "Dropped from rForce" cancellation detection
 
-**Status:** Not started. Phase 1 shipped and is live.
+**Status:** Implemented (2026-08-27) via the daily-export-count model below —
+a lighter path than the tracked-import-endpoint plan originally sketched here.
+
+## What shipped (two-tier, export-count model)
+
+rForce cancellations arrive as absence from the **daily full export** (confirmed
+against live data: the midday batch refreshes every active order; incremental
+hourly syncs touch only a handful). We count how many daily exports an order has
+missed and escalate in two tiers:
+
+- **missed 1 export → 🟡 possible cancel** — amber tag on the overlay tile only
+  (`ApprovalCard`, driven by `RForceDisplayItem.stale` / `dropTier`).
+- **missed ≥2 exports → 🔴 likely cancel** — red tile tag **and** the Issue
+  Center "Dropped from rForce" review (`deriveDroppedTiles`).
+
+Because each daily export overwrites `updated_at`, the work_orders table can't
+retain which days an export ran. Rather than route Power Automate through a
+tracked endpoint (the original plan below), the app **records each daily export it
+observes on load** into `sched_import_runs` (see `detectLatestExportDate` +
+`recordImportRun`); miss-counting reads that log (`missedExportCount` /
+`dropTier` in `src/lib/rforce-staleness.ts`). A day the export fails simply never
+enters the log, so it isn't counted as a miss (gap-safe). Thresholds live as
+`MISSED_EXPORTS_FOR_AMBER` / `MISSED_EXPORTS_FOR_RED`. Completed (`status:
+"complete"`) tiles are explicitly excluded so finished jobs stay for record
+keeping. History accumulates forward from launch; before ~2 exports are logged,
+tiles under-escalate (amber, never a false red) — an acceptable cold start.
+
+The original tracked-import plan is retained below for reference; it remains the
+most precise option if the client-side detection ever proves too coarse.
+
+---
+
+**Original plan (superseded, kept for reference):**
 
 ## What Phase 1 does today
 

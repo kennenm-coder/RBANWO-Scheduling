@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { useData } from "./DataProvider";
 import { upsertCrew, deactivateCrew, toggleCrewActive } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
+import { pickNewCrewColor } from "@/lib/crew-colors";
 import { Crew, CrewType, ManagesType } from "@/lib/types";
 import {
   categorizeResourceNames,
@@ -91,7 +92,7 @@ export default function ResourceManager() {
     setEditing({
       name,
       crew_type: type,
-      color: type === "misc" ? "#6b7280" : type === "management" ? "#7c3aed" : "#2563eb",
+      color: pickNewCrewColor(type, allCrews, name),
       notes: "",
       aliases: [],
       manages: [],
@@ -227,7 +228,7 @@ export default function ResourceManager() {
               setEditing({
                 name: "",
                 crew_type: "install_in_house",
-                color: "#2563eb",
+                color: pickNewCrewColor("install_in_house", allCrews),
                 notes: "",
                 aliases: [],
                 manages: [],
@@ -515,9 +516,16 @@ export default function ResourceManager() {
                 <label className="block text-xs text-muted mb-1">Type</label>
                 <select
                   value={editing.crew_type || "install_in_house"}
-                  onChange={(e) =>
-                    setEditing({ ...editing, crew_type: e.target.value as CrewType })
-                  }
+                  onChange={(e) => {
+                    const nextType = e.target.value as CrewType;
+                    // For a NEW resource, keep the auto-assigned color unique to
+                    // the chosen type. Existing resources keep their set color.
+                    setEditing({
+                      ...editing,
+                      crew_type: nextType,
+                      ...(editing.id ? {} : { color: pickNewCrewColor(nextType, allCrews, editing.name || "") }),
+                    });
+                  }}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
                 >
                   {TYPE_ORDER.map((t) => (

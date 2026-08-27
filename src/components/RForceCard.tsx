@@ -3,6 +3,7 @@
 import { RForceOrder, Crew } from "@/lib/types";
 import { formatProductBreakdown } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
+import { crewColorFor } from "@/lib/preferences";
 import { MapPin, AlertTriangle, Check } from "lucide-react";
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
 }
 
 export default function RForceCard({ order, crew, compact, isSynced, onClick }: Props) {
-  const borderColor = crew?.color || "#888";
+  const borderColor = crewColorFor(crew, "#888");
   const city = parseCity(order.address || "");
   const hasAlerts = !!(order.order_alerts || order.scheduler_notes);
 

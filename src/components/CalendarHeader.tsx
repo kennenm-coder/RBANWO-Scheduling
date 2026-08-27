@@ -13,6 +13,7 @@ import {
   Sun,
   Moon,
   Monitor,
+  Coffee,
   Eye,
   EyeOff,
   MapPin,
@@ -23,7 +24,8 @@ import FreshnessIndicator from "./FreshnessIndicator";
 import ProfileMenu from "./ProfileMenu";
 import PresenceAvatars from "./PresenceAvatars";
 import { parseISO, format } from "date-fns";
-import { Theme, getSavedTheme, applyTheme } from "@/lib/theme";
+import { Theme, applyTheme } from "@/lib/theme";
+import { getPreferences, setPreferences } from "@/lib/preferences";
 
 interface Props {
   currentDate: Date;
@@ -89,15 +91,17 @@ export default function CalendarHeader({
   }, [searchOpen, searchFocused]);
 
   useEffect(() => {
-    const saved = getSavedTheme();
+    const saved = getPreferences().theme;
     setTheme(saved);
     applyTheme(saved);
   }, []);
 
   function cycleTheme() {
-    const next: Theme = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+    const order: Theme[] = ["system", "light", "dark", "cream"];
+    const next = order[(order.indexOf(theme) + 1) % order.length];
     setTheme(next);
-    applyTheme(next);
+    // setPreferences applies the theme and syncs it to this user's cloud prefs.
+    setPreferences({ theme: next });
   }
 
   function handleSearchToggle() {
@@ -337,7 +341,7 @@ export default function CalendarHeader({
           aria-label={`Theme: ${theme}`}
           title={`Theme: ${theme} (click to cycle)`}
         >
-          {theme === "light" ? <Sun size={16} /> : theme === "dark" ? <Moon size={16} /> : <Monitor size={16} />}
+          {theme === "light" ? <Sun size={16} /> : theme === "dark" ? <Moon size={16} /> : theme === "cream" ? <Coffee size={16} /> : <Monitor size={16} />}
         </button>
         <ProfileMenu />
       </div>

@@ -6,6 +6,7 @@ import { RForceOrder, Crew } from "@/lib/types";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes } from "@/lib/store";
 import { parseCity } from "@/lib/crew-utils";
+import { crewColorFor } from "@/lib/preferences";
 import { formatDateStr, formatProductBreakdown, formatProductShort } from "@/lib/calendar-utils";
 import { useData } from "./DataProvider";
 import ScheduleModal from "./ScheduleModal";
@@ -154,7 +155,7 @@ export default function RForceDetailSheet({ order, crew, onClose, stale, onAppro
               {order.work_order_type && (
                 <span
                   className="inline-block px-2 py-0.5 rounded-full text-xs font-medium text-white mt-1"
-                  style={{ backgroundColor: crew?.color || "#888" }}
+                  style={{ backgroundColor: crewColorFor(crew, "#888") }}
                 >
                   {order.work_order_type}
                 </span>

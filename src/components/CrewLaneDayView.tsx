@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useData } from "./DataProvider";
+import { crewColorFor } from "@/lib/preferences";
 import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
 import ApprovalCard from "./ApprovalCard";
@@ -63,7 +64,7 @@ export default function CrewLaneDayView({
     crews, appointments, rforceOrders, timeOffRequests,
     availabilityRules, availabilityExceptions, activeLinks,
     resourceMappings, dismissals, approveRForce, dismissRForce,
-    updateAppointment,
+    updateAppointment, exportDates,
   } = useData();
   const { showToast } = useToast();
   const { actorId, actorName } = useCurrentActor();
@@ -141,8 +142,8 @@ export default function CrewLaneDayView({
   }, [offToday]);
 
   const rforceDisplayItems = useMemo(
-    () => getRForceDisplayItems(rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings),
-    [rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings]
+    () => getRForceDisplayItems(rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings, exportDates),
+    [rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings, exportDates]
   );
 
   // New rForce adapter — derives mismatch status for linked appointments
@@ -850,7 +851,7 @@ function CrewSection({
                     <div className="flex items-center gap-1.5">
                       <div
                         className={`w-3 h-3 rounded-full shrink-0 ${off || crewUnavailable ? "opacity-40" : ""}`}
-                        style={{ backgroundColor: crew.color }}
+                        style={{ backgroundColor: crewColorFor(crew) }}
                       />
                       <span className={off ? "opacity-60 line-through" : crewUnavailable ? "opacity-50" : ""}>{crew.name}</span>
                       {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}
@@ -940,7 +941,7 @@ function CrewSection({
                             >
                               <ApprovalCard
                                 rforceOrder={item.rforceOrder}
-                                stale={item.stale}
+                                stale={item.stale} dropTier={item.dropTier}
                                 crew={crew}
                                 onApprove={async (override) => {
                                   await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate, override);
@@ -1205,7 +1206,7 @@ function CrewSection({
                           >
                             <ApprovalCard
                               rforceOrder={item.rforceOrder}
-                              stale={item.stale}
+                              stale={item.stale} dropTier={item.dropTier}
                               crew={crew}
                               onApprove={async (override) => {
                                 await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate, override);

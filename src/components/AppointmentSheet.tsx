@@ -5,6 +5,7 @@ import { typeLabel, timeBlockLabel, formatTime12, formatDateStr, formatDateStrFu
 import { addDays, parseISO, format } from "date-fns";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
 import { updateSchedulerNotes, createAppointmentEvent } from "@/lib/store";
+import { crewColorFor } from "@/lib/preferences";
 import { useData } from "./DataProvider";
 import { useCurrentActor } from "./AuthProvider";
 import {
@@ -196,7 +197,7 @@ export default function AppointmentSheet({
             <div className="flex items-center gap-2 mt-1">
               <span
                 className="inline-block px-2 py-0.5 rounded-full text-xs font-medium text-white"
-                style={{ backgroundColor: crew?.color || "#1a73e8" }}
+                style={{ backgroundColor: crewColorFor(crew) }}
               >
                 {typeLabel(appointment.appointment_type)}
               </span>
