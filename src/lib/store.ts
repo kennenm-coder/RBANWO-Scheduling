@@ -75,13 +75,16 @@ export async function fetchAppointments(
 ): Promise<Appointment[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  const { data } = await sb
+  const { data, error } = await sb
     .from("sched_appointments")
     .select("*")
     .gte("scheduled_date", startDate)
     .lte("scheduled_date", endDate)
     .neq("status", "cancelled")
     .order("scheduled_date", { ascending: true });
+  // Throw on error rather than returning [] — a swallowed error here let a
+  // transient failure overwrite the whole calendar with an empty list.
+  if (error) throw error;
   return (data as Appointment[]) ?? [];
 }
 
@@ -362,6 +365,36 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
     offset += BATCH;
   }
   return all;
+}
+
+// ── Import-run log (daily-export cancellation detection) ──
+//
+// One row per day a full rForce daily export was observed. Powers the two-tier
+// "dropped from rForce" detection — see src/lib/rforce-staleness.ts and
+// docs/phase2-dropped-from-rforce.md. Power Automate writes work_orders directly
+// with no app hook, so the app records each export it sees on load.
+
+/** Observed full-export dates (`YYYY-MM-DD`), newest first. */
+export async function fetchImportRunDates(): Promise<string[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("sched_import_runs")
+    .select("run_date")
+    .order("run_date", { ascending: false });
+  return (data || []).map((r) => (r as { run_date: string }).run_date);
+}
+
+/**
+ * Record that a full daily export was observed on `runDate` (idempotent per day).
+ * Best-effort: a failure here must never block loading the calendar.
+ */
+export async function recordImportRun(runDate: string, orderCount: number): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  await sb
+    .from("sched_import_runs")
+    .upsert({ run_date: runDate, order_count: orderCount }, { onConflict: "run_date", ignoreDuplicates: true });
 }
 
 /**

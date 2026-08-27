@@ -71,7 +71,7 @@ export default function CrewLaneWeekView({
     crews, appointments, rforceOrders, timeOffRequests,
     availabilityRules, availabilityExceptions, activeLinks,
     resourceMappings, dismissals, updateAppointment,
-    approveRForce, dismissRForce,
+    approveRForce, dismissRForce, exportDates,
   } = useData();
   const { showToast } = useToast();
   const { actorId, actorName } = useCurrentActor();
@@ -145,11 +145,11 @@ export default function CrewLaneWeekView({
     for (const day of days) {
       map.set(
         format(day, "yyyy-MM-dd"),
-        getRForceDisplayItems(rforceOrders, appointments, activeLinks, crews, day, dismissals, resourceMappings)
+        getRForceDisplayItems(rforceOrders, appointments, activeLinks, crews, day, dismissals, resourceMappings, exportDates)
       );
     }
     return map;
-  }, [days, rforceOrders, appointments, activeLinks, crews, dismissals, resourceMappings]);
+  }, [days, rforceOrders, appointments, activeLinks, crews, dismissals, resourceMappings, exportDates]);
 
   // New rForce adapter — derives mismatch status for linked appointments
   const rforceStatusByWO = useMemo(() => {
@@ -993,7 +993,7 @@ function MeasureTimeLaneCell({
                         <div key={`approve-${rf.rforceOrder.work_order_number}`} className="flex-1 min-w-0">
                           <ApprovalCard
                             rforceOrder={rf.rforceOrder}
-                            stale={rf.stale}
+                            stale={rf.stale} dropTier={rf.dropTier}
                             crew={crewObj}
                             compact
                             onApprove={async (override) => {
@@ -1216,7 +1216,7 @@ function StandardCell({
         <div key={`approve-${rf.rforceOrder.work_order_number}`} className="flex-1 min-w-0">
           <ApprovalCard
             rforceOrder={rf.rforceOrder}
-            stale={rf.stale}
+            stale={rf.stale} dropTier={rf.dropTier}
             crew={crewObj}
             compact
             onApprove={async (override) => {

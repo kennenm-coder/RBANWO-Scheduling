@@ -26,8 +26,10 @@ interface Props {
   rforceOrder: RForceOrder;
   crew?: Crew;
   compact?: boolean;
-  /** Order hasn't appeared in recent imports — likely cancelled in rForce. */
+  /** Order missed ≥1 daily export — amber "possible cancel" tag. */
   stale?: boolean;
+  /** Escalation tier: `likely_cancel` (missed ≥2 exports) shows red instead of amber. */
+  dropTier?: "present" | "possible_cancel" | "likely_cancel";
   /** override bypasses the double-booking guard (intentional same-slot overlap). */
   onApprove: (override?: boolean) => Promise<void>;
   onDismiss: () => Promise<void>;
@@ -39,6 +41,7 @@ export default function ApprovalCard({
   crew,
   compact,
   stale,
+  dropTier,
   onApprove,
   onDismiss,
   onClick,
@@ -53,6 +56,10 @@ export default function ApprovalCard({
   const [override, setOverride] = useState(false);
   const borderColor = crew?.color || "#888";
   const city = parseCity(rforceOrder.address || "");
+  // Drop escalation: red once the order has missed enough exports to be a likely
+  // cancel, amber on the first miss. `stale` remains the "show a warning" gate.
+  const likelyCancel = dropTier === "likely_cancel";
+  const warnBorder = likelyCancel ? "border-red-500" : "border-amber-500";
 
   async function runApprove(useOverride: boolean) {
     setLoading(true);
@@ -186,20 +193,20 @@ export default function ApprovalCard({
     return (
       <div
         onClick={onClick}
-        className={`rounded-lg p-1.5 cursor-pointer text-xs leading-tight overflow-hidden border-2 border-dashed ${stale ? "border-amber-500" : ""}`}
+        className={`rounded-lg p-1.5 cursor-pointer text-xs leading-tight overflow-hidden border-2 border-dashed ${stale ? warnBorder : ""}`}
         style={{
           borderColor: stale ? undefined : borderColor,
           backgroundColor: `${borderColor}18`,
         }}
       >
         {stale && (
-          <div className="text-[8px] font-semibold text-amber-700 dark:text-amber-300 truncate flex items-center gap-0.5">
-            <AlertTriangle size={8} className="shrink-0" /> Not in latest rForce
+          <div className={`text-[8px] font-semibold truncate flex items-center gap-0.5 ${likelyCancel ? "text-red-700 dark:text-red-300" : "text-amber-700 dark:text-amber-300"}`}>
+            <AlertTriangle size={8} className="shrink-0" /> {likelyCancel ? "Likely cancelled" : "Not in latest rForce"}
           </div>
         )}
         <div className="font-semibold truncate flex items-center gap-1 text-foreground">
           {rforceOrder.customer_name || "Unknown"}
-          <span className="text-[6px] opacity-50 font-normal ml-auto bg-amber-200 dark:bg-amber-800 px-0.5 rounded text-amber-800 dark:text-amber-200">
+          <span className={`text-[6px] opacity-50 font-normal ml-auto px-0.5 rounded ${likelyCancel ? "bg-red-200 dark:bg-red-800 text-red-800 dark:text-red-200" : "bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200"}`}>
             {stale ? "CXL?" : "NEW"}
           </span>
         </div>
@@ -233,16 +240,16 @@ export default function ApprovalCard({
   return (
     <div
       onClick={onClick}
-      className={`rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-xs leading-tight overflow-hidden h-full border-2 border-dashed ${stale ? "border-amber-500" : ""}`}
+      className={`rounded-lg p-2 cursor-pointer hover:shadow-md transition-shadow text-xs leading-tight overflow-hidden h-full border-2 border-dashed ${stale ? warnBorder : ""}`}
       style={{
         borderColor: stale ? undefined : borderColor,
         backgroundColor: `${borderColor}18`,
       }}
     >
       {stale && (
-        <div className="mb-1 flex items-start gap-1 rounded bg-amber-400/25 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-200 leading-snug">
+        <div className={`mb-1 flex items-start gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold leading-snug ${likelyCancel ? "bg-red-400/25 text-red-800 dark:text-red-200" : "bg-amber-400/25 text-amber-800 dark:text-amber-200"}`}>
           <AlertTriangle size={10} className="shrink-0 mt-0.5" />
-          <span>Not in latest rForce import — likely cancelled</span>
+          <span>{likelyCancel ? "Missed 2+ rForce exports — likely cancelled" : "Not in latest rForce export — possible cancel"}</span>
         </div>
       )}
       <div className="font-semibold truncate flex items-center gap-1 text-foreground">

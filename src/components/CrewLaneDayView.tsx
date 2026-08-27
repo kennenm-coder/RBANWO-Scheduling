@@ -63,7 +63,7 @@ export default function CrewLaneDayView({
     crews, appointments, rforceOrders, timeOffRequests,
     availabilityRules, availabilityExceptions, activeLinks,
     resourceMappings, dismissals, approveRForce, dismissRForce,
-    updateAppointment,
+    updateAppointment, exportDates,
   } = useData();
   const { showToast } = useToast();
   const { actorId, actorName } = useCurrentActor();
@@ -141,8 +141,8 @@ export default function CrewLaneDayView({
   }, [offToday]);
 
   const rforceDisplayItems = useMemo(
-    () => getRForceDisplayItems(rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings),
-    [rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings]
+    () => getRForceDisplayItems(rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings, exportDates),
+    [rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings, exportDates]
   );
 
   // New rForce adapter — derives mismatch status for linked appointments
@@ -940,7 +940,7 @@ function CrewSection({
                             >
                               <ApprovalCard
                                 rforceOrder={item.rforceOrder}
-                                stale={item.stale}
+                                stale={item.stale} dropTier={item.dropTier}
                                 crew={crew}
                                 onApprove={async (override) => {
                                   await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate, override);
@@ -1205,7 +1205,7 @@ function CrewSection({
                           >
                             <ApprovalCard
                               rforceOrder={item.rforceOrder}
-                              stale={item.stale}
+                              stale={item.stale} dropTier={item.dropTier}
                               crew={crew}
                               onApprove={async (override) => {
                                 await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate, override);

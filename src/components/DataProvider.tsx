@@ -49,7 +49,10 @@ import {
   rejectMatch as rejectMatchInDb,
   unrejectMatch as unrejectMatchInDb,
   fetchScheduledWorkOrderNumbers,
+  fetchImportRunDates,
+  recordImportRun,
 } from "@/lib/store";
+import { detectLatestExportDate } from "@/lib/rforce-staleness";
 import { mergeRForceIntoAppointment as mergeInDb, MergeResult } from "@/lib/merge";
 import { humanizeConflictMessage } from "@/lib/calendar-utils";
 import { subscribeToAppointments } from "@/lib/realtime";
@@ -73,6 +76,9 @@ interface DataContextValue {
    *  including outside the loaded date window. Shared so the Issues page and the
    *  bottom-nav badge count issues the same way. */
   scheduledWorkOrders: Set<string>;
+  /** Observed full daily-export dates (YYYY-MM-DD, newest first) — powers the
+   *  two-tier "dropped from rForce" cancellation detection. */
+  exportDates: string[];
   loading: boolean;
   connected: boolean;
   createAppointment: (
@@ -144,9 +150,11 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [flagResolutions, setFlagResolutions] = useState<FlagResolution[]>([]);
   const [matchRejections, setMatchRejections] = useState<MatchRejection[]>([]);
   const [scheduledWorkOrders, setScheduledWorkOrders] = useState<Set<string>>(new Set());
+  const [exportDates, setExportDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
+  const lastResyncRef = useRef(0);
 
   const loadData = useCallback(async () => {
     try {
@@ -154,7 +162,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const start = format(subDays(today, 30), "yyyy-MM-dd");
       const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-      const [c, a, r, t, av, links, rm, dism, flagRes, matchRej, unsched, schedWos] = await Promise.all([
+      const [c, a, r, t, av, links, rm, dism, flagRes, matchRej, unsched, schedWos, runDates] = await Promise.all([
         fetchCrews(),
         fetchAppointments(start, end),
         fetchRForceOrders(),
@@ -167,7 +175,22 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         fetchMatchRejections(),
         fetchUnscheduledAppointments(),
         fetchScheduledWorkOrderNumbers(),
+        fetchImportRunDates(),
       ]);
+
+      // Record today's daily export (if it has run and isn't logged yet) so the
+      // export-date history accumulates, then hand the merged list to consumers.
+      // Detection/logging is best-effort — never let it break the calendar load.
+      let allExportDates = runDates;
+      try {
+        const detected = detectLatestExportDate(r);
+        if (detected && !runDates.includes(detected.date)) {
+          allExportDates = [detected.date, ...runDates];
+          void recordImportRun(detected.date, detected.orderCount);
+        }
+      } catch (e) {
+        console.error("Export-date detection failed (non-fatal):", e);
+      }
 
       // REMOVED: Auto-cancel on page load.
       // Previously, opening the app would fire-and-forget cancel any appointment
@@ -189,6 +212,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setMatchRejections(matchRej);
       setUnscheduledAppointments(unsched);
       setScheduledWorkOrders(new Set(schedWos.map((w) => w.trim().toLowerCase())));
+      setExportDates(allExportDates);
       loadedRangeRef.current = { start, end };
     } catch (err) {
       console.error("Failed to load data:", err);
@@ -207,9 +231,16 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         const newStart = format(subDays(date, 60), "yyyy-MM-dd");
         const newEnd = format(addDays(date, 180), "yyyy-MM-dd");
         loadedRangeRef.current = { start: newStart, end: newEnd };
-        fetchAppointments(newStart, newEnd).then((a) => {
-          setAppointments(a);
-        });
+        fetchAppointments(newStart, newEnd)
+          .then((a) => {
+            setAppointments(a);
+          })
+          .catch((err) => {
+            // Never wipe the calendar on a failed refetch. Keep the tiles we
+            // have and roll the loaded range back so a later navigation retries.
+            console.error("Failed to extend loaded date range:", err);
+            loadedRangeRef.current = { start, end };
+          });
       }
     },
     []
@@ -254,6 +285,37 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     });
     setConnected(true);
     return unsub;
+  }, []);
+
+  // Focus/wake resync. The realtime socket can silently miss changes while a tab
+  // is backgrounded; when the tab comes back we backfill the loaded window with
+  // one query. Throttled so rapid focus flips can't hammer the DB, and it never
+  // wipes existing tiles on failure — it just retries on the next focus.
+  useEffect(() => {
+    const RESYNC_MIN_INTERVAL_MS = 30_000;
+    const resync = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const range = loadedRangeRef.current;
+      if (!range) return;
+      const now = Date.now();
+      if (now - lastResyncRef.current < RESYNC_MIN_INTERVAL_MS) return;
+      lastResyncRef.current = now;
+      fetchAppointments(range.start, range.end)
+        .then((a) => setAppointments(a))
+        .catch((err) => {
+          console.error("Focus resync failed (keeping current tiles):", err);
+          lastResyncRef.current = 0; // allow an immediate retry next focus
+        });
+    };
+    const onVisible = () => {
+      if (!document.hidden) resync();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", resync);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", resync);
+    };
   }, []);
 
   const handleCreate = useCallback(
@@ -495,6 +557,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         flagResolutions,
         matchRejections,
         scheduledWorkOrders,
+        exportDates,
         loading,
         connected,
         createAppointment: handleCreate,

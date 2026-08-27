@@ -272,6 +272,7 @@ export default function IssuesPage() {
     cancelAppointment,
     dismissals,
     dismissRForce,
+    exportDates,
   } = useData();
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -314,8 +315,8 @@ export default function IssuesPage() {
   // Tiles whose backing rForce order silently dropped from imports (cancellation
   // review). Separate shape from SchedulingIssue, so tracked on its own.
   const droppedTiles = useMemo(
-    () => deriveDroppedTiles(appointments, rforceOrders, dismissals),
-    [appointments, rforceOrders, dismissals]
+    () => deriveDroppedTiles(appointments, rforceOrders, dismissals, exportDates),
+    [appointments, rforceOrders, dismissals, exportDates]
   );
 
   const missingCount = allIssues.filter((i) => i.type === "missing").length;

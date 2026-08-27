@@ -19,7 +19,7 @@ import {
   isSameDay,
 } from "date-fns";
 import { deriveRForceCalendarStatus } from "./rforce-calendar-status";
-import { latestImportTime, isOrderStale } from "./rforce-staleness";
+import { missedExportCount, dropTier, MISSED_EXPORTS_FOR_AMBER } from "./rforce-staleness";
 import { timeToBlock, matchCrewByMapping, matchCrewByName } from "./crew-match";
 
 export const MEASURE_TIME_BLOCKS: TimeBlock[] = [
@@ -530,7 +530,9 @@ export function getRForceDisplayItems(
   crews: Crew[],
   date: Date,
   dismissals: RForceDismissal[],
-  mappings?: ResourceMapping[]
+  mappings?: ResourceMapping[],
+  /** Observed daily-export dates (YYYY-MM-DD) for drop-tier tagging. */
+  exportDates: string[] = []
 ): RForceDisplayItem[] {
   const dateStr = format(date, "yyyy-MM-dd");
 
@@ -551,8 +553,11 @@ export function getRForceDisplayItems(
     dismissalKeys.add(`${d.work_order_number}|${d.rforce_date}`);
   }
 
-  // Newest import timestamp — orders far behind it dropped out of rForce.
-  const newestImport = latestImportTime(rforceOrders);
+  // Drop tier from missed daily exports: 1 miss → amber tag, 2+ → red.
+  const tagFor = (rf: RForceOrder) => ({
+    stale: missedExportCount(rf, exportDates) >= MISSED_EXPORTS_FOR_AMBER,
+    dropTier: dropTier(rf, exportDates),
+  });
 
   const items: RForceDisplayItem[] = [];
 
@@ -593,7 +598,7 @@ export function getRForceDisplayItems(
         displayMode,
         linkedAppointment: appt,
         differences: diffs || undefined,
-        stale: isOrderStale(rf, newestImport),
+        ...tagFor(rf),
       });
     } else if (calendarStatus?.linkedAppointment) {
       // Matched by work_order_number — treat as synced (or discrepancy)
@@ -607,7 +612,7 @@ export function getRForceDisplayItems(
         displayMode,
         linkedAppointment: appt,
         differences: diffs || undefined,
-        stale: isOrderStale(rf, newestImport),
+        ...tagFor(rf),
       });
     } else {
       const dismissKey = `${rf.work_order_number}|${startDate}`;
@@ -618,7 +623,7 @@ export function getRForceDisplayItems(
         crewId: crew.id,
         timeBlock,
         displayMode: "approval",
-        stale: isOrderStale(rf, newestImport),
+        ...tagFor(rf),
       });
     }
   }

@@ -446,8 +446,10 @@ export interface RForceDisplayItem {
   linkedAppointment?: Appointment;
   differences?: ReconciliationDifferences;
   fuzzyMatch?: FuzzyMatchCandidate;
-  /** Order hasn't appeared in recent imports — likely cancelled/removed in rForce. */
+  /** Order missed ≥1 daily export — amber "possible cancel" tag on the tile. */
   stale?: boolean;
+  /** Escalation tier from missed daily exports: present / possible / likely cancel. */
+  dropTier?: "present" | "possible_cancel" | "likely_cancel";
 }
 
 // ── Fuzzy Matching ──

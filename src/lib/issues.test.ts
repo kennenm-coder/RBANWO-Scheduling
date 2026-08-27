@@ -216,35 +216,51 @@ describe("deriveIssues", () => {
 });
 
 describe("deriveDroppedTiles", () => {
-  // A recent order keeps `newest` current so the stale one falls behind it.
-  const recentOrder = makeRForceOrder({
-    id: "rf-recent",
-    work_order_number: "WO-RECENT",
-    updated_at: "2026-08-17T00:00:00Z",
-  });
+  // Two observed daily exports (newest first). An order last seen before both has
+  // missed 2 → 🔴 likely cancel; last seen on 08-16 has missed 1 → amber only.
+  const EXPORTS = ["2026-08-17", "2026-08-16"];
 
   // makeAppointment defaults to scheduled_date 2026-08-14; treat "today" as before it.
   const TODAY = "2026-08-10";
 
-  it("flags an active upcoming tile whose order dropped out of recent imports", () => {
+  it("flags an active upcoming tile whose order missed 2+ daily exports", () => {
     const staleOrder = makeRForceOrder({
       work_order_number: "WO-100",
-      updated_at: "2026-08-06T00:00:00Z", // 11 days behind newest → stale
+      updated_at: "2026-08-06T00:00:00Z", // before both exports → missed 2
     });
     const appt = makeAppointment({ work_order_number: "WO-100", status: "scheduled" });
-    const dropped = deriveDroppedTiles([appt], [staleOrder, recentOrder], [], TODAY);
+    const dropped = deriveDroppedTiles([appt], [staleOrder], [], EXPORTS, TODAY);
     expect(dropped).toHaveLength(1);
     expect(dropped[0].woNumber).toBe("WO-100");
     expect(dropped[0].lastSeen).toBe("2026-08-06T00:00:00Z");
+    expect(dropped[0].missedExports).toBe(2);
   });
 
-  it("does not flag a tile whose order still appears in the latest import", () => {
+  it("does not flag a tile whose order still appears in the latest export", () => {
     const freshOrder = makeRForceOrder({
       work_order_number: "WO-100",
-      updated_at: "2026-08-17T00:00:00Z", // same as newest → not stale
+      updated_at: "2026-08-17T00:00:00Z", // in the latest export → missed 0
     });
     const appt = makeAppointment({ work_order_number: "WO-100" });
-    expect(deriveDroppedTiles([appt], [freshOrder, recentOrder], [], TODAY)).toHaveLength(0);
+    expect(deriveDroppedTiles([appt], [freshOrder], [], EXPORTS, TODAY)).toHaveLength(0);
+  });
+
+  it("does not flag a tile that has only missed ONE export (amber tier, not red)", () => {
+    const amberOrder = makeRForceOrder({
+      work_order_number: "WO-100",
+      updated_at: "2026-08-16T00:00:00Z", // seen on 08-16, missed only 08-17 → 1
+    });
+    const appt = makeAppointment({ work_order_number: "WO-100" });
+    expect(deriveDroppedTiles([appt], [amberOrder], [], EXPORTS, TODAY)).toHaveLength(0);
+  });
+
+  it("does not flag anything before any export history exists", () => {
+    const staleOrder = makeRForceOrder({
+      work_order_number: "WO-100",
+      updated_at: "2026-08-06T00:00:00Z",
+    });
+    const appt = makeAppointment({ work_order_number: "WO-100" });
+    expect(deriveDroppedTiles([appt], [staleOrder], [], [], TODAY)).toHaveLength(0);
   });
 
   it("does not flag a past-dated tile (a completed job naturally stops importing)", () => {
@@ -254,7 +270,21 @@ describe("deriveDroppedTiles", () => {
     });
     const appt = makeAppointment({ work_order_number: "WO-100", scheduled_date: "2026-08-14" });
     // "today" is after the appointment date → past → not flagged.
-    expect(deriveDroppedTiles([appt], [staleOrder, recentOrder], [], "2026-08-20")).toHaveLength(0);
+    expect(deriveDroppedTiles([appt], [staleOrder], [], EXPORTS, "2026-08-20")).toHaveLength(0);
+  });
+
+  it("does not flag a completed appointment (kept for record-keeping)", () => {
+    const staleOrder = makeRForceOrder({
+      work_order_number: "WO-100",
+      updated_at: "2026-08-06T00:00:00Z",
+    });
+    // A future-dated complete tile: excluded by the explicit `complete` guard.
+    const appt = makeAppointment({
+      work_order_number: "WO-100",
+      scheduled_date: "2026-08-14",
+      status: "complete",
+    });
+    expect(deriveDroppedTiles([appt], [staleOrder], [], EXPORTS, TODAY)).toHaveLength(0);
   });
 
   it("does not flag an explicitly cancelled order (handled by Issue Center)", () => {
@@ -264,7 +294,7 @@ describe("deriveDroppedTiles", () => {
       wo_status: "Cancelled",
     });
     const appt = makeAppointment({ work_order_number: "WO-100" });
-    expect(deriveDroppedTiles([appt], [cancelledOrder, recentOrder], [], TODAY)).toHaveLength(0);
+    expect(deriveDroppedTiles([appt], [cancelledOrder], [], EXPORTS, TODAY)).toHaveLength(0);
   });
 
   it("does not flag a tile that has been kept/dismissed", () => {
@@ -284,7 +314,7 @@ describe("deriveDroppedTiles", () => {
         reason: "Kept — verified still scheduled",
       },
     ];
-    expect(deriveDroppedTiles([appt], [staleOrder, recentOrder], dismissals, TODAY)).toHaveLength(0);
+    expect(deriveDroppedTiles([appt], [staleOrder], dismissals, EXPORTS, TODAY)).toHaveLength(0);
   });
 
   it("ignores cancelled/unscheduled appointments", () => {
@@ -293,6 +323,6 @@ describe("deriveDroppedTiles", () => {
       updated_at: "2026-08-06T00:00:00Z",
     });
     const cancelledAppt = makeAppointment({ work_order_number: "WO-100", status: "cancelled" });
-    expect(deriveDroppedTiles([cancelledAppt], [staleOrder, recentOrder], [], TODAY)).toHaveLength(0);
+    expect(deriveDroppedTiles([cancelledAppt], [staleOrder], [], EXPORTS, TODAY)).toHaveLength(0);
   });
 });

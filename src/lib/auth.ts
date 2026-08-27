@@ -25,11 +25,15 @@ export interface Allowlist {
 export async function fetchAllowlist(email: string): Promise<Allowlist | null> {
   const sb = getSupabase();
   if (!sb) return null;
-  const { data } = await sb
+  const { data, error } = await sb
     .from("allowed_emails")
     .select("role, roles, name")
     .eq("email", email.toLowerCase())
     .maybeSingle();
+  // Distinguish "fetch failed" (throw — caller preserves current access) from
+  // "not on the list" (null). Collapsing both to null let a transient network
+  // blip on tab-wake read as a de-authorization and unmount the whole app.
+  if (error) throw error;
   if (!data) return null;
   const roles = Array.isArray(data.roles) && data.roles.length
     ? (data.roles as string[])
