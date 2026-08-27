@@ -1,7 +1,8 @@
 import { getSupabase } from "./supabase";
+import { applyTheme, Theme } from "./theme";
 
 export interface UserPreferences {
-  theme: "light" | "dark" | "system";
+  theme: Theme;
   default_view: "day" | "week";
   density: "compact" | "comfortable";
   department_filters: string[];
@@ -65,6 +66,7 @@ export function setPreferences(prefs: Partial<UserPreferences>): UserPreferences
   const current = loadLocal();
   const merged = { ...current, ...prefs };
   saveLocal(merged);
+  if (prefs.theme !== undefined) applyTheme(merged.theme);
   schedulePush();
   return merged;
 }
@@ -110,5 +112,8 @@ export async function loadPreferencesFromSupabase(userId: string): Promise<UserP
     time_off_color: data.time_off_color || DEFAULTS.time_off_color,
   };
   saveLocal(prefs);
+  // Cloud prefs are authoritative once loaded — apply the synced theme (the
+  // pre-paint boot script only had this device's cached value).
+  applyTheme(prefs.theme);
   return prefs;
 }

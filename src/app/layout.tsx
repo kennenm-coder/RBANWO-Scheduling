@@ -57,6 +57,13 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full notranslate`}
     >
       <body className="h-full flex flex-col">
+        {/* Apply saved theme before paint to avoid a flash of the wrong theme.
+            Mirrors applyTheme() in src/lib/theme.ts. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('rbanwo-sched-theme')||'system';var r=document.documentElement;r.classList.remove('dark','cream');if(t==='dark'){r.classList.add('dark');r.style.colorScheme='dark';}else if(t==='light'){r.style.colorScheme='light';}else if(t==='cream'){r.classList.add('cream');r.style.colorScheme='light';}}catch(e){}})();`,
+          }}
+        />
         <AuthProvider>
           <RequireAuth>
             <DataProvider>
