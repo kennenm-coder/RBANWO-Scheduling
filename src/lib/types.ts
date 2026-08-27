@@ -93,6 +93,18 @@ export interface Appointment {
   duration_days: number;
   time_block: TimeBlock | null;
   time_block_end?: TimeBlock | null;
+  /**
+   * Authoritative all-day flag. The whole-day blocking signal (installs/LSWP and
+   * any explicitly full-day job). Replaces the old `time_block === "full_day"`
+   * hack that leaked onto timed jobs. Timed types (service/JIP/…) are never true.
+   */
+  is_full_day?: boolean;
+  /**
+   * How many hours the job occupies the calendar. On the calendar it mirrors
+   * end_time − start_time; in the queue it's the scheduler-set duration. NULL for
+   * full-day work. Derived-from-block for measures.
+   */
+  resource_hours?: number | null;
   manual_override?: boolean;
   override_source?: { crew_name?: string; scheduled_date?: string; time_block?: string } | null;
   /** When true, this appointment is excluded from the double-booking unique index

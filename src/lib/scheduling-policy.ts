@@ -165,3 +165,39 @@ export function timeDurationMinutes(start: string, end: string): number {
   const [eH, eM] = end.split(":").map(Number);
   return (eH * 60 + eM) - (sH * 60 + sM);
 }
+
+/**
+ * Resource hours from a start/end window, rounded to 2 decimals. Returns null
+ * for a missing or non-positive window (nothing sensible to occupy).
+ */
+export function resourceHoursFromTimes(
+  start: string | null | undefined,
+  end: string | null | undefined
+): number | null {
+  if (!start || !end) return null;
+  const mins = timeDurationMinutes(start.slice(0, 5), end.slice(0, 5));
+  if (!(mins > 0)) return null;
+  return Math.round((mins / 60) * 100) / 100;
+}
+
+/**
+ * Derive the two calendar-occupancy fields (`is_full_day`, `resource_hours`) that
+ * every appointment write must keep consistent, so the DB whole-day guard and the
+ * views agree. Full-day work carries the flag and no hour count; everything else
+ * (measures included) carries hours from its window.
+ *
+ * `fullDay` lets a caller force the all-day flag (the queue/expanded-tile
+ * checkbox); when omitted it's inferred from `timeBlock === "full_day"`.
+ */
+export function deriveOccupancy(opts: {
+  timeBlock?: TimeBlock | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  fullDay?: boolean;
+}): { is_full_day: boolean; resource_hours: number | null } {
+  const isFullDay = opts.fullDay ?? opts.timeBlock === "full_day";
+  return {
+    is_full_day: isFullDay,
+    resource_hours: isFullDay ? null : resourceHoursFromTimes(opts.startTime, opts.endTime),
+  };
+}
