@@ -80,7 +80,7 @@ export default function CrewLaneWeekView({
   // Auto-scroll the grid while dragging a tile toward its top/bottom edge so
   // off-screen crews become reachable as drop targets.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { draggedAppointment: activeDrag, draggedOrder: activeOrder } = useSchedulerDrag();
+  const { draggedAppointment: activeDrag, draggedOrder: activeOrder, draggedMeta } = useSchedulerDrag();
   useDragAutoScroll(scrollRef, !!activeDrag || !!activeOrder);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
@@ -95,6 +95,8 @@ export default function CrewLaneWeekView({
     crewId: string;
     timeBlock?: TimeBlock;
     prefill?: RForceOrder;
+    resourceHours?: number | null;
+    isFullDay?: boolean;
   } | null>(null);
   // A drop/resize that hit an occupied slot, awaiting confirmation to overlap.
   const [pendingOverlap, setPendingOverlap] = useState<{
@@ -542,7 +544,13 @@ export default function CrewLaneWeekView({
                             }
                             onResizeDrop={handleResizeDrop}
                             onQueueDrop={(order) =>
-                              setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
+                              setScheduleTarget({
+                                date: day,
+                                crewId: crew.id,
+                                prefill: order,
+                                resourceHours: draggedMeta?.fullDay ? null : draggedMeta?.hours ?? null,
+                                isFullDay: draggedMeta?.fullDay ?? false,
+                              })
                             }
                             onApproveRForce={approveRForce}
                             onDismissRForce={dismissRForce}
@@ -574,7 +582,13 @@ export default function CrewLaneWeekView({
                           }
                           getMultiDayLabel={getMultiDayLabel}
                           onDrop={(order) =>
-                            setScheduleTarget({ date: day, crewId: crew.id, prefill: order })
+                            setScheduleTarget({
+                              date: day,
+                              crewId: crew.id,
+                              prefill: order,
+                              resourceHours: draggedMeta?.fullDay ? null : draggedMeta?.hours ?? null,
+                              isFullDay: draggedMeta?.fullDay ?? false,
+                            })
                           }
                           onAppointmentDrop={(apptId, srcCrewId, srcDate, srcBlock) =>
                             handleAppointmentDrop(apptId, srcCrewId, srcDate, srcBlock, crew.id, format(day, "yyyy-MM-dd"), null)
@@ -657,6 +671,8 @@ export default function CrewLaneWeekView({
           crewId={scheduleTarget.crewId}
           timeBlock={scheduleTarget.timeBlock}
           prefill={scheduleTarget.prefill}
+          initialResourceHours={scheduleTarget.resourceHours}
+          initialIsFullDay={scheduleTarget.isFullDay}
           onClose={() => setScheduleTarget(null)}
         />
       )}

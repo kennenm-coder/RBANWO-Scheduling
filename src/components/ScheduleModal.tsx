@@ -28,6 +28,9 @@ import {
   isFullDay,
   getDefaultTimes,
   resolveScheduleTimes,
+  deriveOccupancy,
+  addMinutesToTime,
+  timeDurationMinutes,
   SchedulingMode,
 } from "@/lib/scheduling-policy";
 import { fetchAccountSuggestions, AccountSuggestion, createAppointmentEvent } from "@/lib/store";
@@ -48,6 +51,9 @@ interface Props {
   rescheduleMode?: boolean;
   initialStartTime?: string;
   initialEndTime?: string;
+  /** Queue-tile occupancy carried through a drag/drop or Schedule click. */
+  initialResourceHours?: number | null;
+  initialIsFullDay?: boolean;
   onClose: () => void;
 }
 
@@ -60,6 +66,8 @@ export default function ScheduleModal({
   rescheduleMode,
   initialStartTime,
   initialEndTime,
+  initialResourceHours,
+  initialIsFullDay,
   onClose,
 }: Props) {
   const {
@@ -159,13 +167,34 @@ export default function ScheduleModal({
   );
   // Explicit start/end for timed types (service, JIP, etc.)
   const timedDefaults = getDefaultTimes(type);
-  const [startTime, setStartTime] = useState(
-    initialStartTime || editingAppointment?.start_time || prefillTimes?.start_time || timedDefaults.start
-  );
+  const seededStart =
+    initialStartTime || editingAppointment?.start_time || prefillTimes?.start_time || timedDefaults.start;
+  const [startTime, setStartTime] = useState(seededStart);
   const [endTime, setEndTime] = useState(
-    initialEndTime || editingAppointment?.end_time || prefillTimes?.end_time || timedDefaults.end
+    initialEndTime ||
+      editingAppointment?.end_time ||
+      prefillTimes?.end_time ||
+      // Queue-tile hours (when no explicit end was passed) drive the initial window.
+      (initialResourceHours && initialResourceHours > 0
+        ? addMinutesToTime(seededStart, Math.round(initialResourceHours * 60))
+        : timedDefaults.end)
   );
   const schedulingMode = getSchedulingMode(type);
+  // The full-day checkbox. Measures are never full-day; installs default checked,
+  // timed types (service/JIP/…) default unchecked. Editing seeds from the record.
+  const [isFullDayChecked, setIsFullDayChecked] = useState<boolean>(
+    editingAppointment
+      ? !!(editingAppointment.is_full_day ?? editingAppointment.time_block === "full_day")
+      : (initialIsFullDay ?? schedulingMode === "full_day")
+  );
+  // A measure is always block-based; anything else obeys the checkbox.
+  const wantsFullDay = schedulingMode !== "fixed_block" && isFullDayChecked;
+  // Resource hours (the calendar occupancy). Two-way with start/end below.
+  const resourceHours = Math.max(0, Math.round((timeDurationMinutes(startTime, endTime) / 60) * 100) / 100);
+  const setResourceHours = (h: number) => {
+    if (!(h > 0)) return;
+    setEndTime(addMinutesToTime(startTime, Math.round(h * 60)));
+  };
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -198,6 +227,16 @@ export default function ScheduleModal({
   useEffect(() => {
     setAvailabilityOverridden(false);
   }, [selectedCrewId, selectedDate, selectedBlock, durationDays]);
+
+  // When the appointment type changes, reset the full-day checkbox to that type's
+  // default (install → checked, timed → unchecked). Skip the first render so an
+  // edited appointment keeps the value seeded from its record.
+  const typeInitRef = useRef(type);
+  useEffect(() => {
+    if (typeInitRef.current === type) return;
+    typeInitRef.current = type;
+    setIsFullDayChecked(getSchedulingMode(type) === "full_day");
+  }, [type]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -270,18 +309,32 @@ export default function ScheduleModal({
     setSaving(true);
     setError("");
 
-    // Use scheduling policy to resolve times based on type
-    // full_day types (installs) accept an explicit start/end too, so a job
-    // scheduled straight from an rForce order keeps its real window instead of
-    // resetting to the 08:00–16:00 default.
-    const resolved = resolveScheduleTimes(type, {
-      timeBlock: schedulingMode === "fixed_block" ? selectedBlock : null,
-      startTime: schedulingMode === "fixed_block" ? null : startTime,
-      endTime: schedulingMode === "fixed_block" ? null : endTime,
+    // Resolve times from the scheduling mode AND the full-day checkbox. Measures
+    // are block-based; everyone else is full-day (checkbox on) or timed (off).
+    // time_block is measure-only + "full_day" — a timed job never carries a block.
+    let start: string;
+    let end: string;
+    let resolvedBlock: TimeBlock | null;
+    if (schedulingMode === "fixed_block") {
+      const resolved = resolveScheduleTimes(type, { timeBlock: selectedBlock });
+      start = resolved.start;
+      end = resolved.end;
+      resolvedBlock = resolved.timeBlock ?? selectedBlock;
+    } else if (wantsFullDay) {
+      start = startTime || "08:00";
+      end = "16:00";
+      resolvedBlock = "full_day";
+    } else {
+      start = startTime;
+      end = endTime;
+      resolvedBlock = null;
+    }
+    const occupancy = deriveOccupancy({
+      timeBlock: resolvedBlock,
+      startTime: start,
+      endTime: end,
+      fullDay: wantsFullDay,
     });
-    const start = resolved.start;
-    const end = resolved.end;
-    const resolvedBlock = resolved.timeBlock ?? selectedBlock;
 
     // Availability gate — scheduling onto PTO / an Unavailable rule / a Late or
     // Office day requires an explicit override, just like double-booking.
@@ -343,6 +396,8 @@ export default function ScheduleModal({
             timeBlock: resolvedBlock,
             startTime: start,
             endTime: end,
+            isFullDay: wantsFullDay,
+            resourceHours: occupancy.resource_hours,
             durationDays: parseInt(durationDays) || 1,
             allowOverlap,
             allowAvailabilityConflict: bypassAvailability || availabilityOverridden,
@@ -381,6 +436,8 @@ export default function ScheduleModal({
           start_time: start,
           end_time: end,
           time_block: resolvedBlock,
+          is_full_day: occupancy.is_full_day,
+          resource_hours: occupancy.resource_hours,
           duration_days: parseInt(durationDays) || 1,
           customer_name: customerName,
           address,
@@ -554,7 +611,20 @@ export default function ScheduleModal({
                 </select>
               </div>
             )}
-            {schedulingMode === "full_day" && (
+            {/* Full-day toggle — everyone except measures. Installs default on,
+                timed types default off; either can be flipped. */}
+            {schedulingMode !== "fixed_block" && (
+              <label className="flex items-center gap-2 text-sm cursor-pointer select-none self-end pb-2">
+                <input
+                  type="checkbox"
+                  checked={isFullDayChecked}
+                  onChange={(e) => setIsFullDayChecked(e.target.checked)}
+                  className="h-4 w-4 accent-primary"
+                />
+                Full day
+              </label>
+            )}
+            {wantsFullDay && (
               <div>
                 <label className="block text-xs text-muted mb-1">
                   Duration (days)
@@ -571,9 +641,9 @@ export default function ScheduleModal({
             )}
           </div>
 
-          {/* Timed types get explicit start/end pickers */}
-          {schedulingMode === "timed" && (
-            <div className="grid grid-cols-2 gap-3">
+          {/* Timed placement: explicit start/end + resource hours (two-way). */}
+          {schedulingMode !== "fixed_block" && !wantsFullDay && (
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs text-muted mb-1">
                   Start Time
@@ -598,25 +668,24 @@ export default function ScheduleModal({
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
                 />
               </div>
+              <div>
+                <label className="block text-xs text-muted mb-1">
+                  Hours
+                </label>
+                <input
+                  type="number"
+                  min="0.5"
+                  step="0.5"
+                  value={resourceHours || ""}
+                  onChange={(e) => setResourceHours(parseFloat(e.target.value))}
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+                />
+              </div>
             </div>
           )}
 
-          {/* Duration for timed types too (multi-day service jobs) */}
-          {schedulingMode === "timed" && (
-            <div>
-              <label className="block text-xs text-muted mb-1">
-                Duration (days)
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="10"
-                value={durationDays}
-                onChange={(e) => setDurationDays(e.target.value)}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
-              />
-            </div>
-          )}
+          {/* Duration for non-full-day timed service jobs spanning >1 day is rare;
+              keep the multi-day input available on the full-day branch above. */}
 
           {/* ── Additional Resources ── */}
           <div className="border border-border rounded-lg overflow-hidden">

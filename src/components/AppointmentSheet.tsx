@@ -239,13 +239,17 @@ export default function AppointmentSheet({
           </InfoRow>
 
           <InfoRow icon={<Clock size={16} />} label="Time">
-            {appointment.start_time && appointment.end_time
-              ? `${formatTime12(appointment.start_time)} – ${formatTime12(appointment.end_time)}${
-                  appointment.time_block === "full_day" ? " (Full Day)" : ""
-                }`
-              : appointment.time_block
-                ? timeBlockLabel(appointment.time_block)
-                : "Not set"}
+            {appointment.is_full_day
+              ? "Full Day (8:00 AM – 4:00 PM)"
+              : appointment.start_time && appointment.end_time
+                ? `${formatTime12(appointment.start_time)} – ${formatTime12(appointment.end_time)}${
+                    appointment.resource_hours
+                      ? ` · ${appointment.resource_hours} hr${appointment.resource_hours === 1 ? "" : "s"}`
+                      : ""
+                  }`
+                : appointment.time_block
+                  ? timeBlockLabel(appointment.time_block)
+                  : "Not set"}
           </InfoRow>
 
           <InfoRow icon={<MapPin size={16} />} label="Address">

@@ -13,6 +13,7 @@ import {
   snapTo30Min,
   addMinutesToTime,
   timeDurationMinutes,
+  deriveOccupancy,
 } from "./scheduling-policy";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
 import { checkAvailabilityConflict } from "./availability";
@@ -54,6 +55,17 @@ export interface ScheduleMoveTarget {
   exactTime?: boolean;
   /** Multi-day install duration. */
   durationDays?: number;
+  /**
+   * Explicit all-day flag from the full-day checkbox. Overrides the type default
+   * (installs default true, timed types false). When true the job occupies the
+   * whole day; when false a full-day-default type (install) becomes a timed job.
+   */
+  isFullDay?: boolean;
+  /**
+   * Scheduler-set duration in hours. When a timed job is placed with a start but
+   * no explicit end, the end is start + resourceHours. Ignored for full-day work.
+   */
+  resourceHours?: number | null;
   /**
    * Intentional same-slot overlap. When true, the client-side conflict check is
    * skipped and the appointment is tagged `allow_overlap` so the DB guards let it
@@ -190,13 +202,23 @@ export function buildMoveUpdates(
   rforceOrders?: RForceOrder[]
 ): Partial<Appointment> {
   const mode = getSchedulingMode(currentAppointment.appointment_type);
+  // Whether this move is all-day. The checkbox (target.isFullDay) wins; otherwise
+  // only genuine full-day-mode types (installs/LSWP) default to all-day. Measures
+  // are never all-day.
+  const wantsFullDay = mode === "fixed_block" ? false : (target.isFullDay ?? mode === "full_day");
 
   // Resolve times
   let startTime: string;
   let endTime: string;
   let timeBlock: TimeBlock | null;
 
-  if (mode === "fixed_block" && target.exactTime && target.startTime) {
+  if (wantsFullDay) {
+    // All-day work occupies the standard workday; time_block stays the full-day
+    // placement key so the week/block grid keeps rendering it in the install row.
+    startTime = target.startTime || "08:00";
+    endTime = target.endTime || "16:00";
+    timeBlock = "full_day";
+  } else if (mode === "fixed_block" && target.exactTime && target.startTime) {
     // Day-view exact-time drop for a measure job: keep the precise time and
     // derive which block it lands in.
     const origDuration = timeDurationMinutes(
@@ -213,28 +235,32 @@ export function buildMoveUpdates(
     startTime = resolved.start;
     endTime = resolved.end;
     timeBlock = resolved.timeBlock;
-  } else if (mode === "timed" && target.startTime) {
-    // Preserve original duration when moving timed appointments
+  } else if (target.startTime) {
+    // Timed placement (service/JIP/…, or a full-day-default type with the box
+    // unchecked). Honour an explicit end, else a scheduler-set hour count, else
+    // preserve the original duration.
     const origDuration = timeDurationMinutes(
       currentAppointment.start_time || "08:00",
-      currentAppointment.end_time || "17:00"
+      currentAppointment.end_time || "09:00"
     );
     startTime = snapTo30Min(target.startTime);
-    endTime = target.endTime || addMinutesToTime(startTime, origDuration);
-    timeBlock = target.timeBlock || currentAppointment.time_block;
-  } else if (mode === "full_day") {
-    const resolved = resolveScheduleTimes(currentAppointment.appointment_type, {
-      startTime: target.startTime,
-      endTime: target.endTime,
-    });
-    startTime = resolved.start;
-    endTime = resolved.end;
-    timeBlock = "full_day";
+    if (target.endTime) {
+      endTime = target.endTime;
+    } else if (target.resourceHours && target.resourceHours > 0) {
+      endTime = addMinutesToTime(startTime, Math.round(target.resourceHours * 60));
+    } else {
+      endTime = addMinutesToTime(startTime, origDuration);
+    }
+    timeBlock = null; // timed jobs don't sit in the measure block grid
   } else {
-    // Fallback — preserve existing times
+    // No explicit start (e.g. block-grid move of a non-full-day timed job) —
+    // preserve existing times, drop any stale full-day block tag.
     startTime = target.startTime || currentAppointment.start_time || "08:00";
-    endTime = target.endTime || currentAppointment.end_time || "17:00";
-    timeBlock = target.timeBlock ?? currentAppointment.time_block;
+    endTime = target.endTime || currentAppointment.end_time || "09:00";
+    if (target.resourceHours && target.resourceHours > 0 && startTime) {
+      endTime = addMinutesToTime(startTime, Math.round(target.resourceHours * 60));
+    }
+    timeBlock = mode === "fixed_block" ? (target.timeBlock ?? currentAppointment.time_block) : null;
   }
 
   // Check for manual override (rForce mismatch)
@@ -271,13 +297,26 @@ export function buildMoveUpdates(
     }
   }
 
+  const occupancy = deriveOccupancy({
+    timeBlock,
+    startTime,
+    endTime,
+    fullDay: wantsFullDay,
+  });
+
   return {
     crew_id: target.crewId,
     scheduled_date: target.scheduledDate,
     time_block: timeBlock,
-    time_block_end: target.timeBlockEnd ?? currentAppointment.time_block_end,
+    // A block span only makes sense for measures; clear it for everyone else so a
+    // stale span can't linger when a job leaves the measure grid.
+    time_block_end: timeBlock && timeBlock !== "full_day"
+      ? (target.timeBlockEnd ?? currentAppointment.time_block_end)
+      : null,
     start_time: startTime,
     end_time: endTime,
+    is_full_day: occupancy.is_full_day,
+    resource_hours: occupancy.resource_hours,
     duration_days: target.durationDays ?? currentAppointment.duration_days,
     manual_override: manualOverride,
     override_source: overrideSource,

@@ -8,6 +8,7 @@ import { openSalesforce } from "@/lib/salesforce";
 import { timeBlockStartEnd, formatDateStr } from "@/lib/calendar-utils";
 import { normalizeWoType } from "@/lib/normalize";
 import { deriveTimesFromOrder } from "@/lib/rforce-times";
+import { deriveOccupancy } from "@/lib/scheduling-policy";
 import { Appointment, FlagClass, FlagCode, TimeBlock } from "@/lib/types";
 import {
   X,
@@ -619,11 +620,17 @@ function QuickFixes({
     }
 
     if (update) {
+      const occ = deriveOccupancy({
+        timeBlock: update.time_block,
+        startTime: update.start_time,
+        endTime: update.end_time,
+      });
+      const fullUpdate = { ...update, is_full_day: occ.is_full_day, resource_hours: occ.resource_hours };
       fixes.push({
         label: `Accept rForce time (${rfTimeStr})`,
         icon: <Clock size={11} />,
         action: async () => {
-          await updateAppointment(appt.id, appt.version, update);
+          await updateAppointment(appt.id, appt.version, fullUpdate);
         },
       });
     }
@@ -688,6 +695,8 @@ function QuickFixes({
           time_block: "full_day",
           start_time: times.start,
           end_time: times.end,
+          is_full_day: true,
+          resource_hours: null,
         });
       },
     });

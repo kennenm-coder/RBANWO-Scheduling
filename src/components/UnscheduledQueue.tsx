@@ -52,8 +52,18 @@ import {
   StickyNote,
   AlertOctagon,
   Info,
+  Minus,
+  Plus,
 } from "lucide-react";
 import { useSchedulerDrag } from "@/lib/drag-context";
+
+/** Default queue-tile occupancy by normalized WO type: installs are full-day,
+ *  measures default to a 2-hour block, everything else to 1 hour. */
+function defaultOccupancy(normalizedWoType: string): { hours: number; fullDay: boolean } {
+  if (normalizedWoType === "install" || normalizedWoType === "lswp") return { hours: 8, fullDay: true };
+  if (normalizedWoType === "tech_measure") return { hours: 2, fullDay: false };
+  return { hours: 1, fullDay: false };
+}
 
 // ── Category config (queue-status colors, separate from WO-type colors) ──
 
@@ -127,6 +137,7 @@ export default function UnscheduledQueue() {
   const { filters, setFilters, resetFilters, isDefault } = useQueueFilters();
   const [showMore, setShowMore] = useState(false);
   const [scheduleOrder, setScheduleOrder] = useState<RForceOrder | null>(null);
+  const [scheduleMeta, setScheduleMeta] = useState<{ hours: number | null; fullDay: boolean } | null>(null);
   const [linkRForceOrder, setLinkRForceOrder] = useState<RForceOrder | null>(null);
   const [linkAppointment, setLinkAppointment] = useState<Appointment | null>(null);
   const [mergingId, setMergingId] = useState<string | null>(null);
@@ -471,7 +482,7 @@ export default function UnscheduledQueue() {
             rforceOrders={rforceOrders}
             appointments={appointments}
             merging={mergingId === item.id}
-            onSchedule={(rf) => setScheduleOrder(rf)}
+            onSchedule={(rf, meta) => { setScheduleOrder(rf); setScheduleMeta(meta); }}
             onLinkRForce={(rf) => setLinkRForceOrder(rf)}
             onLinkApp={(appt) => setLinkAppointment(appt)}
             onMerge={() => handleMergeClick(item)}
@@ -489,7 +500,9 @@ export default function UnscheduledQueue() {
         <ScheduleModal
           date={new Date()}
           prefill={scheduleOrder}
-          onClose={() => setScheduleOrder(null)}
+          initialResourceHours={scheduleMeta?.fullDay ? null : scheduleMeta?.hours ?? null}
+          initialIsFullDay={scheduleMeta?.fullDay}
+          onClose={() => { setScheduleOrder(null); setScheduleMeta(null); }}
         />
       )}
       {linkRForceOrder && (
@@ -569,13 +582,13 @@ function QueueItemCard({
   rforceOrders: RForceOrder[];
   appointments: Appointment[];
   merging: boolean;
-  onSchedule: (rf: RForceOrder) => void;
+  onSchedule: (rf: RForceOrder, meta: { hours: number | null; fullDay: boolean }) => void;
   onLinkRForce: (rf: RForceOrder) => void;
   onLinkApp: (appt: Appointment) => void;
   onMerge: () => void;
   onRejectMatch?: () => void;
 }) {
-  const { setDraggedOrder } = useSchedulerDrag();
+  const { setDraggedOrder, setDraggedMeta } = useSchedulerDrag();
   const cfg = CATEGORY_CONFIG[item.category];
   const Icon = cfg.icon;
   const woColor = getWoTypeColor(item.normalizedWoType);
@@ -587,6 +600,15 @@ function QueueItemCard({
 
   const isMerge = item.category === "merge_suggested";
 
+  // Occupancy the scheduler sets on the tile before placing it. Measures default
+  // to a 2h block, installs to full-day, everyone else to 1h. The value rides
+  // along on drop and on the Schedule button so the calendar sizes the job.
+  const isMeasure = item.normalizedWoType === "tech_measure";
+  const occDefault = defaultOccupancy(item.normalizedWoType);
+  const [hours, setHours] = useState(occDefault.hours);
+  const [fullDay, setFullDay] = useState(occDefault.fullDay);
+  const occMeta = { hours: fullDay ? null : hours, fullDay };
+
   return (
     <div
       draggable={isDraggable}
@@ -594,6 +616,7 @@ function QueueItemCard({
         const rf = item.rforceOrder || rforceOrders.find((r) => r.work_order_number === item.workOrderNumber);
         if (rf) {
           setDraggedOrder(rf);
+          setDraggedMeta(occMeta);
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("text/plain", item.workOrderNumber || item.id);
           (e.currentTarget as HTMLElement).style.opacity = "0.5";
@@ -733,6 +756,57 @@ function QueueItemCard({
             )}
           </div>
 
+          {/* Row 3.5: Occupancy (hours stepper + full-day) for schedulable tiles */}
+          {isDraggable && (
+            <div
+              className="flex items-center gap-2 mt-2 text-[11px]"
+              onClick={(e) => e.stopPropagation()}
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
+            >
+              {!fullDay && (
+                <div className="flex items-center gap-1">
+                  <span className="text-muted">Hrs</span>
+                  <button
+                    type="button"
+                    onClick={() => setHours((h) => Math.max(0.5, Math.round((h - 0.5) * 2) / 2))}
+                    className="w-5 h-5 rounded border border-border hover:bg-surface flex items-center justify-center text-muted"
+                    aria-label="Decrease hours"
+                  >
+                    <Minus size={10} />
+                  </button>
+                  <input
+                    type="number"
+                    min={0.5}
+                    step={0.5}
+                    value={hours}
+                    onChange={(e) => setHours(Math.max(0.5, parseFloat(e.target.value) || 0.5))}
+                    className="w-10 text-center border border-border rounded bg-background py-0.5"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setHours((h) => Math.round((h + 0.5) * 2) / 2)}
+                    className="w-5 h-5 rounded border border-border hover:bg-surface flex items-center justify-center text-muted"
+                    aria-label="Increase hours"
+                  >
+                    <Plus size={10} />
+                  </button>
+                </div>
+              )}
+              {!isMeasure && (
+                <label className="flex items-center gap-1 cursor-pointer select-none ml-auto">
+                  <input
+                    type="checkbox"
+                    checked={fullDay}
+                    onChange={(e) => setFullDay(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-primary"
+                  />
+                  <span className="text-muted">Full day</span>
+                </label>
+              )}
+            </div>
+          )}
+
           {/* Row 4: Actions */}
           <div className="flex items-center gap-1.5 mt-2">
             {isMerge && (
@@ -772,7 +846,7 @@ function QueueItemCard({
                       rforceOrders.find(
                         (r) => r.work_order_number === item.workOrderNumber
                       );
-                    if (rf) onSchedule(rf);
+                    if (rf) onSchedule(rf, occMeta);
                   }}
                   className="px-2.5 py-1 bg-primary text-white text-[11px] font-medium rounded-md hover:opacity-90 transition-opacity"
                 >

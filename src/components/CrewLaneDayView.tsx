@@ -71,13 +71,17 @@ export default function CrewLaneDayView({
   // Auto-scroll the calendar while dragging a tile toward the top/bottom edge so
   // off-screen resources become reachable as drop targets.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { draggedAppointment: activeDrag, draggedOrder: activeOrder } = useSchedulerDrag();
+  const { draggedAppointment: activeDrag, draggedOrder: activeOrder, draggedMeta } = useSchedulerDrag();
   useDragAutoScroll(scrollRef, !!activeDrag || !!activeOrder);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     crewId: string;
     block: TimeBlock;
     prefill?: RForceOrder;
+    startTime?: string;
+    endTime?: string;
+    resourceHours?: number | null;
+    isFullDay?: boolean;
   } | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
   const [reschedulingAppt, setReschedulingAppt] = useState<Appointment | null>(null);
@@ -280,7 +284,17 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
-            onQueueDrop={(order, crewId) => setScheduleTarget({ crewId, block: "full_day", prefill: order })}
+            onQueueDrop={(order, crewId, startTime, endTime) =>
+              setScheduleTarget({
+                crewId,
+                block: "full_day",
+                prefill: order,
+                startTime,
+                endTime,
+                resourceHours: draggedMeta?.fullDay ? null : draggedMeta?.hours ?? null,
+                isFullDay: draggedMeta?.fullDay ?? false,
+              })
+            }
             hasMismatch={hasMismatch}
           />
         ))}
@@ -306,6 +320,10 @@ export default function CrewLaneDayView({
           crewId={scheduleTarget.crewId}
           timeBlock={scheduleTarget.block}
           prefill={scheduleTarget.prefill}
+          initialStartTime={scheduleTarget.startTime}
+          initialEndTime={scheduleTarget.endTime}
+          initialResourceHours={scheduleTarget.resourceHours}
+          initialIsFullDay={scheduleTarget.isFullDay}
           onClose={() => setScheduleTarget(null)}
         />
       )}
@@ -462,10 +480,10 @@ function CrewSection({
   onApproveRForce: (rforceOrder: RForceOrder, crewId: string, timeBlock: TimeBlock, scheduledDate: string, override?: boolean) => Promise<Appointment | null>;
   onDismissRForce: (workOrderNumber: string, rforceDate: string, rforceStartTime?: string) => Promise<void>;
   onAppointmentDrop?: (appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) => void;
-  onQueueDrop?: (order: RForceOrder, crewId: string) => void;
+  onQueueDrop?: (order: RForceOrder, crewId: string, startTime?: string, endTime?: string) => void;
   hasMismatch: (appt: Appointment) => boolean;
 }) {
-  const { draggedAppointment, draggedOrder, setDraggedAppointment, setDraggedOrder } = useSchedulerDrag();
+  const { draggedAppointment, draggedOrder, draggedMeta, setDraggedAppointment, setDraggedOrder } = useSchedulerDrag();
   // Minutes into the dragged card where the pointer grabbed it. Captured at
   // drag start so the drop can subtract it and the card doesn't jump when the
   // user grabs its middle or right edge.
@@ -813,10 +831,30 @@ function CrewSection({
                   return;
                 }
 
-                // Queue item drop — open ScheduleModal prefilled with rForce order
+                // Queue item drop — open ScheduleModal prefilled with the rForce
+                // order. For a timed tile, land it at the dropped time on the
+                // timeline using the queue-set hours as its duration; a full-day
+                // tile ignores the position and opens as an all-day job.
                 const order = draggedOrder;
                 if (order) {
-                  onQueueDrop?.(order, crew.id);
+                  const meta = draggedMeta;
+                  if (meta && !meta.fullDay) {
+                    const durMins = Math.round((meta.hours ?? 1) * 60);
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const { startTime, endTime } = calculateTimelineDrag({
+                      pointerClientX: e.clientX,
+                      laneLeft: rect.left,
+                      laneWidth: rect.width,
+                      timelineStartMinutes: TIMELINE_START * 60,
+                      timelineEndMinutes: TIMELINE_END * 60,
+                      appointmentDurationMinutes: durMins,
+                      grabOffsetMinutes: 0,
+                      snapMinutes: DAY_VIEW_SNAP_MINUTES,
+                    });
+                    onQueueDrop?.(order, crew.id, startTime, endTime);
+                  } else {
+                    onQueueDrop?.(order, crew.id);
+                  }
                   setDraggedOrder(null);
                 }
                 clearDragPreview();

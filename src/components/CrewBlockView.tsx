@@ -18,6 +18,7 @@ import {
   MEASURE_TIME_BLOCKS,
   appointmentSpansBlock,
   typeLabel,
+  timeBlockStartEnd,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
 import { crewHasType, sortByFirstName, getDepartmentSectionsForDate } from "@/lib/crew-utils";
@@ -107,7 +108,7 @@ export default function CrewBlockView({
   // Auto-scroll the grid while dragging a tile toward its top/bottom edge so
   // off-screen crews become reachable as drop targets.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { draggedAppointment: activeDrag, draggedOrder: activeOrder } = useSchedulerDrag();
+  const { draggedAppointment: activeDrag, draggedOrder: activeOrder, draggedMeta } = useSchedulerDrag();
   useDragAutoScroll(scrollRef, !!activeDrag || !!activeOrder);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
@@ -117,6 +118,9 @@ export default function CrewBlockView({
     crewId: string;
     timeBlock?: TimeBlock;
     prefill?: RForceOrder;
+    startTime?: string;
+    resourceHours?: number | null;
+    isFullDay?: boolean;
   } | null>(null);
   // When dragging an existing appointment to a new crew/date, open modal for confirmation
   const [moveConfirmAppt, setMoveConfirmAppt] = useState<Appointment | null>(null);
@@ -276,9 +280,22 @@ export default function CrewBlockView({
               multiDayLabel={multiDayLabel}
               crewShortName={crewShortName}
               onAppointmentClick={setSelectedAppt}
-              onQueueDrop={(order, crewId, day, block) =>
-                setScheduleTarget({ date: day, crewId, timeBlock: block, prefill: order })
-              }
+              onQueueDrop={(order, crewId, day, block) => {
+                const fullDay = draggedMeta?.fullDay ?? false;
+                // A timed tile dropped into a block cell starts at that block's
+                // time and runs for its queue-set hours.
+                const blockStart =
+                  !fullDay && block && block !== "full_day" ? timeBlockStartEnd(block).start : undefined;
+                setScheduleTarget({
+                  date: day,
+                  crewId,
+                  timeBlock: block,
+                  prefill: order,
+                  startTime: blockStart,
+                  resourceHours: fullDay ? null : draggedMeta?.hours ?? null,
+                  isFullDay: fullDay,
+                });
+              }}
               onAppointmentDrop={(draggedAppt, targetCrewId, targetDay) => {
                 // Re-resolve by ID so the modal opens against the current
                 // record/version, not the snapshot captured at drag start.
@@ -359,6 +376,9 @@ export default function CrewBlockView({
           crewId={scheduleTarget.crewId}
           timeBlock={scheduleTarget.timeBlock}
           prefill={scheduleTarget.prefill}
+          initialStartTime={scheduleTarget.startTime}
+          initialResourceHours={scheduleTarget.resourceHours}
+          initialIsFullDay={scheduleTarget.isFullDay}
           onClose={() => setScheduleTarget(null)}
         />
       )}

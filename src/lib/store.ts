@@ -23,6 +23,7 @@ import { normalizeWoType } from "./normalize";
 import { learnResourceMapping } from "./resource-learning";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
 import { deriveTimesFromOrder } from "./rforce-times";
+import { getSchedulingMode, deriveOccupancy } from "./scheduling-policy";
 
 // ── Crews ──
 
@@ -863,6 +864,21 @@ export async function approveRForceOrder(
     }
   }
 
+  // A timed type (service/JIP/HOA/JSV/paint) must never carry the full-day block
+  // tag — that was the original corruption. When rForce carried no usable window,
+  // default to a 1-hour placeholder instead of the full 08:00–16:00 block.
+  if (getSchedulingMode(appointmentType) === "timed") {
+    timeBlockToStore = null;
+    if (!derived) {
+      start = "08:00";
+      end = "09:00";
+    }
+  }
+
+  // Occupancy fields kept in lockstep with the block/time so the whole-day guard
+  // and the views agree (installs → all-day flag; everyone else → hours).
+  const occupancy = deriveOccupancy({ timeBlock: timeBlockToStore, startTime: start, endTime: end });
+
   // Compute duration from rForce date range (multi-day installs)
   let durationDays = 1;
   if (rforceOrder.scheduled_start && rforceOrder.scheduled_end) {
@@ -940,6 +956,8 @@ export async function approveRForceOrder(
         start_time: start,
         end_time: end,
         time_block: timeBlockToStore,
+        is_full_day: occupancy.is_full_day,
+        resource_hours: occupancy.resource_hours,
         duration_days: durationDays,
         status: "scheduled",
         // Overlap tag excludes this row from the double-booking unique index.
@@ -1027,6 +1045,8 @@ export async function approveRForceOrder(
         end_time: end,
         duration_days: durationDays,
         time_block: timeBlockToStore,
+        is_full_day: occupancy.is_full_day,
+        resource_hours: occupancy.resource_hours,
         status: "scheduled",
         product_count: rforceOrder.product_count ?? null,
         salesforce_url: buildSalesforceUrl(rforceOrder.work_order_number),
