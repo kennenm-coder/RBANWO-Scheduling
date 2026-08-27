@@ -21,18 +21,27 @@ const DEFAULTS: UserPreferences = {
 
 const LOCAL_KEY = "rbanwo-user-prefs";
 
+// In-memory copy so hot paths (e.g. crewColorFor, called once per tile) don't
+// re-read + JSON.parse localStorage on every render. Kept in sync by loadLocal/
+// saveLocal/loadPreferencesFromSupabase.
+let _cache: UserPreferences | null = null;
+
 function loadLocal(): UserPreferences {
   if (typeof window === "undefined") return DEFAULTS;
+  if (_cache) return _cache;
+  let loaded: UserPreferences = DEFAULTS;
   try {
     const raw = localStorage.getItem(LOCAL_KEY);
-    if (!raw) return DEFAULTS;
-    return { ...DEFAULTS, ...JSON.parse(raw) };
+    if (raw) loaded = { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {
-    return DEFAULTS;
+    loaded = DEFAULTS;
   }
+  _cache = loaded;
+  return loaded;
 }
 
 function saveLocal(prefs: UserPreferences) {
+  _cache = prefs;
   if (typeof window === "undefined") return;
   localStorage.setItem(LOCAL_KEY, JSON.stringify(prefs));
 }
@@ -60,6 +69,21 @@ function schedulePush() {
 
 export function getPreferences(): UserPreferences {
   return loadLocal();
+}
+
+/**
+ * Resolve the color to render for a crew/resource for the current user.
+ * Precedence: this user's personal override → the shared `crew.color` default
+ * (set by customer service) → fallback. Use this everywhere a crew color is
+ * DISPLAYED. Editors that change the shared default still read `crew.color`.
+ */
+export function crewColorFor(
+  crew: { id: string; color?: string | null } | null | undefined,
+  fallback = "#1a73e8"
+): string {
+  if (!crew) return fallback;
+  const override = loadLocal().color_overrides?.[crew.id];
+  return override || crew.color || fallback;
 }
 
 export function setPreferences(prefs: Partial<UserPreferences>): UserPreferences {

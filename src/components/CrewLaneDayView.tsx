@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useData } from "./DataProvider";
+import { crewColorFor } from "@/lib/preferences";
 import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
 import ApprovalCard from "./ApprovalCard";
@@ -850,7 +851,7 @@ function CrewSection({
                     <div className="flex items-center gap-1.5">
                       <div
                         className={`w-3 h-3 rounded-full shrink-0 ${off || crewUnavailable ? "opacity-40" : ""}`}
-                        style={{ backgroundColor: crew.color }}
+                        style={{ backgroundColor: crewColorFor(crew) }}
                       />
                       <span className={off ? "opacity-60 line-through" : crewUnavailable ? "opacity-50" : ""}>{crew.name}</span>
                       {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}

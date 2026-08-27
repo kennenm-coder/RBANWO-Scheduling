@@ -3,6 +3,7 @@
 import { RForceOrder, Crew } from "@/lib/types";
 import { formatProductBreakdown } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
+import { crewColorFor } from "@/lib/preferences";
 import { Check, X, MapPin, AlertTriangle } from "lucide-react";
 import { useState } from "react";
 
@@ -54,7 +55,7 @@ export default function ApprovalCard({
   // there's nothing to override; the fix is to move the existing one.
   const [conflictKind, setConflictKind] = useState<"double_book" | "duplicate" | null>(null);
   const [override, setOverride] = useState(false);
-  const borderColor = crew?.color || "#888";
+  const borderColor = crewColorFor(crew, "#888");
   const city = parseCity(rforceOrder.address || "");
   // Drop escalation: red once the order has missed enough exports to be a likely
   // cancel, amber on the first miss. `stale` remains the "show a warning" gate.

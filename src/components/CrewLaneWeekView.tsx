@@ -34,7 +34,7 @@ import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { useCurrentActor } from "./AuthProvider";
 import { getDepartmentSectionsForDate, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType } from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
-import { getPreferences } from "@/lib/preferences";
+import { getPreferences, crewColorFor } from "@/lib/preferences";
 import { usePresence } from "@/lib/presence";
 import { format, isToday, parseISO, addDays } from "date-fns";
 import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle } from "lucide-react";
@@ -487,7 +487,7 @@ export default function CrewLaneWeekView({
                       <div className="flex items-center gap-1">
                         <div
                           className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: crew.color }}
+                          style={{ backgroundColor: crewColorFor(crew) }}
                         />
                         <span className="truncate leading-tight">{crew.name}</span>
                       </div>
@@ -1489,7 +1489,7 @@ function CompactAppointmentContent({
   accountName?: string | null;
   showRForce?: boolean;
 }) {
-  const bgColor = crew?.color || "#1a73e8";
+  const bgColor = crewColorFor(crew);
   const city = parseCity(appointment.address);
   const isLinked = !!appointment.work_order_number;
   // Parse additional crew members from notes
@@ -1557,7 +1557,7 @@ function CompactRForceContent({
   crew?: Crew;
   isSynced?: boolean;
 }) {
-  const borderColor = crew?.color || "#888";
+  const borderColor = crewColorFor(crew, "#888");
   const city = parseCity(order.address || "");
 
   return (

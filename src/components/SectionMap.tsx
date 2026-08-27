@@ -5,6 +5,7 @@ import { useEffect, useState, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
+import { crewColorFor } from "@/lib/preferences";
 import { geocodeAddress, validateCoordinates, GeoResult, GeoPrecision } from "@/lib/geocode";
 import { getRForceItemsForDay } from "@/lib/calendar-utils";
 import { mapsHref } from "@/lib/salesforce";
@@ -134,7 +135,7 @@ export default function SectionMap({ date, crews }: Props) {
           address: appt.address,
           type: appt.appointment_type,
           crewName: crew.name,
-          crewColor: crew.color,
+          crewColor: crewColorFor(crew),
           crewId: crew.id,
           geo,
         });
@@ -155,7 +156,7 @@ export default function SectionMap({ date, crews }: Props) {
           address: rf.rforceOrder.address || "",
           type: rf.rforceOrder.work_order_type || "Unknown",
           crewName: crew.name,
-          crewColor: crew.color,
+          crewColor: crewColorFor(crew),
           crewId: crew.id,
           geo,
         });
@@ -208,7 +209,7 @@ export default function SectionMap({ date, crews }: Props) {
             address: appt.address,
             type: appt.appointment_type,
             crewName: crew.name,
-            crewColor: crew.color,
+            crewColor: crewColorFor(crew),
             crewId: crew.id,
             geo,
           });
@@ -224,7 +225,7 @@ export default function SectionMap({ date, crews }: Props) {
               address: rf.rforceOrder.address || "",
               type: rf.rforceOrder.work_order_type || "Unknown",
               crewName: crew.name,
-              crewColor: crew.color,
+              crewColor: crewColorFor(crew),
               crewId: crew.id,
               geo,
             });

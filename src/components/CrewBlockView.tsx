@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useRef, useCallback } from "react";
 import { useData } from "./DataProvider";
+import { crewColorFor } from "@/lib/preferences";
 import AppointmentSheet from "./AppointmentSheet";
 import ScheduleModal from "./ScheduleModal";
 import {
@@ -512,7 +513,7 @@ function CrewRow({
   today,
 }: CrewRowProps) {
   const { draggedOrder, draggedAppointment, setDraggedOrder, setDraggedAppointment } = useSchedulerDrag();
-  const crewColor = crew.color || "#1a73e8";
+  const crewColor = crewColorFor(crew);
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
 
   return (
@@ -634,7 +635,7 @@ function MeasureCrewRows({
   today,
 }: MeasureCrewRowsProps) {
   const { draggedOrder, draggedAppointment, setDraggedOrder, setDraggedAppointment } = useSchedulerDrag();
-  const crewColor = crew.color || "#1a73e8";
+  const crewColor = crewColorFor(crew);
   const blocks = MEASURE_TIME_BLOCKS; // "9-10", "10-12", "12-2", "2-4", "4-6"
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
 
@@ -829,7 +830,7 @@ function HourlyCrewRows({
   today,
 }: HourlyCrewRowsProps) {
   const { draggedOrder, draggedAppointment, setDraggedOrder, setDraggedAppointment } = useSchedulerDrag();
-  const crewColor = crew.color || "#1a73e8";
+  const crewColor = crewColorFor(crew);
   const hours = SERVICE_HOURS;
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
 

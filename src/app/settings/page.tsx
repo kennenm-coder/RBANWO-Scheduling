@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Sun, Moon, Monitor, Coffee, Check, Palmtree } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Sun, Moon, Monitor, Coffee, Check, Palmtree, RotateCcw } from "lucide-react";
 import { Theme, THEME_OPTIONS, applyTheme } from "@/lib/theme";
 import { getPreferences, setPreferences, UserPreferences } from "@/lib/preferences";
+import { useData } from "@/components/DataProvider";
+import { crewTypeLabel } from "@/lib/calendar-utils";
+import { CrewType } from "@/lib/types";
 
 const THEME_ICON: Record<Theme, typeof Sun> = {
   system: Monitor,
@@ -14,7 +17,12 @@ const THEME_ICON: Record<Theme, typeof Sun> = {
 
 const TIME_OFF_SWATCHES = ["#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#10b981", "#f97316"];
 
+const RESOURCE_TYPE_ORDER: CrewType[] = [
+  "measure_tech", "install_in_house", "install_sub", "jip", "svc", "second", "management", "misc",
+];
+
 export default function SettingsPage() {
+  const { crews } = useData();
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
 
   useEffect(() => {
@@ -24,6 +32,23 @@ export default function SettingsPage() {
   function update(patch: Partial<UserPreferences>) {
     const next = setPreferences(patch);
     setPrefs(next);
+  }
+
+  // Active resources grouped by type, in display order.
+  const groupedCrews = useMemo(() => {
+    const active = crews.filter((c) => c.is_active);
+    return RESOURCE_TYPE_ORDER
+      .map((type) => ({ type, list: active.filter((c) => c.crew_type === type) }))
+      .filter((g) => g.list.length > 0);
+  }, [crews]);
+
+  function setCrewColor(crewId: string, color: string) {
+    update({ color_overrides: { ...prefs!.color_overrides, [crewId]: color } });
+  }
+  function resetCrewColor(crewId: string) {
+    const next = { ...prefs!.color_overrides };
+    delete next[crewId];
+    update({ color_overrides: next });
   }
 
   if (!prefs) return null;
@@ -91,6 +116,59 @@ export default function SettingsPage() {
               >
                 Reset
               </button>
+            )}
+          </div>
+        </section>
+
+        {/* ── Resource colors ───────────────────────────────────── */}
+        <section>
+          <h2 className="text-sm font-semibold mb-1">Resource colors</h2>
+          <p className="text-xs text-muted mb-3">
+            Recolor any resource just for yourself. The default is the shared team color —
+            your changes don&apos;t affect anyone else.
+          </p>
+          <div className="space-y-5">
+            {groupedCrews.map(({ type, list }) => (
+              <div key={type}>
+                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">
+                  {crewTypeLabel(type)}
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+                  {list.map((crew) => {
+                    const override = prefs.color_overrides?.[crew.id];
+                    const effective = override || crew.color || "#1a73e8";
+                    return (
+                      <div key={crew.id} className="flex items-center gap-2">
+                        <label
+                          className="relative w-5 h-5 rounded-full shrink-0 cursor-pointer border border-border overflow-hidden"
+                          style={{ backgroundColor: effective }}
+                          title="Change color"
+                        >
+                          <input
+                            type="color"
+                            value={effective}
+                            onChange={(e) => setCrewColor(crew.id, e.target.value)}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                          />
+                        </label>
+                        <span className="text-sm truncate flex-1">{crew.name}</span>
+                        {override && (
+                          <button
+                            onClick={() => resetCrewColor(crew.id)}
+                            className="text-muted hover:text-foreground shrink-0"
+                            title="Reset to team default"
+                          >
+                            <RotateCcw size={13} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            {groupedCrews.length === 0 && (
+              <p className="text-xs text-muted">No active resources to color yet.</p>
             )}
           </div>
         </section>

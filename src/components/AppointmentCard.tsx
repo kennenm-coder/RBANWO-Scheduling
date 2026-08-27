@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Appointment, Crew } from "@/lib/types";
 import { typeLabel, formatProductBreakdown, formatAppointmentTimeRange } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
+import { crewColorFor } from "@/lib/preferences";
 import { useData } from "./DataProvider";
 import { MapPin, Unlink, AlertTriangle, CheckCircle, Undo2, Users } from "lucide-react";
 
@@ -34,7 +35,7 @@ export default function AppointmentCard({
 }: Props) {
   const { unscheduleAppointment } = useData();
   const [unscheduling, setUnscheduling] = useState(false);
-  const bgColor = crew?.color || "#1a73e8";
+  const bgColor = crewColorFor(crew);
 
   const handleUnschedule = async (e: React.MouseEvent) => {
     e.stopPropagation();

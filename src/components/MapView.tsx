@@ -5,6 +5,7 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useData } from "./DataProvider";
+import { crewColorFor } from "@/lib/preferences";
 import {
   geocodeAddress,
   clearAndReGeocode,
@@ -626,7 +627,7 @@ export default function MapView({ date }: Props) {
           address: appt.address,
           type: typeLabel(appt.appointment_type),
           crewName: crew.name,
-          crewColor: crew.color,
+          crewColor: crewColorFor(crew),
           crewId: crew.id,
           productLabel: formatProductBreakdown(appt),
           workOrderNumber: appt.work_order_number,
@@ -652,7 +653,7 @@ export default function MapView({ date }: Props) {
           address: rf.rforceOrder.address || "",
           type: rf.rforceOrder.work_order_type || "Unknown",
           crewName: crew.name,
-          crewColor: crew.color,
+          crewColor: crewColorFor(crew),
           crewId: crew.id,
           productLabel: formatProductBreakdown(rf.rforceOrder),
           workOrderNumber: rf.rforceOrder.work_order_number,
@@ -742,7 +743,7 @@ export default function MapView({ date }: Props) {
           address: item.appt.address,
           type: typeLabel(item.appt.appointment_type),
           crewName: crew.name,
-          crewColor: crew.color,
+          crewColor: crewColorFor(crew),
           crewId: crew.id,
           productLabel: formatProductBreakdown(item.appt),
           workOrderNumber: item.appt.work_order_number,
@@ -760,7 +761,7 @@ export default function MapView({ date }: Props) {
           address: item.rf.rforceOrder.address || "",
           type: item.rf.rforceOrder.work_order_type || "Unknown",
           crewName: crew.name,
-          crewColor: crew.color,
+          crewColor: crewColorFor(crew),
           crewId: crew.id,
           productLabel: formatProductBreakdown(item.rf.rforceOrder),
           workOrderNumber: item.rf.rforceOrder.work_order_number,
