@@ -6,7 +6,7 @@
  * Views must NOT construct their own partial updates and conflict checks.
  */
 
-import { Appointment, AvailabilityRule, AvailabilityException, Crew, RForceOrder, TimeBlock } from "./types";
+import { Appointment, AvailabilityRule, AvailabilityException, CalendarBlock, Crew, RForceOrder, TimeBlock } from "./types";
 import {
   getSchedulingMode,
   resolveScheduleTimes,
@@ -118,7 +118,8 @@ export function validateMove(
   allAppointments: Appointment[],
   allCrews: Crew[],
   availabilityRules: AvailabilityRule[] = [],
-  availabilityExceptions: AvailabilityException[] = []
+  availabilityExceptions: AvailabilityException[] = [],
+  calendarBlocks: CalendarBlock[] = []
 ): ScheduleError | null {
   // 1. Check crew eligibility
   const eligible = getEligibleCrews(allCrews, currentAppointment.appointment_type);
@@ -165,7 +166,7 @@ export function validateMove(
 
   // 4. Availability check — booking onto a blocked window (PTO / Unavailable /
   // Late or Office day) requires an explicit override, just like double-booking.
-  if (!target.allowAvailabilityConflict && availabilityRules.length > 0) {
+  if (!target.allowAvailabilityConflict && (availabilityRules.length > 0 || calendarBlocks.length > 0)) {
     const blockForCheck: TimeBlock | null =
       resolved.timeBlock || (mode === "full_day" ? "full_day" : null);
     const block = checkAvailabilityConflict(
@@ -176,6 +177,7 @@ export function validateMove(
       target.timeBlockEnd ?? null,
       availabilityRules,
       availabilityExceptions,
+      calendarBlocks,
     );
     if (block) {
       const crewName = allCrews.find((c) => c.id === target.crewId)?.name || "This crew";
@@ -350,7 +352,8 @@ export async function executeScheduleMove(
   updateAppointment: (id: string, version: number, updates: Partial<Appointment>) => Promise<Appointment | null>,
   actor: { id: string | null; name: string | null },
   availabilityRules: AvailabilityRule[] = [],
-  availabilityExceptions: AvailabilityException[] = []
+  availabilityExceptions: AvailabilityException[] = [],
+  calendarBlocks: CalendarBlock[] = []
 ): Promise<ScheduleMoveResult> {
   // 1. Validate
   const validationError = validateMove(
@@ -360,6 +363,7 @@ export async function executeScheduleMove(
     allCrews,
     availabilityRules,
     availabilityExceptions,
+    calendarBlocks,
   );
   if (validationError) {
     return { ok: false, error: validationError };

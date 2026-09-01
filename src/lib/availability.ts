@@ -1,4 +1,4 @@
-import { AvailabilityRule, AvailabilityException, TimeBlock, AvailabilityKind } from "./types";
+import { AvailabilityRule, AvailabilityException, CalendarBlock, TimeBlock, AvailabilityKind } from "./types";
 import { parseISO, differenceInCalendarWeeks, format, addDays } from "date-fns";
 import { MEASURE_TIME_BLOCKS, timeBlockStartEnd, getSpannedBlocks } from "./calendar-utils";
 
@@ -19,12 +19,22 @@ export interface CrewDayAvailability {
 
 // Higher wins when several full-day rules land on the same day. External PTO
 // (time-off requests, handled in the views) sits above all of these.
+// Company-wide blocks (holiday / company_meeting) outrank every per-crew rule.
 const FULL_DAY_PRIORITY: Partial<Record<AvailabilityKind, number>> = {
+  holiday: 6,
+  company_meeting: 5,
   pto: 4,
   unavailable: 3,
   office_day: 2,
   late_day: 1,
 };
+
+/** Does a company-wide calendar block cover this date? */
+function calendarBlockCoversDate(block: CalendarBlock, dateStr: string): boolean {
+  if (block.is_active === false) return false;
+  const end = block.end_date || block.start_date;
+  return dateStr >= block.start_date && dateStr <= end;
+}
 
 const DEFAULT_WORK_START = "08:00";
 const DEFAULT_WORK_END = "18:00";
@@ -84,7 +94,8 @@ export function getCrewAvailability(
   crewId: string,
   date: Date,
   rules: AvailabilityRule[],
-  exceptions: AvailabilityException[]
+  exceptions: AvailabilityException[],
+  companyBlocks: CalendarBlock[] = []
 ): CrewDayAvailability {
   const dateStr = format(date, "yyyy-MM-dd");
   const dayOfWeek = date.getDay();
@@ -167,6 +178,30 @@ export function getCrewAvailability(
     }
   }
 
+  // Company-wide blocks (holidays / all-office meetings). These are not scoped
+  // to a crew — they apply to everyone — and sit at the top of the precedence
+  // ladder. No times → whole day blocked; a time window → only the overlapping
+  // 2-hour blocks (e.g. a 10-11 all-office meeting leaves the rest bookable).
+  for (const block of companyBlocks) {
+    if (!calendarBlockCoversDate(block, dateStr)) continue;
+
+    if (!block.start_time && !block.end_time) {
+      const priority = FULL_DAY_PRIORITY[block.kind] ?? 0;
+      const currentPriority = blockingKind ? (FULL_DAY_PRIORITY[blockingKind] ?? 0) : -1;
+      if (priority > currentPriority) {
+        blockingKind = block.kind;
+        reason = block.reason || labelForBlockingKind(block.kind);
+      }
+      continue;
+    }
+
+    const bs = block.start_time || DEFAULT_WORK_START;
+    const be = block.end_time || DEFAULT_WORK_END;
+    for (const b of MEASURE_TIME_BLOCKS) {
+      if (blockOverlapsRange(b, bs, be)) unavailableBlocks.add(b);
+    }
+  }
+
   if (blockingKind) {
     MEASURE_TIME_BLOCKS.forEach((b) => unavailableBlocks.add(b));
     return { available: false, workStart, workEnd, unavailableBlocks, reason, blockingKind };
@@ -179,13 +214,14 @@ export function getCrewAvailabilityForWeek(
   crewId: string,
   weekStart: Date,
   rules: AvailabilityRule[],
-  exceptions: AvailabilityException[]
+  exceptions: AvailabilityException[],
+  companyBlocks: CalendarBlock[] = []
 ): Map<string, CrewDayAvailability> {
   const result = new Map<string, CrewDayAvailability>();
   for (let i = 0; i < 7; i++) {
     const day = addDays(weekStart, i);
     const key = format(day, "yyyy-MM-dd");
-    result.set(key, getCrewAvailability(crewId, day, rules, exceptions));
+    result.set(key, getCrewAvailability(crewId, day, rules, exceptions, companyBlocks));
   }
   return result;
 }
@@ -194,13 +230,14 @@ export function getAllCrewsAvailabilityForWeek(
   crewIds: string[],
   weekStart: Date,
   rules: AvailabilityRule[],
-  exceptions: AvailabilityException[]
+  exceptions: AvailabilityException[],
+  companyBlocks: CalendarBlock[] = []
 ): Map<string, Map<string, CrewDayAvailability>> {
   const result = new Map<string, Map<string, CrewDayAvailability>>();
   for (const crewId of crewIds) {
     result.set(
       crewId,
-      getCrewAvailabilityForWeek(crewId, weekStart, rules, exceptions)
+      getCrewAvailabilityForWeek(crewId, weekStart, rules, exceptions, companyBlocks)
     );
   }
   return result;
@@ -230,6 +267,8 @@ export const LABEL_KIND_TEXT: Record<string, string> = {
 
 /** Human label for whatever kind is fully blocking a day (for full-day tiles). */
 export function labelForBlockingKind(kind?: AvailabilityKind): string {
+  if (kind === "holiday") return "Holiday";
+  if (kind === "company_meeting") return "Office Meeting";
   if (kind === "pto") return "PTO";
   if (kind === "late_day") return "Late Day";
   if (kind === "office_day") return "Office";
@@ -338,7 +377,8 @@ export function checkAvailabilityConflict(
   timeBlock: TimeBlock | null,
   timeBlockEnd: TimeBlock | null | undefined,
   rules: AvailabilityRule[],
-  exceptions: AvailabilityException[]
+  exceptions: AvailabilityException[],
+  companyBlocks: CalendarBlock[] = []
 ): AvailabilityConflictInfo | null {
   if (!crewId || !startDate) return null;
 
@@ -353,7 +393,7 @@ export function checkAvailabilityConflict(
   for (let d = 0; d < Math.max(1, durationDays); d++) {
     const day = addDays(start, d);
     const dateStr = format(day, "yyyy-MM-dd");
-    const avail = getCrewAvailability(crewId, day, rules, exceptions);
+    const avail = getCrewAvailability(crewId, day, rules, exceptions, companyBlocks);
 
     // Whole-day block (PTO / Unavailable / all-day Office or Late) blocks every day of the span.
     if (!avail.available) {

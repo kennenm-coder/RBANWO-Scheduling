@@ -69,7 +69,7 @@ export default function CrewLaneWeekView({
 }: Props) {
   const {
     crews, appointments, rforceOrders, timeOffRequests,
-    availabilityRules, availabilityExceptions, activeLinks,
+    availabilityRules, availabilityExceptions, calendarBlocks, activeLinks,
     resourceMappings, dismissals, updateAppointment,
     approveRForce, dismissRForce, exportDates,
   } = useData();
@@ -139,8 +139,8 @@ export default function CrewLaneWeekView({
 
   const crewAvailability = useMemo(() => {
     const crewIds = crews.filter((c) => c.is_active).map((c) => c.id);
-    return getAllCrewsAvailabilityForWeek(crewIds, days[0], availabilityRules, availabilityExceptions);
-  }, [crews, days, availabilityRules, availabilityExceptions]);
+    return getAllCrewsAvailabilityForWeek(crewIds, days[0], availabilityRules, availabilityExceptions, calendarBlocks);
+  }, [crews, days, availabilityRules, availabilityExceptions, calendarBlocks]);
 
   const rforceByDay = useMemo(() => {
     const map = new Map<string, RForceDisplayItem[]>();
@@ -338,7 +338,8 @@ export default function CrewLaneWeekView({
       updateAppointment,
       { id: actorId, name: actorName },
       availabilityRules,
-      availabilityExceptions
+      availabilityExceptions,
+      calendarBlocks
     );
 
     if (result.ok) {

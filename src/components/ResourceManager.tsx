@@ -17,6 +17,7 @@ import {
   Check, HelpCircle,
 } from "lucide-react";
 import AvailabilityEditor from "./AvailabilityEditor";
+import CompanyBlockManager from "./CompanyBlockManager";
 import { summarizeLabelRules } from "@/lib/availability";
 
 const TYPE_ORDER: CrewType[] = [
@@ -203,6 +204,8 @@ export default function ResourceManager() {
 
   return (
     <div className="p-4">
+      <CompanyBlockManager />
+
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-sm font-semibold">All Resources</h3>

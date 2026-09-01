@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getCrewAvailability, isTimeBlockAvailable, checkAvailabilityConflict } from "./availability";
-import { AvailabilityRule, AvailabilityException } from "./types";
+import { AvailabilityRule, AvailabilityException, CalendarBlock } from "./types";
 import { parseISO } from "date-fns";
 
 /** Create a local-timezone Date from YYYY-MM-DD */
@@ -181,6 +181,87 @@ describe("getCrewAvailability", () => {
     expect(result.available).toBe(false);
     expect(result.blockingKind).toBe("pto");
     expect(result.reason).toBe("Vacation");
+  });
+});
+
+function makeBlock(overrides: Partial<CalendarBlock> = {}): CalendarBlock {
+  return {
+    id: "block-1",
+    kind: "holiday",
+    start_date: "2026-08-10",
+    end_date: null,
+    start_time: null,
+    end_time: null,
+    reason: null,
+    is_active: true,
+    created_by: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("getCrewAvailability — company-wide blocks", () => {
+  it("blocks the whole day for every crew on an all-day holiday", () => {
+    const holiday = makeBlock({ reason: "Thanksgiving" });
+    // Same block applies regardless of which crew we ask about.
+    for (const crewId of ["crew-1", "crew-2", "crew-99"]) {
+      const result = getCrewAvailability(crewId, localDate("2026-08-10"), [], [], [holiday]);
+      expect(result.available).toBe(false);
+      expect(result.blockingKind).toBe("holiday");
+      expect(result.reason).toBe("Thanksgiving");
+    }
+  });
+
+  it("uses the kind label when a holiday has no reason", () => {
+    const holiday = makeBlock();
+    const result = getCrewAvailability("crew-1", localDate("2026-08-10"), [], [], [holiday]);
+    expect(result.reason).toBe("Holiday");
+  });
+
+  it("blocks only the overlapping window for a timed all-office meeting", () => {
+    const meeting = makeBlock({
+      kind: "company_meeting",
+      start_time: "10:00",
+      end_time: "11:00",
+      reason: "All-hands",
+    });
+    const result = getCrewAvailability("crew-1", localDate("2026-08-10"), [], [], [meeting]);
+    expect(result.available).toBe(true); // rest of day stays open
+    expect(result.blockingKind).toBeUndefined();
+    expect(result.unavailableBlocks.has("10-12")).toBe(true);
+    expect(result.unavailableBlocks.has("2-4")).toBe(false);
+  });
+
+  it("applies a multi-day closure across its whole range", () => {
+    const closure = makeBlock({
+      start_date: "2026-08-10",
+      end_date: "2026-08-12",
+      reason: "Shutdown",
+    });
+    expect(getCrewAvailability("crew-1", localDate("2026-08-11"), [], [], [closure]).available).toBe(false);
+    // A day outside the range is clear.
+    expect(getCrewAvailability("crew-1", localDate("2026-08-13"), [], [], [closure]).available).toBe(true);
+  });
+
+  it("lets a company holiday win over a coinciding crew PTO", () => {
+    const pto = makeRule({
+      kind: "pto",
+      reason: "Vacation",
+      effective_start: "2026-08-10",
+      effective_end: "2026-08-10",
+    });
+    const holiday = makeBlock({ reason: "Christmas" });
+    const result = getCrewAvailability("crew-1", localDate("2026-08-10"), [pto], [], [holiday]);
+    expect(result.available).toBe(false);
+    expect(result.blockingKind).toBe("holiday");
+    expect(result.reason).toBe("Christmas");
+  });
+
+  it("ignores inactive company blocks", () => {
+    const holiday = makeBlock({ is_active: false });
+    const result = getCrewAvailability("crew-1", localDate("2026-08-10"), [], [], [holiday]);
+    expect(result.available).toBe(true);
   });
 });
 

@@ -261,6 +261,30 @@ CREATE TABLE sched_availability_exceptions (
 CREATE INDEX idx_avail_exceptions_rule ON sched_availability_exceptions(rule_id);
 
 
+-- ── 1.7b  sched_calendar_blocks ──
+-- Company-wide day blocks (holidays, all-office meetings, closures) that apply
+-- to EVERY crew at once. No crew_id — fanned out to all crews at read time in
+-- getCrewAvailability(). Whole-day when start_time/end_time are NULL; a time
+-- window blocks only the overlapping blocks. Multi-day via end_date.
+-- See migration 20260901_001_calendar_blocks.sql.
+
+CREATE TABLE sched_calendar_blocks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind TEXT NOT NULL CHECK (kind IN ('holiday', 'company_meeting')),
+  start_date DATE NOT NULL,
+  end_date DATE,                       -- NULL = single day
+  start_time TIME,                     -- NULL (with end_time NULL) = whole day
+  end_time TIME,
+  reason TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_calendar_blocks_dates ON sched_calendar_blocks(start_date, end_date);
+
+
 -- ── 1.8  sched_geocode_cache ──
 -- One row per unique address, lat/lng from geocoding API.
 
@@ -502,6 +526,12 @@ CREATE POLICY "Authenticated can manage exceptions"
   ON sched_availability_exceptions FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Anon can manage availability exceptions"
   ON sched_availability_exceptions FOR ALL TO anon USING (true) WITH CHECK (true);
+
+ALTER TABLE sched_calendar_blocks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Authenticated can manage calendar blocks"
+  ON sched_calendar_blocks FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Anon can manage calendar blocks"
+  ON sched_calendar_blocks FOR ALL TO anon USING (true) WITH CHECK (true);
 
 -- Resource mappings: authenticated + anon full access
 ALTER TABLE sched_resource_mappings ENABLE ROW LEVEL SECURITY;
