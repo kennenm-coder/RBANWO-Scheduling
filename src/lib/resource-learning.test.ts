@@ -58,16 +58,18 @@ describe("getRForceResource (resource name extraction)", () => {
     expect(getRForceResource(rf)).toBe("Alpha Crew");
   });
 
-  it("falls back to tech_measure_name", () => {
+  it("falls back to tech_measure_name for a Tech Measure order", () => {
     const rf = makeRF({
+      work_order_type: "Tech Measure",
       primary_resource: null,
       tech_measure_name: "Beta Tech",
     });
     expect(getRForceResource(rf)).toBe("Beta Tech");
   });
 
-  it("falls back to installer", () => {
+  it("falls back to installer for an Install order", () => {
     const rf = makeRF({
+      work_order_type: "Install",
       primary_resource: null,
       tech_measure_name: null,
       installer: "Gamma Install",
@@ -75,14 +77,27 @@ describe("getRForceResource (resource name extraction)", () => {
     expect(getRForceResource(rf)).toBe("Gamma Install");
   });
 
-  it("falls back to service_rep", () => {
+  it("falls back to service_rep for a Service order", () => {
     const rf = makeRF({
+      work_order_type: "Service",
       primary_resource: null,
       tech_measure_name: null,
       installer: null,
       service_rep: "Delta Service",
     });
     expect(getRForceResource(rf)).toBe("Delta Service");
+  });
+
+  it("does not attribute an Install to the measure tech when Primary Resource is blank", () => {
+    // Install scheduled in the app before rForce catches up: Primary Resource is
+    // blank and only the earlier measure tech remains in tech_measure_name.
+    const rf = makeRF({
+      work_order_type: "Install",
+      primary_resource: null,
+      tech_measure_name: "Beta Tech",
+      installer: null,
+    });
+    expect(getRForceResource(rf)).toBeNull();
   });
 
   it("returns null when no resource fields set", () => {

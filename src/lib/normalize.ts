@@ -202,20 +202,55 @@ export function firstNamesMatch(
 }
 
 /**
- * Pick the primary resource name from an rForce order.
- * rForce stores the resource in different fields depending on WO type.
+ * Role columns rForce fills per work-order type. Used ONLY as a fallback when
+ * the generic `primary_resource` column is blank — and only for the column that
+ * matches the job's own type. This prevents an install from being attributed to
+ * the measure tech (or vice versa) just because rForce hasn't populated the
+ * Primary Resource field yet: an install scheduled in the app carries a blank
+ * Primary Resource until rForce catches up, and its work order still holds the
+ * earlier measure tech in `tech_measure_name`.
+ */
+function typeMatchedResource(order: {
+  work_order_type?: string | null;
+  tech_measure_name?: string | null;
+  installer?: string | null;
+  service_rep?: string | null;
+}): string | null {
+  switch (normalizeWoType(order.work_order_type)) {
+    case "tech_measure":
+      return order.tech_measure_name || null;
+    case "install":
+    case "lswp":
+    case "hoa":
+    case "paint_stain":
+      return order.installer || null;
+    case "service":
+    case "jip":
+    case "job_site_visit":
+      return order.service_rep || null;
+    default:
+      // Unknown / unrecognized type — only the explicit Primary Resource is
+      // trustworthy; never guess across roles.
+      return null;
+  }
+}
+
+/**
+ * Pick the assigned resource name from an rForce order.
+ *
+ * `primary_resource` — rForce's generic "assigned resource" column — is
+ * authoritative. When it's blank (e.g. a job scheduled in the app that rForce
+ * hasn't caught up to yet) we fall back ONLY to the role column matching the
+ * work-order type, never across roles. A blank result means "rForce hasn't
+ * assigned this yet", which callers treat as non-comparable (no mismatch) —
+ * NOT as an assignment to whoever happens to sit in another role's column.
  */
 export function getRForceResource(order: {
+  work_order_type?: string | null;
   primary_resource?: string | null;
   tech_measure_name?: string | null;
   installer?: string | null;
   service_rep?: string | null;
 }): string | null {
-  return (
-    order.primary_resource ||
-    order.tech_measure_name ||
-    order.installer ||
-    order.service_rep ||
-    null
-  );
+  return order.primary_resource || typeMatchedResource(order) || null;
 }

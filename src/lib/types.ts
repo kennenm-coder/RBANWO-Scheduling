@@ -502,7 +502,7 @@ export interface QueueItem {
   normalizedWoType: string;        // Our AppointmentType key or "unknown"
   sourceWoType: string;            // Original rForce work_order_type string
   effectiveDate?: string;          // YYYY-MM-DD: rForce date for rForce items, app date for app items
-  assignedResource?: string;       // primary_resource / tech_measure_name / installer / service_rep
+  assignedResource?: string;       // rForce Primary Resource, else the role column matching the WO type (see getRForceResource)
   city: string;
   state: string;
   zip: string;

@@ -17,7 +17,7 @@ import type {
   RForceOrder,
   ResourceMapping,
 } from "./types";
-import { normalizeWoTypeOrUnknown, isNotSchedulable, isNonFieldWork } from "./normalize";
+import { normalizeWoTypeOrUnknown, isNotSchedulable, isNonFieldWork, getRForceResource } from "./normalize";
 import { typeLabel } from "./calendar-utils";
 import { deriveRForceCalendarStatus } from "./rforce-calendar-status";
 
@@ -45,7 +45,7 @@ function enrichItem(
       : appt?.appointment_type || "unknown",
     sourceWoType,
     effectiveDate: rf?.scheduled_start?.slice(0, 10) || appt?.scheduled_date || undefined,
-    assignedResource: rf?.primary_resource || rf?.tech_measure_name || rf?.installer || rf?.service_rep || undefined,
+    assignedResource: rf ? getRForceResource(rf) ?? undefined : undefined,
     ...addressParts,
     orderStatus: rf?.order_status || undefined,
     woStatus: rf?.wo_status || undefined,

@@ -189,10 +189,36 @@ describe("getRForceResource", () => {
     })).toBe("Sam Mormon");
   });
 
-  it("falls back through the chain", () => {
-    expect(getRForceResource({ tech_measure_name: "Ryan" })).toBe("Ryan");
-    expect(getRForceResource({ installer: "Keith" })).toBe("Keith");
-    expect(getRForceResource({ service_rep: "Matt" })).toBe("Matt");
+  it("falls back only to the column matching the WO type when Primary Resource is blank", () => {
+    expect(getRForceResource({ work_order_type: "Tech Measure", tech_measure_name: "Ryan" })).toBe("Ryan");
+    expect(getRForceResource({ work_order_type: "Install", installer: "Keith" })).toBe("Keith");
+    expect(getRForceResource({ work_order_type: "Service", service_rep: "Matt" })).toBe("Matt");
+    expect(getRForceResource({ work_order_type: "JIP", service_rep: "Matt" })).toBe("Matt");
+    expect(getRForceResource({ work_order_type: "LSWP", installer: "Keith" })).toBe("Keith");
+  });
+
+  it("does NOT cross roles: an install with only a measure tech is unassigned, not the measure tech", () => {
+    // The core bug: an install scheduled in the app before rForce catches up
+    // has a blank Primary Resource but still carries the earlier measure tech in
+    // tech_measure_name. That must NOT be treated as the install's resource.
+    expect(
+      getRForceResource({
+        work_order_type: "Install",
+        primary_resource: null,
+        tech_measure_name: "Ryan Measure",
+        installer: null,
+      })
+    ).toBeNull();
+  });
+
+  it("prefers Primary Resource over the type-matched column", () => {
+    expect(
+      getRForceResource({ work_order_type: "Install", primary_resource: "Sam", installer: "Keith" })
+    ).toBe("Sam");
+  });
+
+  it("returns null for an unrecognized type with only role columns set", () => {
+    expect(getRForceResource({ work_order_type: "Mystery", installer: "Keith" })).toBeNull();
   });
 
   it("returns null when all fields are missing", () => {
