@@ -5,6 +5,7 @@ import AuthProvider from "@/components/AuthProvider";
 import RequireAuth from "@/components/RequireAuth";
 import BottomNav from "@/components/BottomNav";
 import ToastProvider from "@/components/Toast";
+import UpdatePrompt from "@/components/UpdatePrompt";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -72,6 +73,7 @@ export default function RootLayout({
                   {children}
                 </main>
                 <BottomNav />
+                <UpdatePrompt />
               </ToastProvider>
             </DataProvider>
           </RequireAuth>

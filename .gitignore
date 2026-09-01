@@ -15,6 +15,9 @@
 /.next/
 /out/
 
+# generated per-deploy version stamp (see scripts/gen-version.mjs)
+/public/version.json
+
 # production
 /build
 
