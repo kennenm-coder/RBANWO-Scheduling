@@ -136,7 +136,7 @@ export function useData(): DataContextValue {
 }
 
 export default function DataProvider({ children }: { children: ReactNode }) {
-  const { user, displayName } = useAuth();
+  const { user, displayName, status } = useAuth();
   const [crews, setCrews] = useState<Crew[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [unscheduledAppointments, setUnscheduledAppointments] = useState<Appointment[]>([]);
@@ -155,6 +155,12 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const loadedRangeRef = useRef<{ start: string; end: string } | null>(null);
   const lastResyncRef = useRef(0);
+  // Latest auth status, readable inside the focus/wake resync without
+  // re-subscribing its listeners on every token refresh.
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const loadData = useCallback(async () => {
     try {
@@ -233,7 +239,14 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         loadedRangeRef.current = { start: newStart, end: newEnd };
         fetchAppointments(newStart, newEnd)
           .then((a) => {
-            setAppointments(a);
+            // A 0-row result here is almost always a transient auth/RLS blip
+            // (e.g. a token refresh in flight), not a genuinely empty window —
+            // and an empty result would blank the board, flipping every tile to
+            // "unconfirmed". Never let an empty refetch overwrite tiles we
+            // already hold; real deletes still arrive via the realtime channel.
+            // (The view is date-filtered, so keeping the prior range's tiles in
+            // state is harmless when the new range really is empty.)
+            setAppointments((prev) => (a.length === 0 && prev.length > 0 ? prev : a));
           })
           .catch((err) => {
             // Never wipe the calendar on a failed refetch. Keep the tiles we
@@ -295,13 +308,28 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const RESYNC_MIN_INTERVAL_MS = 30_000;
     const resync = () => {
       if (typeof document !== "undefined" && document.hidden) return;
+      // Only backfill when we hold a live authenticated session. A resync fired
+      // mid-token-rotation would run under the anon role and RLS would hand back
+      // zero rows as a success — silently blanking the board. Skip it instead.
+      if (statusRef.current !== "authed") return;
       const range = loadedRangeRef.current;
       if (!range) return;
       const now = Date.now();
       if (now - lastResyncRef.current < RESYNC_MIN_INTERVAL_MS) return;
       lastResyncRef.current = now;
       fetchAppointments(range.start, range.end)
-        .then((a) => setAppointments(a))
+        .then((a) => {
+          // Belt-and-suspenders with the auth gate above: never let an empty
+          // refetch overwrite a populated board. Real deletions come through
+          // the realtime channel, not this backfill.
+          setAppointments((prev) => {
+            if (a.length === 0 && prev.length > 0) {
+              lastResyncRef.current = 0; // allow an immediate retry next focus
+              return prev;
+            }
+            return a;
+          });
+        })
         .catch((err) => {
           console.error("Focus resync failed (keeping current tiles):", err);
           lastResyncRef.current = 0; // allow an immediate retry next focus
