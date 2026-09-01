@@ -77,6 +77,7 @@ export default function ScheduleModal({
     timeOffRequests,
     availabilityRules,
     availabilityExceptions,
+    calendarBlocks,
     createAppointment,
     updateAppointment,
   } = useData();
@@ -346,7 +347,8 @@ export default function ScheduleModal({
         resolvedBlock,
         editingAppointment?.time_block_end ?? null,
         availabilityRules,
-        availabilityExceptions
+        availabilityExceptions,
+        calendarBlocks
       );
       if (block) {
         const crewName = selectedCrew?.name || "This crew";
@@ -412,7 +414,8 @@ export default function ScheduleModal({
           updateAppointment,
           { id: actorId, name: actorName },
           availabilityRules,
-          availabilityExceptions
+          availabilityExceptions,
+          calendarBlocks
         );
         if (!moveResult.ok) {
           // Offer an intentional-overlap override rather than a dead-end error.

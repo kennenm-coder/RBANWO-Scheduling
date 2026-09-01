@@ -291,7 +291,34 @@ export type AvailabilityKind =
   | "role_assignment"
   | "block"
   | "late_day"
-  | "office_day";
+  | "office_day"
+  // Company-wide blocks (from sched_calendar_blocks). Not stored on
+  // sched_availability_rules — these only ever appear as the resolved
+  // blockingKind on a day's availability so the calendar can label them.
+  | "holiday"
+  | "company_meeting";
+
+/**
+ * A company-wide day block that applies to EVERY crew at once — a holiday, an
+ * all-office meeting, or a multi-day closure. Fanned out to each crew at read
+ * time in getCrewAvailability(). Whole-day when start_time/end_time are null; a
+ * time window blocks only the overlapping blocks. Multi-day via end_date.
+ */
+export type CalendarBlockKind = "holiday" | "company_meeting";
+
+export interface CalendarBlock {
+  id: string;
+  kind: CalendarBlockKind;
+  start_date: string;
+  end_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  reason: string | null;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface AvailabilityRule {
   id: string;

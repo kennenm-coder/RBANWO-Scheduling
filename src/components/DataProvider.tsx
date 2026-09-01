@@ -16,6 +16,7 @@ import {
   TimeOffRequest,
   AvailabilityRule,
   AvailabilityException,
+  CalendarBlock,
   AppointmentLink,
   ResourceMapping,
   RForceDismissal,
@@ -29,6 +30,9 @@ import {
   fetchRForceOrders,
   fetchTimeOffRequests,
   fetchAvailabilityRules,
+  fetchCalendarBlocks,
+  upsertCalendarBlock as upsertCalendarBlockInDb,
+  deleteCalendarBlock as deleteCalendarBlockInDb,
   fetchActiveLinks,
   fetchResourceMappings,
   fetchDismissals,
@@ -67,6 +71,7 @@ interface DataContextValue {
   timeOffRequests: TimeOffRequest[];
   availabilityRules: AvailabilityRule[];
   availabilityExceptions: AvailabilityException[];
+  calendarBlocks: CalendarBlock[];
   activeLinks: AppointmentLink[];
   resourceMappings: ResourceMapping[];
   dismissals: RForceDismissal[];
@@ -125,6 +130,10 @@ interface DataContextValue {
   addTimeOff: (req: Omit<TimeOffRequest, "id" | "created_at">) => Promise<TimeOffRequest | null>;
   updateTimeOff: (id: string, updates: Partial<Omit<TimeOffRequest, "id" | "created_at">>) => Promise<TimeOffRequest | null>;
   removeTimeOff: (id: string) => Promise<void>;
+  saveCalendarBlock: (
+    block: Partial<CalendarBlock> & { kind: CalendarBlock["kind"]; start_date: string }
+  ) => Promise<CalendarBlock | null>;
+  removeCalendarBlock: (id: string) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -144,6 +153,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const [availabilityRules, setAvailabilityRules] = useState<AvailabilityRule[]>([]);
   const [availabilityExceptions, setAvailabilityExceptions] = useState<AvailabilityException[]>([]);
+  const [calendarBlocks, setCalendarBlocks] = useState<CalendarBlock[]>([]);
   const [activeLinks, setActiveLinks] = useState<AppointmentLink[]>([]);
   const [resourceMappings, setResourceMappings] = useState<ResourceMapping[]>([]);
   const [dismissals, setDismissals] = useState<RForceDismissal[]>([]);
@@ -168,12 +178,13 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const start = format(subDays(today, 30), "yyyy-MM-dd");
       const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-      const [c, a, r, t, av, links, rm, dism, flagRes, matchRej, unsched, schedWos, runDates] = await Promise.all([
+      const [c, a, r, t, av, cb, links, rm, dism, flagRes, matchRej, unsched, schedWos, runDates] = await Promise.all([
         fetchCrews(),
         fetchAppointments(start, end),
         fetchRForceOrders(),
         fetchTimeOffRequests(),
         fetchAvailabilityRules(),
+        fetchCalendarBlocks(),
         fetchActiveLinks(),
         fetchResourceMappings(),
         fetchDismissals(),
@@ -211,6 +222,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setTimeOffRequests(t);
       setAvailabilityRules(av.rules);
       setAvailabilityExceptions(av.exceptions);
+      setCalendarBlocks(cb);
       setActiveLinks(links);
       setResourceMappings(rm);
       setDismissals(dism);
@@ -467,6 +479,35 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handleSaveCalendarBlock = useCallback(
+    async (
+      block: Partial<CalendarBlock> & { kind: CalendarBlock["kind"]; start_date: string }
+    ) => {
+      const result = await upsertCalendarBlockInDb(block);
+      if (result) {
+        setCalendarBlocks((prev) => {
+          const existing = prev.findIndex((b) => b.id === result.id);
+          if (existing >= 0) {
+            const next = [...prev];
+            next[existing] = result;
+            return next;
+          }
+          return [...prev, result];
+        });
+      }
+      return result;
+    },
+    []
+  );
+
+  const handleRemoveCalendarBlock = useCallback(
+    async (id: string) => {
+      await deleteCalendarBlockInDb(id);
+      setCalendarBlocks((prev) => prev.filter((b) => b.id !== id));
+    },
+    []
+  );
+
   const handleApproveRForce = useCallback(
     async (
       rforceOrder: RForceOrder,
@@ -579,6 +620,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         timeOffRequests,
         availabilityRules,
         availabilityExceptions,
+        calendarBlocks,
         activeLinks,
         resourceMappings,
         dismissals,
@@ -604,6 +646,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         addTimeOff: handleAddTimeOff,
         updateTimeOff: handleUpdateTimeOff,
         removeTimeOff: handleRemoveTimeOff,
+        saveCalendarBlock: handleSaveCalendarBlock,
+        removeCalendarBlock: handleRemoveCalendarBlock,
       }}
     >
       {children}

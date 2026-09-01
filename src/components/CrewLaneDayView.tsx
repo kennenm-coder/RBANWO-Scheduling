@@ -17,6 +17,7 @@ import {
   AppointmentType,
   AvailabilityRule,
   AvailabilityException,
+  CalendarBlock,
   RForceDisplayItem,
 } from "@/lib/types";
 import {
@@ -62,7 +63,7 @@ export default function CrewLaneDayView({
 }: Props) {
   const {
     crews, appointments, rforceOrders, timeOffRequests,
-    availabilityRules, availabilityExceptions, activeLinks,
+    availabilityRules, availabilityExceptions, calendarBlocks, activeLinks,
     resourceMappings, dismissals, approveRForce, dismissRForce,
     updateAppointment, exportDates,
   } = useData();
@@ -217,7 +218,8 @@ export default function CrewLaneDayView({
       updateAppointment,
       { id: actorId, name: actorName },
       availabilityRules,
-      availabilityExceptions
+      availabilityExceptions,
+      calendarBlocks
     );
 
     if (result.ok) {
@@ -275,6 +277,7 @@ export default function CrewLaneDayView({
             isCrewOff={isCrewOff}
             availabilityRules={availabilityRules}
             availabilityExceptions={availabilityExceptions}
+            calendarBlocks={calendarBlocks}
             onCardClick={setSelectedAppt}
             onCellClick={(crewId, block) =>
               setScheduleTarget({ crewId, block })
@@ -454,6 +457,7 @@ function CrewSection({
   isCrewOff,
   availabilityRules,
   availabilityExceptions,
+  calendarBlocks,
   showRForce,
   onCardClick,
   onCellClick,
@@ -473,6 +477,7 @@ function CrewSection({
   isCrewOff: (crew: Crew) => boolean;
   availabilityRules: AvailabilityRule[];
   availabilityExceptions: AvailabilityException[];
+  calendarBlocks: CalendarBlock[];
   showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
@@ -579,7 +584,7 @@ function CrewSection({
               const crewRForceVisible = crewItems.filter((r) =>
                 r.displayMode === "regular" || r.displayMode === "synced"
               );
-              const avail = getCrewAvailability(crew.id, date, availabilityRules, availabilityExceptions);
+              const avail = getCrewAvailability(crew.id, date, availabilityRules, availabilityExceptions, calendarBlocks);
               const crewUnavailable = !avail.available;
               // PTO (external time off) wins over Late/Office tags, and a full-day
               // Office/Late block is already conveyed by the row's reason line — so

@@ -136,7 +136,7 @@ function matchesSearch(flag: SchedulingFlag, query: string, appointments: Appoin
 }
 
 export default function IssueCenter({ onClose, onNavigate }: Props) {
-  const { appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions, resolveFlag, unresolveFlag } = useData();
+  const { appointments, crews, rforceOrders, timeOffRequests, activeLinks, flagResolutions, availabilityRules, availabilityExceptions, calendarBlocks, resolveFlag, unresolveFlag } = useData();
   useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [showWaiting, setShowWaiting] = useState(true);
   const [showResolved, setShowResolved] = useState(false);
@@ -145,8 +145,8 @@ export default function IssueCenter({ onClose, onNavigate }: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
 
   const rawFlags = useMemo(
-    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions),
-    [appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions]
+    () => detectFlags(appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions, undefined, calendarBlocks),
+    [appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions, calendarBlocks]
   );
 
   const resolvedKeys = useMemo(() => {

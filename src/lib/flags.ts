@@ -17,6 +17,7 @@ import {
   AppointmentLink,
   AvailabilityRule,
   AvailabilityException,
+  CalendarBlock,
   Crew,
   RForceOrder,
   ResourceMapping,
@@ -88,7 +89,8 @@ function detectLiveAppFlags(
   crews: Crew[],
   timeOffRequests: TimeOffRequest[],
   availabilityRules?: AvailabilityRule[],
-  availabilityExceptions?: AvailabilityException[]
+  availabilityExceptions?: AvailabilityException[],
+  calendarBlocks?: CalendarBlock[]
 ): SchedulingFlag[] {
   const flags: SchedulingFlag[] = [];
   const active = appointments.filter(
@@ -233,13 +235,17 @@ function detectLiveAppFlags(
 
     // ── Availability conflict (crew scheduled during PTO/block rule) ──
     // Skipped when the scheduler knowingly booked over the block (override flow).
-    if (availabilityRules && availabilityRules.length > 0 && appt.time_block && !appt.allow_availability_conflict) {
+    const hasAvailabilityData =
+      (availabilityRules && availabilityRules.length > 0) ||
+      (calendarBlocks && calendarBlocks.length > 0);
+    if (hasAvailabilityData && appt.time_block && !appt.allow_availability_conflict) {
       const date = parseISO(appt.scheduled_date);
       const dayAvail = getCrewAvailability(
         appt.crew_id,
         date,
-        availabilityRules,
-        availabilityExceptions || []
+        availabilityRules || [],
+        availabilityExceptions || [],
+        calendarBlocks || []
       );
       if (!dayAvail.available) {
         flags.push(
@@ -534,9 +540,10 @@ export function detectFlags(
   activeLinks?: AppointmentLink[],
   availabilityRules?: AvailabilityRule[],
   availabilityExceptions?: AvailabilityException[],
-  _resourceMappings?: ResourceMapping[]
+  _resourceMappings?: ResourceMapping[],
+  calendarBlocks?: CalendarBlock[]
 ): SchedulingFlag[] {
-  const liveFlags = detectLiveAppFlags(appointments, crews, timeOffRequests, availabilityRules, availabilityExceptions);
+  const liveFlags = detectLiveAppFlags(appointments, crews, timeOffRequests, availabilityRules, availabilityExceptions, calendarBlocks);
   const externalFlags = detectExternalFlags(appointments, crews, rforceOrders);
   const workflowFlags = activeLinks
     ? detectWorkflowFlags(appointments, activeLinks)

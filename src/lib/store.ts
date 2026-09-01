@@ -10,6 +10,7 @@ import {
   AppointmentEvent,
   AvailabilityRule,
   AvailabilityException,
+  CalendarBlock,
   AppointmentLink,
   ResourceMapping,
   RForceDismissal,
@@ -759,6 +760,43 @@ export async function deleteAvailabilityException(id: string): Promise<void> {
     .from("sched_availability_exceptions")
     .delete()
     .eq("id", id);
+  if (error) throw error;
+}
+
+// ── Company-Wide Calendar Blocks ──
+
+export async function fetchCalendarBlocks(): Promise<CalendarBlock[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data } = await sb
+    .from("sched_calendar_blocks")
+    .select("*")
+    .eq("is_active", true)
+    .order("start_date", { ascending: true });
+  return (data as CalendarBlock[]) ?? [];
+}
+
+export async function upsertCalendarBlock(
+  block: Partial<CalendarBlock> & {
+    kind: CalendarBlock["kind"];
+    start_date: string;
+  }
+): Promise<CalendarBlock | null> {
+  const sb = requireSupabase();
+  const payload = { ...block, updated_at: new Date().toISOString() };
+  const { data, error } = await sb
+    .from("sched_calendar_blocks")
+    .upsert(payload)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as CalendarBlock | null;
+}
+
+export async function deleteCalendarBlock(id: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb.from("sched_calendar_blocks").delete().eq("id", id);
   if (error) throw error;
 }
 
