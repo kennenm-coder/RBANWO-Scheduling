@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useData } from "./DataProvider";
-import { fetchCsvImports } from "@/lib/import-boundary";
-import { CsvImport } from "@/lib/types";
 import {
   RefreshCw,
   Database,
@@ -15,14 +13,17 @@ import {
 } from "lucide-react";
 
 /**
- * Staleness thresholds (in minutes).
+ * Staleness thresholds.
  * - Page data older than WARN_MINUTES shows a yellow warning.
  * - Page data older than STALE_MINUTES shows a red alert with auto-refresh prompt.
- * - rForce import older than IMPORT_WARN_HOURS shows a note about stale external data.
+ * - The rForce daily full export runs ~once a day. If the newest observed export
+ *   date is EXPORT_WARN_DAYS or more calendar days old, note that the daily feed
+ *   may have stopped. (This tracks the Power Automate daily export via
+ *   sched_import_runs / `exportDates`, NOT the legacy manual-CSV-upload table.)
  */
 const WARN_MINUTES = 15;
 const STALE_MINUTES = 30;
-const IMPORT_WARN_HOURS = 24;
+const EXPORT_WARN_DAYS = 2;
 
 function timeAgo(dateStr: string): string {
   const now = Date.now();
@@ -47,11 +48,37 @@ function formatTimestamp(dateStr: string): string {
   });
 }
 
+/** Whole calendar days between a `YYYY-MM-DD` date and today (local). */
+function daysSinceDate(ymd: string): number {
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return 0;
+  const then = new Date(y, m - 1, d);
+  const nowDate = new Date();
+  const today = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
+  return Math.round((today.getTime() - then.getTime()) / 86_400_000);
+}
+
+/** Human label for a `YYYY-MM-DD` export date relative to today. */
+function exportDayLabel(ymd: string): string {
+  const days = daysSinceDate(ymd);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
+}
+
+/** Pretty `YYYY-MM-DD` → e.g. "Sep 2" without touching timezones. */
+function formatExportDate(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return ymd;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export default function FreshnessIndicator() {
-  const { connected, rforceOrders, loading, refreshData } = useData();
+  const { connected, rforceOrders, exportDates, loading, refreshData } = useData();
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-  const [lastImport, setLastImport] = useState<CsvImport | null>(null);
-  const [importLoading, setImportLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -68,25 +95,6 @@ export default function FreshnessIndicator() {
       setLastRefresh(new Date());
     }
   }, [loading]);
-
-  // Fetch last CSV import
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const imports = await fetchCsvImports();
-        if (!cancelled && imports.length > 0) {
-          setLastImport(imports[0]);
-        }
-      } catch {
-        // Silently fail — indicator just won't show import info
-      } finally {
-        if (!cancelled) setImportLoading(false);
-      }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, [now]); // Re-check periodically
 
   // Compute most recent rForce update from in-memory data
   const lastRForceUpdate = useMemo(() => {
@@ -105,11 +113,14 @@ export default function FreshnessIndicator() {
   const isWarn = minutesSinceRefresh >= WARN_MINUTES;
   const isStale = minutesSinceRefresh >= STALE_MINUTES;
 
-  const importAgeHours = lastImport
-    ? (now - new Date(lastImport.imported_at).getTime()) / 3_600_000
-    : null;
-  const importStale =
-    importAgeHours !== null && importAgeHours > IMPORT_WARN_HOURS;
+  // Newest observed daily-export date (`YYYY-MM-DD`, newest first). This is the
+  // real rForce feed — Power Automate writes work_orders directly and the app
+  // logs each daily export it sees (sched_import_runs). The 30s `now` tick
+  // re-renders this, so the day count re-derives after midnight.
+  const latestExportDate = exportDates.length > 0 ? exportDates[0] : null;
+  const exportAgeDays = latestExportDate ? daysSinceDate(latestExportDate) : null;
+  const exportStale =
+    exportAgeDays !== null && exportAgeDays >= EXPORT_WARN_DAYS;
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -202,33 +213,32 @@ export default function FreshnessIndicator() {
               </div>
             </div>
 
-            {/* rForce import freshness */}
+            {/* rForce daily-export freshness (Power Automate feed) */}
             <div className="flex items-start gap-2">
-              {importStale ? (
+              {exportStale ? (
                 <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
               ) : (
                 <Database size={14} className="text-muted shrink-0 mt-0.5" />
               )}
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-medium">
-                  rForce Import
+                  Daily rForce Export
                 </div>
-                {importLoading ? (
-                  <div className="text-[11px] text-muted">Checking...</div>
-                ) : lastImport ? (
+                {latestExportDate ? (
                   <div className="text-[11px] text-muted">
-                    {formatTimestamp(lastImport.imported_at)}
+                    {formatExportDate(latestExportDate)}
                     {" · "}
-                    {timeAgo(lastImport.imported_at)}
-                    {lastImport.source === "power_automate" ? " (auto)" : " (manual)"}
-                    {importStale && (
+                    {exportDayLabel(latestExportDate)}
+                    {exportStale && (
                       <span className="text-amber-500 font-medium block">
-                        No import in {Math.floor(importAgeHours!)}h — data may be outdated
+                        No full export in {exportAgeDays} days — daily feed may have stopped
                       </span>
                     )}
                   </div>
                 ) : (
-                  <div className="text-[11px] text-muted">No imports found</div>
+                  <div className="text-[11px] text-muted">
+                    No export observed yet today
+                  </div>
                 )}
               </div>
             </div>
@@ -267,7 +277,7 @@ export default function FreshnessIndicator() {
             <div className="text-[10px] text-muted/60 text-center">
               Appointment changes sync in real time.
               <br />
-              rForce data updates on import.
+              rForce data refreshes on the daily export.
             </div>
           </div>
         </>
