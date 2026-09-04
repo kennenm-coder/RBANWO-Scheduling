@@ -122,7 +122,7 @@ export default function CalendarHeader({
   }
 
   return (
-    <header className="bg-background border-b border-border px-3 py-2 flex items-center gap-2 sticky top-0 z-30">
+    <header className="bg-background border-b border-border px-3 py-2 flex items-center gap-2 sticky top-0 z-50">
       <div className="flex items-center gap-1 shrink-0">
         {/* Jump-to-date: opens native date picker */}
         <div className="relative">
