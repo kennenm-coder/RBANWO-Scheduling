@@ -33,6 +33,11 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const router = useRouter();
   const onLogin = pathname === "/login";
+  // The password-reset page must render for anyone, regardless of session/role:
+  // it's reached while signed out, and after verifying the emailed code it
+  // establishes a session (possibly for a user without a scheduling role) that
+  // must still be able to set a new password.
+  const isAuthRoute = onLogin || pathname === "/forgot-password";
 
   // The auth decision depends on client-only state (session + localhost dev
   // bypass). Render the server-matched spinner until mounted to avoid a
@@ -41,10 +46,13 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
-    if (mounted && status === "unauthed" && !onLogin) router.replace("/login");
-  }, [mounted, status, onLogin, router]);
+    if (mounted && status === "unauthed" && !isAuthRoute) router.replace("/login");
+  }, [mounted, status, isAuthRoute, router]);
 
   if (!mounted) return <Spinner />;
+
+  // Password-reset routes bypass the access gate entirely.
+  if (isAuthRoute) return <>{children}</>;
 
   if (hasAccess) return <>{children}</>;
 
