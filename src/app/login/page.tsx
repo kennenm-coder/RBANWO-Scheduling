@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
 import { fetchAllowlist, hasSchedulingAccess } from "@/lib/auth";
@@ -411,6 +412,17 @@ export default function LoginPage() {
                     ? "Signing in…"
                     : "Sign In"}
             </button>
+
+            {mode === "sign-in" && (
+              <p className="text-center">
+                <Link
+                  href="/forgot-password"
+                  className="text-sm text-muted hover:text-foreground"
+                >
+                  Forgot password?
+                </Link>
+              </p>
+            )}
 
             <p className="text-sm text-center text-muted">
               {mode === "sign-in" ? (
