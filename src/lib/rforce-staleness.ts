@@ -65,6 +65,19 @@ export const MIN_FULL_EXPORT_SIZE = 100;
 
 export type DropTier = "present" | "possible_cancel" | "likely_cancel";
 
+// ── The reverse direction: app-scheduled work rForce hasn't caught up to ──
+//
+// A tile booked in the app before rForce reflects it is normal — the scheduler
+// just hasn't entered it in rForce yet. It only becomes a problem once a daily
+// export has run *since the booking* and rForce still doesn't have it.
+//   • 0 exports since booking → "pending"  (neutral hint; not counted as urgent)
+//   • 1+ exports since booking → "overdue" (amber "Not in rForce"; counted)
+
+/** Daily exports since an app booking before it's flagged "Not in rForce". */
+export const MISSED_EXPORTS_FOR_NOT_IN_RFORCE = 1;
+
+export type AwaitingTier = "pending" | "overdue";
+
 /**
  * How many observed daily exports ran *after* this order was last seen. Because
  * each daily export overwrites `updated_at`, an order's `updated_at` date is the

@@ -4,8 +4,15 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import { fetchScheduledWorkOrderNumbers } from "@/lib/store";
-import { deriveIssues, deriveDroppedTiles, type SchedulingIssue, type DroppedTileIssue } from "@/lib/issues";
-import { Loader2, AlertTriangle, ArrowRightLeft, Search, MapPin, CheckCheck, X, Ban, Check, ExternalLink } from "lucide-react";
+import {
+  deriveIssues,
+  deriveDroppedTiles,
+  deriveAwaitingRForce,
+  type SchedulingIssue,
+  type DroppedTileIssue,
+  type AwaitingRForceIssue,
+} from "@/lib/issues";
+import { Loader2, AlertTriangle, ArrowRightLeft, Search, MapPin, CheckCheck, X, Ban, Check, ExternalLink, Clock } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
 /**
@@ -14,8 +21,14 @@ import { format, parseISO } from "date-fns";
  *  - schedule_differs: a tile exists but its day, time, or crew disagree.
  *  - under_scheduled: a multi-day job booked for fewer days (duration only).
  *  - review_cancellation: a tile whose rForce order silently dropped from imports.
+ *  - pending_rforce : a tile booked here that rForce doesn't reflect yet.
  */
-type IssueCategory = "not_scheduled" | "schedule_differs" | "under_scheduled" | "review_cancellation";
+type IssueCategory =
+  | "not_scheduled"
+  | "schedule_differs"
+  | "under_scheduled"
+  | "review_cancellation"
+  | "pending_rforce";
 
 function issueCategory(i: SchedulingIssue): IssueCategory {
   if (i.type === "missing") return "not_scheduled";
@@ -41,6 +54,10 @@ const CATEGORY_META: Record<IssueCategory, { label: string; desc: string }> = {
   review_cancellation: {
     label: "Dropped from rForce",
     desc: "A scheduled tile whose rForce order stopped appearing in imports — likely cancelled or rescheduled. Review it.",
+  },
+  pending_rforce: {
+    label: "Not in rForce",
+    desc: "Booked here but rForce doesn't have it yet. Grey = no import has run since; amber = an import ran and it's still missing — enter it in rForce.",
   },
 };
 
@@ -99,6 +116,8 @@ function IssueRow({
                 schedule_differs: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
                 under_scheduled: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
                 review_cancellation: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+                // Never reached for a SchedulingIssue; AwaitingRow renders its own tiered badge.
+                pending_rforce: "bg-muted/20 text-muted",
               };
               return (
                 <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${style[cat]}`}>
@@ -259,6 +278,99 @@ function DroppedRow({
   );
 }
 
+function AwaitingRow({
+  issue,
+  onClick,
+  onDismiss,
+  busy,
+}: {
+  issue: AwaitingRForceIssue;
+  onClick: () => void;
+  onDismiss: () => void;
+  busy?: boolean;
+}) {
+  const city = parseCity(issue.address);
+  const overdue = issue.tier === "overdue";
+  const rforceUrl = issue.appointment.salesforce_url;
+  const exportsLabel =
+    issue.missedExports === 1 ? "1 import" : `${issue.missedExports} imports`;
+
+  return (
+    <div className="relative border-b border-border hover:bg-muted/10 transition-colors">
+      <button onClick={onClick} className={`w-full text-left px-4 py-3 ${overdue ? "pb-12" : ""}`}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="font-mono text-xs text-muted">{issue.woNumber}</span>
+              {overdue ? (
+                <span className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                  <Clock size={9} />
+                  Not in rForce
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-muted/20 text-muted">
+                  <Clock size={9} />
+                  Pending rForce
+                </span>
+              )}
+            </div>
+            <div className="font-medium text-sm truncate">{issue.customerName}</div>
+            {city && (
+              <div className="flex items-center gap-1 text-xs text-muted mt-0.5">
+                <MapPin size={10} />
+                <span className="truncate">{city}</span>
+              </div>
+            )}
+          </div>
+          <div className="text-right text-xs shrink-0">
+            <div className="text-muted text-[10px]">Booked</div>
+            <div>{formatDate(issue.scheduledDate)}</div>
+            {issue.appointment.start_time && (
+              <div className="text-muted">{formatTime(issue.appointment.start_time.slice(0, 5))}</div>
+            )}
+          </div>
+        </div>
+        <div className={`mt-1 text-[11px] ${overdue ? "text-amber-700 dark:text-amber-300" : "text-muted"}`}>
+          {overdue
+            ? `${exportsLabel} since booking and rForce still doesn't have it — enter it in rForce.`
+            : issue.reason === "not_in_rforce"
+              ? "No rForce work order yet — normal right after booking."
+              : "rForce still shows the earlier phase of this work order — normal right after booking."}
+        </div>
+      </button>
+      {overdue && (
+        <div className="absolute bottom-2 right-3 flex items-center gap-1.5">
+          {rforceUrl && (
+            <a
+              href={rforceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title="Open this work order in rForce to enter it"
+              className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-muted/20 hover:text-foreground"
+            >
+              <ExternalLink size={11} />
+              Open rForce
+            </a>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDismiss();
+            }}
+            disabled={busy}
+            title="This job won't be entered in rForce — stop flagging it"
+            className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-muted/20 hover:text-foreground disabled:opacity-50"
+          >
+            <X size={11} />
+            {busy ? "Dismissing…" : "Dismiss"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function IssuesPage() {
   const {
     loading,
@@ -319,6 +431,13 @@ export default function IssuesPage() {
     [appointments, rforceOrders, dismissals, exportDates]
   );
 
+  // Tiles booked here that rForce doesn't reflect yet (pending → overdue once
+  // an import has run and it's still missing). Own shape, tracked separately.
+  const awaiting = useMemo(
+    () => deriveAwaitingRForce(appointments, rforceOrders, dismissals, exportDates),
+    [appointments, rforceOrders, dismissals, exportDates]
+  );
+
   const missingCount = allIssues.filter((i) => i.type === "missing").length;
   const categoryCounts = useMemo(() => {
     const c: Record<IssueCategory, number> = {
@@ -326,12 +445,13 @@ export default function IssuesPage() {
       schedule_differs: 0,
       under_scheduled: 0,
       review_cancellation: droppedTiles.length,
+      pending_rforce: awaiting.length,
     };
     for (const i of allIssues) c[issueCategory(i)]++;
     return c;
-  }, [allIssues, droppedTiles]);
+  }, [allIssues, droppedTiles, awaiting]);
 
-  const totalCount = allIssues.length + droppedTiles.length;
+  const totalCount = allIssues.length + droppedTiles.length + awaiting.length;
 
   // Missing issues that can be auto-placed (resource maps to a crew).
   const approvable = useMemo(
@@ -437,6 +557,40 @@ export default function IssuesPage() {
     }
     return list;
   }, [droppedTiles, typeFilter, search]);
+
+  // Awaiting-rForce rows show under "All" and their own category, hidden under others.
+  const filteredAwaiting = useMemo(() => {
+    if (typeFilter !== "all" && typeFilter !== "pending_rforce") return [];
+    let list = awaiting;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.woNumber.toLowerCase().includes(q) ||
+          a.customerName.toLowerCase().includes(q) ||
+          a.address.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [awaiting, typeFilter, search]);
+
+  // Which awaiting row is mid-dismiss, keyed by appointment id.
+  const [awaitingBusyId, setAwaitingBusyId] = useState<string | null>(null);
+
+  async function handleDismissAwaiting(a: AwaitingRForceIssue) {
+    setAwaitingBusyId(a.appointment.id);
+    try {
+      // Same WO+app-date key "Keep tile" uses; a distinct reason for the audit trail.
+      await dismissRForce(a.woNumber, a.scheduledDate, undefined, "Dismissed — not in rForce");
+    } finally {
+      setAwaitingBusyId(null);
+    }
+  }
+
+  function handleAwaitingClick(a: AwaitingRForceIssue) {
+    const crewParam = a.appointment.crew_id ? `&crew=${a.appointment.crew_id}` : "";
+    router.push(`/?date=${a.scheduledDate}&view=day${crewParam}`);
+  }
 
   // Which dropped tile is mid-action (cancel/keep), keyed by appointment id.
   const [droppedBusyId, setDroppedBusyId] = useState<string | null>(null);
@@ -741,6 +895,7 @@ export default function IssuesPage() {
               { key: "schedule_differs", label: CATEGORY_META.schedule_differs.label, count: categoryCounts.schedule_differs, desc: CATEGORY_META.schedule_differs.desc },
               { key: "under_scheduled", label: CATEGORY_META.under_scheduled.label, count: categoryCounts.under_scheduled, desc: CATEGORY_META.under_scheduled.desc },
               { key: "review_cancellation", label: CATEGORY_META.review_cancellation.label, count: categoryCounts.review_cancellation, desc: CATEGORY_META.review_cancellation.desc },
+              { key: "pending_rforce", label: CATEGORY_META.pending_rforce.label, count: categoryCounts.pending_rforce, desc: CATEGORY_META.pending_rforce.desc },
             ] as const
           ).map(({ key, label, count, desc }) => (
             <button
@@ -766,7 +921,7 @@ export default function IssuesPage() {
       </div>
 
       <div className="flex-1 overflow-auto">
-        {filteredIssues.length === 0 && filteredDropped.length === 0 ? (
+        {filteredIssues.length === 0 && filteredDropped.length === 0 && filteredAwaiting.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted">
             <AlertTriangle size={32} className="mb-2 opacity-30" />
             <p className="text-sm">
@@ -794,6 +949,16 @@ export default function IssuesPage() {
                 onClick={() => handleIssueClick(issue)}
                 onDismiss={() => handleDismissIssue(issue)}
                 dismissing={dismissingKey === `${issue.woNumber}|${issue.rforceDate}`}
+              />
+            ))}
+            {/* Lowest urgency, so last: overdue rows sort first within the group. */}
+            {filteredAwaiting.map((a) => (
+              <AwaitingRow
+                key={`awaiting-${a.appointment.id}`}
+                issue={a}
+                onClick={() => handleAwaitingClick(a)}
+                onDismiss={() => handleDismissAwaiting(a)}
+                busy={awaitingBusyId === a.appointment.id}
               />
             ))}
           </>

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { deriveRForceCalendarStatus, RForceCalendarItem } from "./rforce-calendar-status";
+import {
+  deriveRForceCalendarStatus,
+  deriveAppointmentRForceState,
+  RForceCalendarItem,
+} from "./rforce-calendar-status";
 import { Appointment, RForceOrder, AppointmentLink, Crew } from "./types";
 
 function makeRForceOrder(overrides: Partial<RForceOrder> = {}): RForceOrder {
@@ -65,6 +69,114 @@ const crews: Crew[] = [
   { id: "crew-1", name: "Crew A", crew_type: "measure_tech", color: "#000", is_active: true, notes: null, aliases: null, manages: null, additional_types: null, primary_crew_id: null, sort_order: 0, created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" } as Crew,
   { id: "crew-2", name: "Crew B", crew_type: "install_in_house", color: "#000", is_active: true, notes: null, aliases: null, manages: null, additional_types: null, primary_crew_id: null, sort_order: 1, created_at: "2026-08-14T00:00:00Z", updated_at: "2026-08-14T00:00:00Z" } as Crew,
 ];
+
+describe("awaiting rForce (booked in the app before rForce caught up)", () => {
+  it("install paired with a Tech Measure row is awaiting_rforce, not a mismatch", () => {
+    // rForce keeps ONE row per WO; after the measure it still says "Tech Measure"
+    // with the measure date. Comparing the install's date against it would be a
+    // false "Schedule differs".
+    const rf = makeRForceOrder({ work_order_type: "Tech Measure", scheduled_start: "2026-08-14T10:00:00" });
+    const install = makeAppointment({
+      id: "appt-install",
+      appointment_type: "install",
+      scheduled_date: "2026-09-15",
+      crew_id: "crew-2",
+      time_block: "full_day",
+    });
+    const [item] = deriveRForceCalendarStatus([rf], [install], [], crews);
+    expect(item.status).toBe("awaiting_rforce");
+    expect(item.linkedAppointment?.id).toBe("appt-install");
+    expect(item.mismatchDetails).toBeUndefined();
+  });
+
+  it("a row with no scheduled_start is awaiting_rforce", () => {
+    const rf = makeRForceOrder({ scheduled_start: null as any });
+    const [item] = deriveRForceCalendarStatus([rf], [makeAppointment()], [], crews);
+    expect(item.status).toBe("awaiting_rforce");
+  });
+
+  it("a same-phase row on a different date is still a mismatch", () => {
+    const rf = makeRForceOrder({ work_order_type: "Tech Measure", scheduled_start: "2026-08-14T10:00:00" });
+    const appt = makeAppointment({ scheduled_date: "2026-08-15" });
+    const [item] = deriveRForceCalendarStatus([rf], [appt], [], crews);
+    expect(item.status).toBe("mismatch");
+    expect(item.mismatchDetails?.date).toBeDefined();
+  });
+
+  it("an unrecognized rForce type still goes through normal comparison", () => {
+    const rf = makeRForceOrder({ work_order_type: "Mystery" });
+    const [item] = deriveRForceCalendarStatus([rf], [makeAppointment()], [], crews);
+    expect(item.status).toBe("synced");
+  });
+
+  it("pairs the row with the tile whose type matches its phase when a WO is shared", () => {
+    const rf = makeRForceOrder({ work_order_type: "Tech Measure" });
+    // Install listed first: the legacy "first tile on the WO" rule would pick it.
+    const install = makeAppointment({ id: "appt-install", appointment_type: "install", scheduled_date: "2026-09-15", crew_id: "crew-2" });
+    const measure = makeAppointment({ id: "appt-measure" });
+    const [item] = deriveRForceCalendarStatus([rf], [install, measure], [], crews);
+    expect(item.linkedAppointment?.id).toBe("appt-measure");
+    expect(item.status).toBe("synced");
+  });
+});
+
+describe("deriveAppointmentRForceState", () => {
+  const today = "2026-09-01";
+  const byWo = (rfs: RForceOrder[]) =>
+    new Map(rfs.map((rf) => [rf.work_order_number.toLowerCase(), rf]));
+  const upcomingInstall = (overrides: Partial<Appointment> = {}) =>
+    makeAppointment({
+      id: "appt-install",
+      appointment_type: "install",
+      scheduled_date: "2026-09-15",
+      updated_at: "2026-09-01T12:00:00Z",
+      ...overrides,
+    });
+
+  it("no rForce row → not_in_rforce, pending while there's no export history", () => {
+    const state = deriveAppointmentRForceState(upcomingInstall({ work_order_number: "WO-999" }), byWo([]), [], today);
+    expect(state).toEqual({ reason: "not_in_rforce", tier: "pending", missedExports: 0, rforceOrder: undefined });
+  });
+
+  it("escalates to overdue once an export is newer than the booking", () => {
+    const state = deriveAppointmentRForceState(upcomingInstall({ work_order_number: "WO-999" }), byWo([]), ["2026-09-02"], today);
+    expect(state?.tier).toBe("overdue");
+    expect(state?.missedExports).toBe(1);
+  });
+
+  it("a same-day export does not count (exports run before bookings that day)", () => {
+    const state = deriveAppointmentRForceState(upcomingInstall({ work_order_number: "WO-999" }), byWo([]), ["2026-09-01"], today);
+    expect(state?.tier).toBe("pending");
+  });
+
+  it("measure-phase row → phase_not_scheduled with the row attached", () => {
+    const rf = makeRForceOrder({ work_order_type: "Tech Measure" });
+    const state = deriveAppointmentRForceState(upcomingInstall(), byWo([rf]), [], today);
+    expect(state?.reason).toBe("phase_not_scheduled");
+    expect(state?.rforceOrder).toBe(rf);
+  });
+
+  it("returns null for reflected, past-dated, no-WO, and cancelled tiles", () => {
+    const rf = makeRForceOrder({ work_order_type: "Tech Measure" });
+    const reflectedMeasure = makeAppointment({ scheduled_date: "2026-09-15" });
+    expect(deriveAppointmentRForceState(reflectedMeasure, byWo([rf]), [], today)).toBeNull();
+    expect(deriveAppointmentRForceState(upcomingInstall({ scheduled_date: "2026-08-01" }), byWo([rf]), [], today)).toBeNull();
+    expect(deriveAppointmentRForceState(upcomingInstall({ work_order_number: null }), byWo([rf]), [], today)).toBeNull();
+    expect(deriveAppointmentRForceState(upcomingInstall({ status: "cancelled" }), byWo([rf]), [], today)).toBeNull();
+  });
+
+  it("rForce status: cancelled → null; completed only hides the SAME phase", () => {
+    const cancelled = makeRForceOrder({ work_order_type: "Tech Measure", wo_status: "Cancelled" });
+    expect(deriveAppointmentRForceState(upcomingInstall(), byWo([cancelled]), [], today)).toBeNull();
+
+    // Row closed after the measure — the install was still never entered.
+    const measureDone = makeRForceOrder({ work_order_type: "Tech Measure", wo_status: "Appt Complete / Closed" });
+    expect(deriveAppointmentRForceState(upcomingInstall(), byWo([measureDone]), [], today)?.reason).toBe("phase_not_scheduled");
+
+    const installDone = makeRForceOrder({ work_order_type: "Install", wo_status: "Appt Complete / Closed" });
+    expect(deriveAppointmentRForceState(upcomingInstall(), byWo([installDone]), [], today)).toBeNull();
+  });
+});
 
 describe("deriveRForceCalendarStatus", () => {
   it("returns needs_confirmation when rForce order is scheduled but no local appointment exists", () => {

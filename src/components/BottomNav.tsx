@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { CalendarDays, ListTodo, Users, Settings, AlertTriangle } from "lucide-react";
 import { useData } from "./DataProvider";
 import { categorizeResourceNames, deniedNamesFromFlagKeys } from "@/lib/unmatched-resources";
-import { deriveIssues, deriveDroppedTiles } from "@/lib/issues";
+import { deriveIssues, deriveDroppedTiles, deriveAwaitingRForce } from "@/lib/issues";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: CalendarDays },
@@ -18,7 +18,7 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { crews, rforceOrders, appointments, activeLinks, resourceMappings, timeOffRequests, flagResolutions, scheduledWorkOrders, dismissals } = useData();
+  const { crews, rforceOrders, appointments, activeLinks, resourceMappings, timeOffRequests, flagResolutions, scheduledWorkOrders, dismissals, exportDates } = useData();
 
   // Resources badge = names needing attention: hard-unmatched + close-enough
   // suggestions awaiting confirm/deny.
@@ -35,11 +35,15 @@ export default function BottomNav() {
 
   // Pass scheduledWorkOrders so the badge counts issues the same way the Issues
   // page does — otherwise already-scheduled jobs get re-flagged as "missing".
+  // Only urgent tile reviews count: dropped tiles (red tier) and app bookings
+  // that are still missing from rForce after an export ("overdue"). A tile
+  // merely "pending" rForce is normal and isn't a badge.
   const issueCount = useMemo(
     () =>
       deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals).length +
-      deriveDroppedTiles(appointments, rforceOrders, dismissals).length,
-    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals]
+      deriveDroppedTiles(appointments, rforceOrders, dismissals, exportDates).length +
+      deriveAwaitingRForce(appointments, rforceOrders, dismissals, exportDates).filter((t) => t.tier === "overdue").length,
+    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, exportDates]
   );
 
   return (

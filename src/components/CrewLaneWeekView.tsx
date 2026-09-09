@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, Fragment } from "react";
 import { useData } from "./DataProvider";
-import AppointmentCard from "./AppointmentCard";
+import AppointmentCard, { RForcePendingIcon } from "./AppointmentCard";
 import RForceCard from "./RForceCard";
 import ApprovalCard from "./ApprovalCard";
 import DiscrepancyBadge from "./DiscrepancyBadge";
@@ -27,7 +27,8 @@ import {
   appointmentSpansBlock,
   formatAppointmentTimeRange,
 } from "@/lib/calendar-utils";
-import { deriveRForceCalendarStatus } from "@/lib/rforce-calendar-status";
+import { deriveRForceCalendarStatus, deriveAppointmentRForceState } from "@/lib/rforce-calendar-status";
+import type { AwaitingTier } from "@/lib/rforce-staleness";
 import { getTimeOffForDate } from "@/lib/store";
 import { executeScheduleMove, ScheduleMoveTarget } from "@/lib/schedule-command";
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
@@ -153,21 +154,38 @@ export default function CrewLaneWeekView({
     return map;
   }, [days, rforceOrders, appointments, activeLinks, crews, dismissals, resourceMappings, exportDates]);
 
-  // New rForce adapter — derives mismatch status for linked appointments
-  const rforceStatusByWO = useMemo(() => {
+  // New rForce adapter — derives mismatch status for linked appointments.
+  // Keyed by appointment id (not WO): a measure and install share one WO, and
+  // only the tile actually paired with the rForce row should paint amber.
+  const mismatchByApptId = useMemo(() => {
     const items = deriveRForceCalendarStatus(rforceOrders, appointments, activeLinks, crews, resourceMappings);
-    const map = new Map<string, boolean>();
+    const set = new Set<string>();
     for (const item of items) {
-      if (item.status === "mismatch") {
-        map.set(item.rforceOrder.work_order_number.trim().toLowerCase(), true);
+      if (item.status === "mismatch" && item.linkedAppointment) {
+        set.add(item.linkedAppointment.id);
       }
     }
-    return map;
+    return set;
   }, [rforceOrders, appointments, activeLinks, crews, resourceMappings]);
 
   function hasMismatch(appt: Appointment): boolean {
-    if (!appt.work_order_number) return false;
-    return rforceStatusByWO.get(appt.work_order_number.trim().toLowerCase()) === true;
+    return mismatchByApptId.has(appt.id);
+  }
+
+  // Tiles booked here that rForce doesn't reflect yet → clock icon, not a mismatch.
+  const pendingByApptId = useMemo(() => {
+    const rfByWo = new Map(rforceOrders.map((rf) => [rf.work_order_number.trim().toLowerCase(), rf]));
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const map = new Map<string, AwaitingTier>();
+    for (const appt of appointments) {
+      const state = deriveAppointmentRForceState(appt, rfByWo, exportDates, todayISO);
+      if (state) map.set(appt.id, state.tier);
+    }
+    return map;
+  }, [rforceOrders, appointments, exportDates]);
+
+  function pendingTier(appt: Appointment): AwaitingTier | undefined {
+    return pendingByApptId.get(appt.id);
   }
 
   function nameMatchesDay(name: string, dateStr: string): boolean {
@@ -556,6 +574,7 @@ export default function CrewLaneWeekView({
                             onApproveRForce={approveRForce}
                             onDismissRForce={dismissRForce}
                             hasMismatch={hasMismatch}
+                            pendingTier={pendingTier}
                           />
                         );
                       }
@@ -597,6 +616,7 @@ export default function CrewLaneWeekView({
                           onApproveRForce={approveRForce}
                           onDismissRForce={dismissRForce}
                           hasMismatch={hasMismatch}
+                          pendingTier={pendingTier}
                         />
                       );
                     })}
@@ -764,6 +784,7 @@ function MeasureTimeLaneCell({
   onApproveRForce,
   onDismissRForce,
   hasMismatch,
+  pendingTier,
 }: {
   crew: Crew;
   day: Date;
@@ -790,6 +811,8 @@ function MeasureTimeLaneCell({
   onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string, override?: boolean) => Promise<Appointment | null>;
   onDismissRForce?: (workOrderNumber: string, rforceDate: string, startTime?: string) => Promise<void>;
   hasMismatch: (appt: Appointment) => boolean;
+  /** Booked here but rForce doesn't reflect it yet → clock icon on the tile. */
+  pendingTier: (appt: Appointment) => AwaitingTier | undefined;
 }) {
   const {
     draggedAppointment,
@@ -802,6 +825,15 @@ function MeasureTimeLaneCell({
   const [blockDragOver, setBlockDragOver] = useState<TimeBlock | null>(null);
   const [cellDragOver, setCellDragOver] = useState(false);
   const dateStr = format(day, "yyyy-MM-dd");
+
+  // Live presence (visual-only): report the hovered crew×day cell and outline a
+  // cell a peer is hovering. Never affects data or drag behavior.
+  const { setHoveredCell, hoverColorFor } = usePresence();
+  const presenceCellKey = `${crew.id}|${dateStr}`;
+  const peerColor = hoverColorFor(presenceCellKey);
+  const ringStyle = peerColor
+    ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" as const }
+    : undefined;
 
   const rforceByWo = useMemo(() => {
     const map = new Map<string, RForceOrder>();
@@ -877,7 +909,16 @@ function MeasureTimeLaneCell({
             ? (timeOffColor ? "" : "bg-time-off-light/60")
             : ""
       } ${cellDragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
-      style={off && !hasConflict && timeOffColor ? offStyle : hasConflict && timeOffColor ? { backgroundColor: `${timeOffColor}20` } : undefined}
+      style={{
+        ...(off && !hasConflict && timeOffColor
+          ? offStyle
+          : hasConflict && timeOffColor
+            ? { backgroundColor: `${timeOffColor}20` }
+            : undefined),
+        ...ringStyle,
+      }}
+      onMouseEnter={() => setHoveredCell(presenceCellKey)}
+      onMouseLeave={() => setHoveredCell(null)}
       onDragOver={handleCellDragOver}
       onDragLeave={handleCellDragLeave}
       onDrop={handleCellDrop}
@@ -918,6 +959,7 @@ function MeasureTimeLaneCell({
                     appointment={a}
                     crew={crewObj}
                     hasDiscrepancy={!!discItem || hasMismatch(a)}
+                    rforcePending={pendingTier(a)}
                     multiDayLabel={getMultiDayLabel(a, day)}
                     orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                     accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
@@ -1046,6 +1088,7 @@ function MeasureTimeLaneCell({
                                 appointment={a}
                                 crew={crewObj}
                                 hasDiscrepancy={!!discItem || hasMismatch(a)}
+                                rforcePending={pendingTier(a)}
                                 multiDayLabel={multiDay}
                                 orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                                 accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
@@ -1107,6 +1150,7 @@ function StandardCell({
   onApproveRForce,
   onDismissRForce,
   hasMismatch,
+  pendingTier,
 }: {
   crew: Crew;
   day: Date;
@@ -1130,6 +1174,8 @@ function StandardCell({
   onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string, override?: boolean) => Promise<Appointment | null>;
   onDismissRForce?: (workOrderNumber: string, rforceDate: string, startTime?: string) => Promise<void>;
   hasMismatch: (appt: Appointment) => boolean;
+  /** Booked here but rForce doesn't reflect it yet → clock icon on the tile. */
+  pendingTier: (appt: Appointment) => AwaitingTier | undefined;
 }) {
   const { draggedAppointment, draggedOrder, setDraggedAppointment, setDraggedOrder } = useSchedulerDrag();
   const [dragOver, setDragOver] = useState(false);
@@ -1267,6 +1313,8 @@ function StandardCell({
               appointment={a}
               crew={crewObj}
               hasDiscrepancy={!!discItem || hasMismatch(a)}
+              rforcePending={pendingTier(a)}
+              showRForce={showRForce}
               multiDayLabel={multiDay}
               orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
               accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
@@ -1497,6 +1545,7 @@ function CompactAppointmentContent({
   orderAlerts,
   accountName,
   showRForce,
+  rforcePending,
 }: {
   appointment: Appointment;
   crew?: Crew;
@@ -1505,6 +1554,8 @@ function CompactAppointmentContent({
   orderAlerts?: string | null;
   accountName?: string | null;
   showRForce?: boolean;
+  /** Booked here but rForce doesn't reflect it yet — clock instead of the check. */
+  rforcePending?: AwaitingTier;
 }) {
   const bgColor = crewColorFor(crew);
   const city = parseCity(appointment.address);
@@ -1534,8 +1585,12 @@ function CompactAppointmentContent({
         )}
         {showRForce && (
           isLinked ? (
-            !hasDiscrepancy && (
-              <span className="text-green-300 text-[8px]" title="In sync with rForce">&#10003;</span>
+            rforcePending ? (
+              <RForcePendingIcon tier={rforcePending} size={8} />
+            ) : (
+              !hasDiscrepancy && (
+                <span className="text-green-300 text-[8px]" title="In sync with rForce">&#10003;</span>
+              )
             )
           ) : (
             <span title="Not linked to rForce"><Unlink size={8} className="shrink-0 opacity-60" /></span>
