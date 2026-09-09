@@ -5,8 +5,9 @@ import { Appointment, Crew } from "@/lib/types";
 import { typeLabel, formatProductBreakdown, formatAppointmentTimeRange } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { crewColorFor } from "@/lib/preferences";
+import type { AwaitingTier } from "@/lib/rforce-staleness";
 import { useData } from "./DataProvider";
-import { MapPin, Unlink, AlertTriangle, CheckCircle, Undo2, Users } from "lucide-react";
+import { MapPin, Unlink, AlertTriangle, CheckCircle, Clock, Undo2, Users } from "lucide-react";
 
 interface Props {
   appointment: Appointment;
@@ -18,7 +19,26 @@ interface Props {
   accountName?: string | null;
   isLinked?: boolean;
   showRForce?: boolean;
+  /** Booked here but rForce doesn't reflect it yet — shows a clock instead of
+   *  the green in-sync check. "overdue" once an export has run and it's still missing. */
+  rforcePending?: AwaitingTier;
   onClick?: () => void;
+}
+
+/** Neutral clock (pending) or amber clock (overdue) in place of the in-sync check. */
+export function RForcePendingIcon({ tier, size = 10 }: { tier: AwaitingTier; size?: number }) {
+  const overdue = tier === "overdue";
+  return (
+    <span
+      title={
+        overdue
+          ? "Not in rForce — an import has run and it's still missing"
+          : "Waiting for rForce to reflect this booking"
+      }
+    >
+      <Clock size={size} className={`shrink-0 ${overdue ? "text-amber-300" : "text-white/70"}`} />
+    </span>
+  );
 }
 
 export default function AppointmentCard({
@@ -31,6 +51,7 @@ export default function AppointmentCard({
   accountName,
   isLinked,
   showRForce,
+  rforcePending,
   onClick,
 }: Props) {
   const { unscheduleAppointment } = useData();
@@ -114,7 +135,10 @@ export default function AppointmentCard({
         {!appointment.work_order_number && (
           <Unlink size={10} className="shrink-0 opacity-70" />
         )}
-        {showRForce && isLinked && !hasDiscrepancy && (
+        {showRForce && isLinked && rforcePending && (
+          <RForcePendingIcon tier={rforcePending} />
+        )}
+        {showRForce && isLinked && !hasDiscrepancy && !rforcePending && (
           <span title="In sync with rForce"><CheckCircle size={10} className="shrink-0 text-green-300" /></span>
         )}
       </div>

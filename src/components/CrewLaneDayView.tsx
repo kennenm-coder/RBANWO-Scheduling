@@ -25,7 +25,8 @@ import {
   getRForceDisplayItems,
   timeBlockStartEnd,
 } from "@/lib/calendar-utils";
-import { deriveRForceCalendarStatus } from "@/lib/rforce-calendar-status";
+import { deriveRForceCalendarStatus, deriveAppointmentRForceState } from "@/lib/rforce-calendar-status";
+import type { AwaitingTier } from "@/lib/rforce-staleness";
 import { assignTimeLanes } from "@/lib/timeline-lanes";
 import { getTimeOffForDate } from "@/lib/store";
 import { useCurrentActor } from "./AuthProvider";
@@ -151,21 +152,38 @@ export default function CrewLaneDayView({
     [rforceOrders, appointments, activeLinks, crews, date, dismissals, resourceMappings, exportDates]
   );
 
-  // New rForce adapter — derives mismatch status for linked appointments
-  const rforceStatusByWO = useMemo(() => {
+  // New rForce adapter — derives mismatch status for linked appointments.
+  // Keyed by appointment id (not WO): a measure and install share one WO, and
+  // only the tile actually paired with the rForce row should paint amber.
+  const mismatchByApptId = useMemo(() => {
     const items = deriveRForceCalendarStatus(rforceOrders, appointments, activeLinks, crews, resourceMappings);
-    const map = new Map<string, boolean>();
+    const set = new Set<string>();
     for (const item of items) {
-      if (item.status === "mismatch") {
-        map.set(item.rforceOrder.work_order_number.trim().toLowerCase(), true);
+      if (item.status === "mismatch" && item.linkedAppointment) {
+        set.add(item.linkedAppointment.id);
       }
     }
-    return map;
+    return set;
   }, [rforceOrders, appointments, activeLinks, crews, resourceMappings]);
 
   function hasMismatch(appt: Appointment): boolean {
-    if (!appt.work_order_number) return false;
-    return rforceStatusByWO.get(appt.work_order_number.trim().toLowerCase()) === true;
+    return mismatchByApptId.has(appt.id);
+  }
+
+  // Tiles booked here that rForce doesn't reflect yet → clock icon, not a mismatch.
+  const pendingByApptId = useMemo(() => {
+    const rfByWo = new Map(rforceOrders.map((rf) => [rf.work_order_number.trim().toLowerCase(), rf]));
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const map = new Map<string, AwaitingTier>();
+    for (const appt of appointments) {
+      const state = deriveAppointmentRForceState(appt, rfByWo, exportDates, todayISO);
+      if (state) map.set(appt.id, state.tier);
+    }
+    return map;
+  }, [rforceOrders, appointments, exportDates]);
+
+  function pendingTier(appt: Appointment): AwaitingTier | undefined {
+    return pendingByApptId.get(appt.id);
   }
 
   function nameMatchesTimeOff(name: string): boolean {
@@ -299,6 +317,7 @@ export default function CrewLaneDayView({
               })
             }
             hasMismatch={hasMismatch}
+            pendingTier={pendingTier}
           />
         ))}
 
@@ -467,6 +486,7 @@ function CrewSection({
   onAppointmentDrop,
   onQueueDrop,
   hasMismatch,
+  pendingTier,
 }: {
   title: string;
   crews: Crew[];
@@ -487,6 +507,8 @@ function CrewSection({
   onAppointmentDrop?: (appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string, startTime?: string, endTime?: string) => void;
   hasMismatch: (appt: Appointment) => boolean;
+  /** Booked here but rForce doesn't reflect it yet → clock icon on the tile. */
+  pendingTier: (appt: Appointment) => AwaitingTier | undefined;
 }) {
   const { draggedAppointment, draggedOrder, draggedMeta, setDraggedAppointment, setDraggedOrder } = useSchedulerDrag();
   // Minutes into the dragged card where the pointer grabbed it. Captured at
@@ -1070,6 +1092,7 @@ function CrewSection({
                                   crew={crew}
                                   compact={isNarrowTile(a)}
                                   hasDiscrepancy={!!discItem || hasMismatch(a)}
+                                  rforcePending={pendingTier(a)}
                                   orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                                   accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
                                   isLinked={!!a.work_order_number}
@@ -1213,6 +1236,7 @@ function CrewSection({
                                 crew={crew}
                                 compact={isNarrowTile(a)}
                                 hasDiscrepancy={!!discItem || hasMismatch(a)}
+                                rforcePending={pendingTier(a)}
                                 orderAlerts={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.order_alerts || rforceByWo.get(a.work_order_number)?.scheduler_notes || null) : null}
                                 accountName={a.work_order_number ? (rforceByWo.get(a.work_order_number)?.account_name || null) : null}
                                 isLinked={!!a.work_order_number}

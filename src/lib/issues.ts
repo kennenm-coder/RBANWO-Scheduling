@@ -4,6 +4,10 @@
  *   1. missing  — rForce WO is scheduled but has no non-cancelled calendar tile
  *   2. mismatch — rForce record and linked calendar tile disagree on date/time
  *
+ * Plus two tile-side reviews that live alongside them on the Issues tab:
+ *   • dropped  — a tile whose rForce order stopped appearing in imports
+ *   • awaiting — a tile booked in the app that rForce doesn't reflect yet
+ *
  * Everything else (approval states, merge suggestions, dismissals, fuzzy
  * reconciliation) is intentionally excluded from this view.
  */
@@ -19,7 +23,9 @@ import type {
 } from "./types";
 import {
   deriveRForceCalendarStatus,
+  deriveAppointmentRForceState,
   type RForceMismatchDetails,
+  type AwaitingRForceReason,
 } from "./rforce-calendar-status";
 import {
   isNotSchedulable,
@@ -28,7 +34,11 @@ import {
   CANCELLED_STATUSES,
 } from "./normalize";
 import { matchCrewByName, timeToBlock } from "./crew-match";
-import { missedExportCount, MISSED_EXPORTS_FOR_RED } from "./rforce-staleness";
+import {
+  missedExportCount,
+  MISSED_EXPORTS_FOR_RED,
+  type AwaitingTier,
+} from "./rforce-staleness";
 
 export type IssueType = "missing" | "mismatch";
 
@@ -308,4 +318,88 @@ export function deriveDroppedTiles(
   }
 
   return dropped;
+}
+
+/**
+ * A calendar tile booked in the app that rForce doesn't reflect yet — the
+ * mirror image of a dropped tile. Normal right after booking (the scheduler
+ * simply hasn't entered it in rForce); a real problem once a daily export has
+ * run since and rForce still doesn't have it.
+ */
+export interface AwaitingRForceIssue {
+  appointment: Appointment;
+  /** Present when the WO exists in rForce but is still on an earlier phase. */
+  rforceOrder?: RForceOrder;
+  woNumber: string;
+  customerName: string;
+  address: string;
+  scheduledDate: string;
+  /** not_in_rforce: no row for the WO. phase_not_scheduled: row is on another phase. */
+  reason: AwaitingRForceReason;
+  /** pending: no export since booking. overdue: 1+ exports and still missing. */
+  tier: AwaitingTier;
+  /** Daily exports observed since the app last wrote this appointment. */
+  missedExports: number;
+}
+
+/**
+ * Detect upcoming tiles that carry a work order number but aren't reflected in
+ * rForce for their phase. See `deriveAppointmentRForceState` for the rules.
+ *
+ * Unlike `deriveDroppedTiles`, an empty export history does NOT bail out: with
+ * nothing to count against, every hit is simply "pending" (never "overdue").
+ *
+ * Skips tiles the scheduler dismissed (WO + app date — the same key "Keep
+ * tile" writes), so a "won't be entered in rForce" job stops reappearing.
+ */
+export function deriveAwaitingRForce(
+  appointments: Appointment[],
+  rforceOrders: RForceOrder[],
+  dismissals: RForceDismissal[] = [],
+  exportDates: string[] = [],
+  todayISO: string = new Date().toISOString().slice(0, 10)
+): AwaitingRForceIssue[] {
+  const normalizeWo = (value: string | null | undefined) =>
+    (value || "").trim().toLowerCase();
+
+  const rfByWo = new Map<string, RForceOrder>();
+  for (const rf of rforceOrders) {
+    rfByWo.set(normalizeWo(rf.work_order_number), rf);
+  }
+
+  const dismissedKeys = new Set(
+    dismissals.map((d) => `${d.work_order_number}|${d.rforce_date}`)
+  );
+
+  const awaiting: AwaitingRForceIssue[] = [];
+
+  for (const appt of appointments) {
+    const state = deriveAppointmentRForceState(appt, rfByWo, exportDates, todayISO);
+    if (!state) continue;
+
+    // Prefer rForce's canonical WO spelling so the dismissal key matches what
+    // the Issues page writes; fall back to the tile's own when rForce has none.
+    const woNumber = state.rforceOrder?.work_order_number || appt.work_order_number!;
+    if (dismissedKeys.has(`${woNumber}|${appt.scheduled_date}`)) continue;
+
+    awaiting.push({
+      appointment: appt,
+      rforceOrder: state.rforceOrder,
+      woNumber,
+      customerName: appt.customer_name || state.rforceOrder?.customer_name || "Unknown",
+      address: appt.address || state.rforceOrder?.address || "",
+      scheduledDate: appt.scheduled_date!,
+      reason: state.reason,
+      tier: state.tier,
+      missedExports: state.missedExports,
+    });
+  }
+
+  // Overdue first (they're the actionable ones), then by date.
+  awaiting.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier === "overdue" ? -1 : 1;
+    return a.scheduledDate.localeCompare(b.scheduledDate);
+  });
+
+  return awaiting;
 }

@@ -94,7 +94,14 @@ export function buildQueueItems(
     mappings
   )) {
     const rf = calendarItem.rforceOrder;
-    if (isNotSchedulable(rf) || isNonFieldWork(rf) || calendarItem.status === "synced") continue;
+    // "awaiting_rforce" is already booked in the app (rForce just hasn't caught
+    // up) — it belongs on the Issues tab as "pending rForce", not in the queue.
+    if (
+      isNotSchedulable(rf) ||
+      isNonFieldWork(rf) ||
+      calendarItem.status === "synced" ||
+      calendarItem.status === "awaiting_rforce"
+    ) continue;
     const scheduledDate = rf.scheduled_start?.slice(0, 10);
     if (
       scheduledDate &&

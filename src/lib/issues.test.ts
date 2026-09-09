@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveIssues, deriveDroppedTiles } from "./issues";
+import { deriveIssues, deriveDroppedTiles, deriveAwaitingRForce } from "./issues";
 import type { Appointment, RForceOrder, AppointmentLink } from "./types";
 
 function makeRForceOrder(overrides: Partial<RForceOrder> = {}): RForceOrder {
@@ -44,6 +44,54 @@ function makeAppointment(overrides: Partial<Appointment> = {}): Appointment {
 }
 
 const crew = { id: "crew-1", name: "Crew A", aliases: null } as any;
+
+describe("deriveAwaitingRForce", () => {
+  const today = "2026-09-01";
+  const measureRow = () => makeRForceOrder({ work_order_type: "Tech Measure" });
+  const install = (overrides: Partial<Appointment> = {}) =>
+    makeAppointment({
+      id: "appt-install",
+      appointment_type: "install",
+      scheduled_date: "2026-09-15",
+      updated_at: "2026-09-01T12:00:00Z",
+      ...overrides,
+    });
+
+  it("lists an install booked on a WO that rForce still has as Tech Measure", () => {
+    const out = deriveAwaitingRForce([install()], [measureRow()], [], [], today);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      woNumber: "WO-100",
+      reason: "phase_not_scheduled",
+      tier: "pending",
+      scheduledDate: "2026-09-15",
+    });
+  });
+
+  it("escalates to overdue once an export is newer than the booking", () => {
+    const out = deriveAwaitingRForce([install()], [measureRow()], [], ["2026-09-02"], today);
+    expect(out[0].tier).toBe("overdue");
+    expect(out[0].missedExports).toBe(1);
+  });
+
+  it("skips a tile dismissed by WO + app date", () => {
+    const dismissals = [{ work_order_number: "WO-100", rforce_date: "2026-09-15" }] as any;
+    expect(deriveAwaitingRForce([install()], [measureRow()], dismissals, ["2026-09-02"], today)).toEqual([]);
+  });
+
+  it("sorts overdue before pending", () => {
+    const stale = install({ id: "a-stale", work_order_number: "WO-1", updated_at: "2026-08-20T00:00:00Z" });
+    const fresh = install({ id: "a-fresh", work_order_number: "WO-2", scheduled_date: "2026-09-10" });
+    const out = deriveAwaitingRForce([fresh, stale], [], [], ["2026-08-25"], today);
+    expect(out.map((a) => a.appointment.id)).toEqual(["a-stale", "a-fresh"]);
+    expect(out.map((a) => a.reason)).toEqual(["not_in_rforce", "not_in_rforce"]);
+  });
+
+  it("the same pair no longer shows as a Schedule-differs mismatch", () => {
+    // Before: the install's date was compared to the measure's date → false mismatch.
+    expect(deriveIssues([measureRow()], [install()], [], [crew], [])).toEqual([]);
+  });
+});
 
 describe("deriveIssues", () => {
   it("detects missing: rForce scheduled, no local appointment", () => {
