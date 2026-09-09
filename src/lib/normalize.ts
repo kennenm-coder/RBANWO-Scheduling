@@ -201,22 +201,24 @@ export function firstNamesMatch(
   return a.split(" ")[0].toLowerCase() === b.split(" ")[0].toLowerCase();
 }
 
-/**
- * Role columns rForce fills per work-order type. Used ONLY as a fallback when
- * the generic `primary_resource` column is blank — and only for the column that
- * matches the job's own type. This prevents an install from being attributed to
- * the measure tech (or vice versa) just because rForce hasn't populated the
- * Primary Resource field yet: an install scheduled in the app carries a blank
- * Primary Resource until rForce catches up, and its work order still holds the
- * earlier measure tech in `tech_measure_name`.
- */
-function typeMatchedResource(order: {
+type RForceResourceFields = {
   work_order_type?: string | null;
+  primary_resource?: string | null;
   tech_measure_name?: string | null;
   installer?: string | null;
   service_rep?: string | null;
-}): string | null {
-  switch (normalizeWoType(order.work_order_type)) {
+};
+
+/**
+ * The rForce role column that names the resource for a given appointment type.
+ * Returns `null` for types with no dedicated column (or an unknown type), so
+ * callers never guess a resource across roles.
+ */
+function roleColumnForType(
+  order: RForceResourceFields,
+  type: AppointmentType | null
+): string | null {
+  switch (type) {
     case "tech_measure":
       return order.tech_measure_name || null;
     case "install":
@@ -229,28 +231,51 @@ function typeMatchedResource(order: {
     case "job_site_visit":
       return order.service_rep || null;
     default:
-      // Unknown / unrecognized type — only the explicit Primary Resource is
-      // trustworthy; never guess across roles.
       return null;
   }
 }
 
 /**
+ * Role column matched to the order's OWN rForce work-order type. Used as a
+ * display fallback when the generic `primary_resource` column is blank.
+ */
+function typeMatchedResource(order: RForceResourceFields): string | null {
+  return roleColumnForType(order, normalizeWoType(order.work_order_type));
+}
+
+/**
  * Pick the assigned resource name from an rForce order.
  *
- * `primary_resource` — rForce's generic "assigned resource" column — is
- * authoritative. When it's blank (e.g. a job scheduled in the app that rForce
- * hasn't caught up to yet) we fall back ONLY to the role column matching the
- * work-order type, never across roles. A blank result means "rForce hasn't
- * assigned this yet", which callers treat as non-comparable (no mismatch) —
- * NOT as an assignment to whoever happens to sit in another role's column.
+ * Two modes:
+ *
+ * 1. `appType` given (comparing against a specific app appointment) — return the
+ *    resource for THAT phase. The role column matching `appType` is authoritative
+ *    (e.g. `installer` for an install). If it's blank, we trust the generic
+ *    `primary_resource` ONLY when rForce's own work-order type is the same phase;
+ *    otherwise we return `null` (non-comparable). This is what prevents a
+ *    just-scheduled install from being falsely attributed to the measure tech:
+ *    the shared work order is still typed "Tech Measure" in rForce with the
+ *    measure tech in `tech_measure_name`, so for an install appointment we look
+ *    at the (blank) `installer` column and correctly report "no install resource
+ *    assigned yet" instead of flagging the measure tech as a crew mismatch.
+ *
+ * 2. `appType` omitted (display use, e.g. "who does rForce show on this order") —
+ *    `primary_resource` first, then the role column matching rForce's own type.
+ *
+ * A `null` result means "rForce hasn't assigned this yet"; callers treat it as
+ * non-comparable (no mismatch), never as an assignment to another role's person.
  */
-export function getRForceResource(order: {
-  work_order_type?: string | null;
-  primary_resource?: string | null;
-  tech_measure_name?: string | null;
-  installer?: string | null;
-  service_rep?: string | null;
-}): string | null {
+export function getRForceResource(
+  order: RForceResourceFields,
+  appType?: AppointmentType | null
+): string | null {
+  if (appType) {
+    const role = roleColumnForType(order, appType);
+    if (role) return role;
+    if (normalizeWoType(order.work_order_type) === appType) {
+      return order.primary_resource || null;
+    }
+    return null;
+  }
   return order.primary_resource || typeMatchedResource(order) || null;
 }

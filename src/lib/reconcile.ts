@@ -62,7 +62,7 @@ export function reconcile(
           : false;
 
         // --- Crew comparison ---
-        const rfResource = getRForceResource(rf);
+        const rfResource = getRForceResource(rf, appt.appointment_type);
         const appCrewName = appt.crew_id ? crewMap.get(appt.crew_id) : undefined;
         const crewMismatch = !firstNamesMatch(rfResource ?? undefined, appCrewName);
 
