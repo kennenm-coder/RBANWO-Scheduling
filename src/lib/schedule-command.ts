@@ -18,6 +18,7 @@ import {
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
 import { checkAvailabilityConflict } from "./availability";
 import { getEligibleCrews } from "./crew-utils";
+import { getRForceResource } from "./normalize";
 import { createAppointmentEvent } from "./store";
 
 /** Which 2-hour measure block an hour lands in. */
@@ -275,7 +276,7 @@ export function buildMoveUpdates(
     );
     if (rf && rf.scheduled_start) {
       const rfDate = rf.scheduled_start.slice(0, 10);
-      const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+      const rfResource = getRForceResource(rf, currentAppointment.appointment_type);
       const targetCrew = allCrews.find((c) => c.id === target.crewId);
 
       // Compare TARGET position against rForce (not current position)

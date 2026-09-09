@@ -403,7 +403,7 @@ export function checkDiscrepancy(
     if (rfDate !== appointment.scheduled_date) return true;
   }
   if (crews) {
-    const rfResource = rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+    const rfResource = getRForceResource(rf, appointment.appointment_type);
     if (rfResource) {
       const crew = crews.find((c) => c.id === appointment.crew_id);
       if (!crew) return false;

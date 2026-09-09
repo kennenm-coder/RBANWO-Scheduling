@@ -338,7 +338,7 @@ function detectExternalFlags(
     );
     if (!linked || !linked.scheduled_date || !linked.crew_id) continue;
 
-    const rfResource = getRForceResource(rf);
+    const rfResource = getRForceResource(rf, linked.appointment_type);
     const linkedCrew = crews.find((c) => c.id === linked.crew_id);
     const linkedCrewName = linkedCrew?.name;
 

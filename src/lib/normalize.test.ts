@@ -226,3 +226,49 @@ describe("getRForceResource", () => {
     expect(getRForceResource({ primary_resource: null })).toBeNull();
   });
 });
+
+describe("getRForceResource (phase-aware, appType given)", () => {
+  it("returns null when scheduling an install whose rForce order is still the measure phase", () => {
+    // The reported bug: an install scheduled in the app before rForce catches up.
+    // rForce still has ONE work order for that number, typed "Tech Measure", with
+    // the measure tech populated. Comparing against the INSTALL appointment must
+    // report "no install resource assigned yet" (null), NOT the measure tech —
+    // otherwise a false "crew mismatch" flag appears.
+    const rf = {
+      work_order_type: "Tech Measure",
+      primary_resource: "Ryan Measure",
+      tech_measure_name: "Ryan Measure",
+      installer: null,
+    };
+    expect(getRForceResource(rf, "install")).toBeNull();
+    // Display mode (no appType) still surfaces who rForce shows on the order.
+    expect(getRForceResource(rf)).toBe("Ryan Measure");
+  });
+
+  it("uses the role column matching the app type, even against a different rForce type", () => {
+    const rf = {
+      work_order_type: "Tech Measure",
+      tech_measure_name: "Ryan Measure",
+      installer: "Keith Install",
+    };
+    expect(getRForceResource(rf, "install")).toBe("Keith Install");
+    expect(getRForceResource(rf, "tech_measure")).toBe("Ryan Measure");
+  });
+
+  it("falls back to Primary Resource only when rForce's own type matches the app type", () => {
+    // Same phase: the generic Primary Resource is trustworthy.
+    expect(
+      getRForceResource({ work_order_type: "Install", primary_resource: "Sam Crew", installer: null }, "install")
+    ).toBe("Sam Crew");
+    // Different phase: Primary Resource may name the other phase's person — ignore it.
+    expect(
+      getRForceResource({ work_order_type: "Tech Measure", primary_resource: "Ryan Measure", installer: null }, "install")
+    ).toBeNull();
+  });
+
+  it("prefers the app-type role column over Primary Resource", () => {
+    expect(
+      getRForceResource({ work_order_type: "Install", primary_resource: "Sam Crew", installer: "Keith Install" }, "install")
+    ).toBe("Keith Install");
+  });
+});
