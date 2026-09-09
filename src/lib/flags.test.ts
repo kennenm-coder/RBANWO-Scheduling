@@ -313,6 +313,21 @@ describe("detectFlags", () => {
       expect(mismatches).toHaveLength(1);
     });
 
+    it.each(["install", "service"] as const)("uses Primary Resource for %s flags despite different job contacts", (appointment_type) => {
+      const appt = makeAppointment({ appointment_type });
+      const crew = makeCrew({ name: "John Smith" });
+      const rf = makeRForceOrder({ primary_resource: "John Smith", installer: "Old Installer", service_rep: "Old Service" });
+      expect(detectFlags([appt], [crew], [rf], [], []).filter(f => f.code === "resource_mismatch")).toHaveLength(0);
+      const changed = { ...rf, primary_resource: "Mike Jones", installer: "John Smith", service_rep: "John Smith" };
+      expect(detectFlags([appt], [crew], [changed], [], []).filter(f => f.code === "resource_mismatch")).toHaveLength(1);
+    });
+
+    it.each(["install", "service"] as const)("does not compare %s against rForce when Primary Resource is blank", (appointment_type) => {
+      const appt = makeAppointment({ appointment_type, scheduled_date: "2026-09-09" });
+      const rf = makeRForceOrder({ primary_resource: "", installer: "Old Installer", service_rep: "Old Service", scheduled_start: "2026-08-01T08:00:00" });
+      expect(detectFlags([appt], [makeCrew()], [rf], [], []).filter(f => f.flagClass === "external_confirmation")).toHaveLength(0);
+    });
+
     it("flags resource mismatch", () => {
       const appt = makeAppointment();
       const crew = makeCrew({ name: "John Smith" });

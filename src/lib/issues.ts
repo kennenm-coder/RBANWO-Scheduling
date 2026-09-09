@@ -1,3 +1,4 @@
+import { getRForceResource } from "./normalize";
 /**
  * Simplified issue detection — exactly two issue types:
  *
@@ -153,7 +154,7 @@ export function deriveIssues(
       // approval overlay uses). Only present when the resource maps to a crew.
       let placement: ApprovalPlacement | undefined;
       const resourceName =
-        rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+        getRForceResource(rf);
       const crew = resourceName ? matchCrewByName(resourceName, crews, mappings) : undefined;
       if (crew) {
         const hour = parseInt(rf.scheduled_start.slice(11, 13), 10);

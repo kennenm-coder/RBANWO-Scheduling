@@ -182,93 +182,23 @@ describe("firstNamesMatch", () => {
 });
 
 describe("getRForceResource", () => {
-  it("returns primary_resource first", () => {
-    expect(getRForceResource({
-      primary_resource: "Sam Mormon",
-      installer: "Other Person",
-    })).toBe("Sam Mormon");
+  it.each(["Install", "Service", "Tech Measure", "JIP", "Mystery"])(
+    "trusts Primary Resource over job roles for %s", (work_order_type) => {
+      expect(getRForceResource({ work_order_type, primary_resource: "Assigned Crew",
+        installer: "Old Installer", service_rep: "Old Service Rep", tech_measure_name: "Measure Tech",
+      })).toBe("Assigned Crew");
+    }
+  );
+  it("ignores all job contacts when Primary Resource is blank", () => {
+    expect(getRForceResource({ work_order_type: "Service", installer: "Installer", service_rep: "Service Rep" })).toBeNull();
+    expect(getRForceResource({ installer: "", service_rep: "Service Rep" })).toBeNull();
   });
-
-  it("falls back only to the column matching the WO type when Primary Resource is blank", () => {
-    expect(getRForceResource({ work_order_type: "Tech Measure", tech_measure_name: "Ryan" })).toBe("Ryan");
-    expect(getRForceResource({ work_order_type: "Install", installer: "Keith" })).toBe("Keith");
-    expect(getRForceResource({ work_order_type: "Service", service_rep: "Matt" })).toBe("Matt");
-    expect(getRForceResource({ work_order_type: "JIP", service_rep: "Matt" })).toBe("Matt");
-    expect(getRForceResource({ work_order_type: "LSWP", installer: "Keith" })).toBe("Keith");
+  it("does not use the measure job contact as an assignment fallback", () => {
+    expect(getRForceResource({ tech_measure_name: "Measure Tech" })).toBeNull();
   });
-
-  it("does NOT cross roles: an install with only a measure tech is unassigned, not the measure tech", () => {
-    // The core bug: an install scheduled in the app before rForce catches up
-    // has a blank Primary Resource but still carries the earlier measure tech in
-    // tech_measure_name. That must NOT be treated as the install's resource.
-    expect(
-      getRForceResource({
-        work_order_type: "Install",
-        primary_resource: null,
-        tech_measure_name: "Ryan Measure",
-        installer: null,
-      })
-    ).toBeNull();
-  });
-
-  it("prefers Primary Resource over the type-matched column", () => {
-    expect(
-      getRForceResource({ work_order_type: "Install", primary_resource: "Sam", installer: "Keith" })
-    ).toBe("Sam");
-  });
-
-  it("returns null for an unrecognized type with only role columns set", () => {
-    expect(getRForceResource({ work_order_type: "Mystery", installer: "Keith" })).toBeNull();
-  });
-
-  it("returns null when all fields are missing", () => {
+  it("returns null when no assignment is present", () => {
     expect(getRForceResource({})).toBeNull();
-    expect(getRForceResource({ primary_resource: null })).toBeNull();
-  });
-});
-
-describe("getRForceResource (phase-aware, appType given)", () => {
-  it("returns null when scheduling an install whose rForce order is still the measure phase", () => {
-    // The reported bug: an install scheduled in the app before rForce catches up.
-    // rForce still has ONE work order for that number, typed "Tech Measure", with
-    // the measure tech populated. Comparing against the INSTALL appointment must
-    // report "no install resource assigned yet" (null), NOT the measure tech —
-    // otherwise a false "crew mismatch" flag appears.
-    const rf = {
-      work_order_type: "Tech Measure",
-      primary_resource: "Ryan Measure",
-      tech_measure_name: "Ryan Measure",
-      installer: null,
-    };
-    expect(getRForceResource(rf, "install")).toBeNull();
-    // Display mode (no appType) still surfaces who rForce shows on the order.
-    expect(getRForceResource(rf)).toBe("Ryan Measure");
-  });
-
-  it("uses the role column matching the app type, even against a different rForce type", () => {
-    const rf = {
-      work_order_type: "Tech Measure",
-      tech_measure_name: "Ryan Measure",
-      installer: "Keith Install",
-    };
-    expect(getRForceResource(rf, "install")).toBe("Keith Install");
-    expect(getRForceResource(rf, "tech_measure")).toBe("Ryan Measure");
-  });
-
-  it("falls back to Primary Resource only when rForce's own type matches the app type", () => {
-    // Same phase: the generic Primary Resource is trustworthy.
-    expect(
-      getRForceResource({ work_order_type: "Install", primary_resource: "Sam Crew", installer: null }, "install")
-    ).toBe("Sam Crew");
-    // Different phase: Primary Resource may name the other phase's person — ignore it.
-    expect(
-      getRForceResource({ work_order_type: "Tech Measure", primary_resource: "Ryan Measure", installer: null }, "install")
-    ).toBeNull();
-  });
-
-  it("prefers the app-type role column over Primary Resource", () => {
-    expect(
-      getRForceResource({ work_order_type: "Install", primary_resource: "Sam Crew", installer: "Keith Install" }, "install")
-    ).toBe("Keith Install");
+    expect(getRForceResource({ primary_resource: "   ", installer: "Old Installer" })).toBeNull();
+    expect(getRForceResource({ primary_resource: "", installer: "", service_rep: "" })).toBeNull();
   });
 });

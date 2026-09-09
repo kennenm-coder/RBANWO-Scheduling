@@ -47,7 +47,7 @@ export function reconcile(
     } else if (CANCELLED_STATUSES.has(woStatus)) {
       status = "cancelled";
     } else if (appt) {
-      if (!rf.scheduled_start) {
+      if (!rf.scheduled_start || !getRForceResource(rf)) {
         status = "scheduled_app_only";
       } else {
         // --- Date comparison ---
@@ -62,7 +62,7 @@ export function reconcile(
           : false;
 
         // --- Crew comparison ---
-        const rfResource = getRForceResource(rf, appt.appointment_type);
+        const rfResource = getRForceResource(rf);
         const appCrewName = appt.crew_id ? crewMap.get(appt.crew_id) : undefined;
         const crewMismatch = !firstNamesMatch(rfResource ?? undefined, appCrewName);
 

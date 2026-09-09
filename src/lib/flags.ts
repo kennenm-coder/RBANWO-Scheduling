@@ -330,7 +330,7 @@ function detectExternalFlags(
 
   // ── Data mismatches between linked pairs ──
   for (const rf of rforceOrders) {
-    if (!rf.scheduled_start) continue;
+    if (!rf.scheduled_start || !getRForceResource(rf)) continue;
     if (CANCELLED_STATUSES.has(rf.wo_status || "") || CANCELLED_STATUSES.has(rf.order_status || "")) continue; // already handled above
     const rfDate = rf.scheduled_start.slice(0, 10);
     const linked = active.find(
@@ -338,7 +338,7 @@ function detectExternalFlags(
     );
     if (!linked || !linked.scheduled_date || !linked.crew_id) continue;
 
-    const rfResource = getRForceResource(rf, linked.appointment_type);
+    const rfResource = getRForceResource(rf);
     const linkedCrew = crews.find((c) => c.id === linked.crew_id);
     const linkedCrewName = linkedCrew?.name;
 
