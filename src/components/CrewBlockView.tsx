@@ -23,6 +23,7 @@ import {
 import { getTimeOffForDate } from "@/lib/store";
 import { crewHasType, sortByFirstName, getDepartmentSectionsForDate } from "@/lib/crew-utils";
 import { useSchedulerDrag } from "@/lib/drag-context";
+import { usePresence } from "@/lib/presence";
 import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { Palmtree } from "lucide-react";
 import { getCrewDayLabels, LABEL_KIND_TEXT } from "@/lib/availability";
@@ -535,6 +536,8 @@ function CrewRow({
   const { draggedOrder, draggedAppointment, setDraggedOrder, setDraggedAppointment } = useSchedulerDrag();
   const crewColor = crewColorFor(crew);
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
+  // Live presence (visual-only): report/highlight the hovered crew×day.
+  const { setHoveredCell, hoverColorFor } = usePresence();
 
   return (
     <tr>
@@ -555,6 +558,8 @@ function CrewRow({
         const off = isCrewOffOnDay(crew, day);
         const dayKey = day.toISOString();
         const isDragOver = dragOverDay === dayKey;
+        const presenceKey = `${crew.id}|${format(day, "yyyy-MM-dd")}`;
+        const peerColor = hoverColorFor(presenceKey);
         const dayAppts = getAppointmentsForCrewAndDay(
           appointments,
           crew.id,
@@ -569,6 +574,9 @@ function CrewRow({
             className={`border border-border p-0.5 align-top min-w-[120px] transition-colors ${
               isToday ? "bg-primary/5" : ""
             } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+            style={peerColor ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" } : undefined}
+            onMouseEnter={() => setHoveredCell(presenceKey)}
+            onMouseLeave={() => setHoveredCell(null)}
             onDragOver={(e) => {
               const order = draggedOrder;
               const dragged = draggedAppointment;
@@ -658,6 +666,8 @@ function MeasureCrewRows({
   const crewColor = crewColorFor(crew);
   const blocks = MEASURE_TIME_BLOCKS; // "9-10", "10-12", "12-2", "2-4", "4-6"
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
+  // Live presence (visual-only): report/highlight the hovered crew×day.
+  const { setHoveredCell, hoverColorFor } = usePresence();
 
   // Pre-compute appointments per day
   const dayApptsMap = useMemo(() => {
@@ -709,6 +719,11 @@ function MeasureCrewRows({
             const off = isCrewOffOnDay(crew, day);
             const dateStr = format(day, "yyyy-MM-dd");
             const dayAppts = dayApptsMap.get(dateStr) || [];
+            const presenceKey = `${crew.id}|${dateStr}`;
+            const peerColor = hoverColorFor(presenceKey);
+            const ringStyle = peerColor
+              ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" as const }
+              : undefined;
 
             if (off) {
               if (blockIdx === 0) {
@@ -717,6 +732,9 @@ function MeasureCrewRows({
                     key={day.toISOString()}
                     rowSpan={blocks.length}
                     className={`border border-border p-0.5 text-center align-middle ${isToday ? "bg-primary/5" : ""}`}
+                    style={ringStyle}
+                    onMouseEnter={() => setHoveredCell(presenceKey)}
+                    onMouseLeave={() => setHoveredCell(null)}
                   >
                     <BlockDayLabels labels={getDayLabels(crew.id, day)} />
                     <div className="flex items-center justify-center text-muted opacity-60">
@@ -742,6 +760,9 @@ function MeasureCrewRows({
                 className={`border border-border/50 p-0.5 align-top text-[10px] transition-colors ${
                   isToday ? "bg-primary/5" : ""
                 } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+                style={ringStyle}
+                onMouseEnter={() => setHoveredCell(presenceKey)}
+                onMouseLeave={() => setHoveredCell(null)}
                 onDragOver={(e) => {
                   const order = draggedOrder;
                   const dragged = draggedAppointment;
@@ -853,6 +874,8 @@ function HourlyCrewRows({
   const crewColor = crewColorFor(crew);
   const hours = SERVICE_HOURS;
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
+  // Live presence (visual-only): report/highlight the hovered crew×day.
+  const { setHoveredCell, hoverColorFor } = usePresence();
 
   const dayApptsMap = useMemo(() => {
     const map = new Map<string, Appointment[]>();
@@ -955,6 +978,11 @@ function HourlyCrewRows({
             const isToday = isSameDay(day, today);
             const off = isCrewOffOnDay(crew, day);
             const dateStr = format(day, "yyyy-MM-dd");
+            const presenceKey = `${crew.id}|${dateStr}`;
+            const peerColor = hoverColorFor(presenceKey);
+            const ringStyle = peerColor
+              ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" as const }
+              : undefined;
 
             if (off) {
               if (hourIdx === 0) {
@@ -963,6 +991,9 @@ function HourlyCrewRows({
                     key={day.toISOString()}
                     rowSpan={hours.length}
                     className={`border border-border p-0.5 text-center align-middle ${isToday ? "bg-primary/5" : ""}`}
+                    style={ringStyle}
+                    onMouseEnter={() => setHoveredCell(presenceKey)}
+                    onMouseLeave={() => setHoveredCell(null)}
                   >
                     <BlockDayLabels labels={getDayLabels(crew.id, day)} />
                     <div className="flex items-center justify-center text-muted opacity-60">
@@ -990,6 +1021,9 @@ function HourlyCrewRows({
                 className={`border border-border/50 p-0.5 align-top text-[10px] transition-colors ${
                   isToday ? "bg-primary/5" : ""
                 } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+                style={ringStyle}
+                onMouseEnter={() => setHoveredCell(presenceKey)}
+                onMouseLeave={() => setHoveredCell(null)}
                 onDragOver={(e) => {
                   const order = draggedOrder;
                   const dragged = draggedAppointment;
