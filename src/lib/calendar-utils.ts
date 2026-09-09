@@ -403,7 +403,7 @@ export function checkDiscrepancy(
     if (rfDate !== appointment.scheduled_date) return true;
   }
   if (crews) {
-    const rfResource = getRForceResource(rf, appointment.appointment_type);
+    const rfResource = getRForceResource(rf);
     if (rfResource) {
       const crew = crews.find((c) => c.id === appointment.crew_id);
       if (!crew) return false;
@@ -449,7 +449,7 @@ export function getRForceItemsForDay(
     if (dateStr < startDate || dateStr > endDate) continue;
 
     const resourceName =
-      rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+      getRForceResource(rf);
     if (!resourceName) continue;
 
     const crew = matchCrewByName(resourceName, crews, mappings);
@@ -574,7 +574,7 @@ export function getRForceDisplayItems(
     if (dateStr < startDate || dateStr > endDate) continue;
 
     const resourceName =
-      rf.primary_resource || rf.tech_measure_name || rf.installer || rf.service_rep;
+      getRForceResource(rf);
     if (!resourceName) continue;
 
     const crew = matchCrewByName(resourceName, crews, mappings);

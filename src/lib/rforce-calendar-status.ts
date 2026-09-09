@@ -108,7 +108,7 @@ export function deriveRForceCalendarStatus(
     if (!linkedAppt) {
       // Only flag "needs_confirmation" if the rForce order is actually scheduled.
       // Unscheduled orders (no scheduled_start) are just reference data.
-      const isScheduledInRForce = !!rf.scheduled_start;
+      const isScheduledInRForce = !!rf.scheduled_start && !!getRForceResource(rf);
       return {
         rforceOrder: rf,
         status: (isScheduledInRForce ? "needs_confirmation" : "reference") as RForceCalendarStatus,
@@ -199,7 +199,7 @@ function detectMismatch(
   }
 
   // Resource/crew mismatch
-  const rfResource = getRForceResource(rf, appt.appointment_type);
+  const rfResource = getRForceResource(rf);
   if (rfResource && crewName && !resourceMatchesCrew(rfResource, appt.crew_id, crews, mappings)) {
     details.crew = { app: crewName, rforce: rfResource };
     hasMismatch = true;
@@ -243,7 +243,7 @@ function resourceMatchesCrew(
  * treated as reflected (we can't tell, so fall through to normal comparison).
  */
 export function isPhaseReflectedInRForce(rf: RForceOrder, appt: Appointment): boolean {
-  if (!rf.scheduled_start) return false;
+  if (!rf.scheduled_start || !getRForceResource(rf)) return false;
   const rfPhase = normalizeWoType(rf.work_order_type);
   return rfPhase === null || rfPhase === appt.appointment_type;
 }

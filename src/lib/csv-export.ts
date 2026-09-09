@@ -1,3 +1,4 @@
+import { getRForceResource } from "./normalize";
 /**
  * CSV export utilities for comparing app data against rForce imports.
  */
@@ -194,7 +195,7 @@ export function exportComparison(
   const rows = items.map((item) => {
     const a = item.appt;
     const rf = item.rf;
-    const rfResource = rf?.primary_resource || rf?.tech_measure_name || rf?.installer || rf?.service_rep || "";
+    const rfResource = (rf ? getRForceResource(rf) : null) || "";
     const rfDate = rf?.scheduled_start?.slice(0, 10) || "";
     const rfTime = rf?.scheduled_start?.slice(11, 16) || "";
     const appDate = a?.scheduled_date || "";

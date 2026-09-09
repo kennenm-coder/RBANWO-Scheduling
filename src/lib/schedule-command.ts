@@ -276,7 +276,7 @@ export function buildMoveUpdates(
     );
     if (rf && rf.scheduled_start) {
       const rfDate = rf.scheduled_start.slice(0, 10);
-      const rfResource = getRForceResource(rf, currentAppointment.appointment_type);
+      const rfResource = getRForceResource(rf);
       const targetCrew = allCrews.find((c) => c.id === target.crewId);
 
       // Compare TARGET position against rForce (not current position)

@@ -58,26 +58,26 @@ describe("getRForceResource (resource name extraction)", () => {
     expect(getRForceResource(rf)).toBe("Alpha Crew");
   });
 
-  it("falls back to tech_measure_name for a Tech Measure order", () => {
+  it("does not use the measure contact as an assignment", () => {
     const rf = makeRF({
       work_order_type: "Tech Measure",
       primary_resource: null,
       tech_measure_name: "Beta Tech",
     });
-    expect(getRForceResource(rf)).toBe("Beta Tech");
+    expect(getRForceResource(rf)).toBeNull();
   });
 
-  it("falls back to installer for an Install order", () => {
+  it("ignores installer when Primary Resource is blank", () => {
     const rf = makeRF({
       work_order_type: "Install",
       primary_resource: null,
       tech_measure_name: null,
       installer: "Gamma Install",
     });
-    expect(getRForceResource(rf)).toBe("Gamma Install");
+    expect(getRForceResource(rf)).toBeNull();
   });
 
-  it("falls back to service_rep for a Service order", () => {
+  it("ignores service rep when Primary Resource is blank", () => {
     const rf = makeRF({
       work_order_type: "Service",
       primary_resource: null,
@@ -85,7 +85,7 @@ describe("getRForceResource (resource name extraction)", () => {
       installer: null,
       service_rep: "Delta Service",
     });
-    expect(getRForceResource(rf)).toBe("Delta Service");
+    expect(getRForceResource(rf)).toBeNull();
   });
 
   it("does not attribute an Install to the measure tech when Primary Resource is blank", () => {

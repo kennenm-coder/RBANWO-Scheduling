@@ -210,72 +210,9 @@ type RForceResourceFields = {
 };
 
 /**
- * The rForce role column that names the resource for a given appointment type.
- * Returns `null` for types with no dedicated column (or an unknown type), so
- * callers never guess a resource across roles.
+ * Primary Resource is the only rForce appointment assignment. A blank value
+ * means rForce has not scheduled the assignment yet; job contacts are not fallbacks.
  */
-function roleColumnForType(
-  order: RForceResourceFields,
-  type: AppointmentType | null
-): string | null {
-  switch (type) {
-    case "tech_measure":
-      return order.tech_measure_name || null;
-    case "install":
-    case "lswp":
-    case "hoa":
-    case "paint_stain":
-      return order.installer || null;
-    case "service":
-    case "jip":
-    case "job_site_visit":
-      return order.service_rep || null;
-    default:
-      return null;
-  }
-}
-
-/**
- * Role column matched to the order's OWN rForce work-order type. Used as a
- * display fallback when the generic `primary_resource` column is blank.
- */
-function typeMatchedResource(order: RForceResourceFields): string | null {
-  return roleColumnForType(order, normalizeWoType(order.work_order_type));
-}
-
-/**
- * Pick the assigned resource name from an rForce order.
- *
- * Two modes:
- *
- * 1. `appType` given (comparing against a specific app appointment) — return the
- *    resource for THAT phase. The role column matching `appType` is authoritative
- *    (e.g. `installer` for an install). If it's blank, we trust the generic
- *    `primary_resource` ONLY when rForce's own work-order type is the same phase;
- *    otherwise we return `null` (non-comparable). This is what prevents a
- *    just-scheduled install from being falsely attributed to the measure tech:
- *    the shared work order is still typed "Tech Measure" in rForce with the
- *    measure tech in `tech_measure_name`, so for an install appointment we look
- *    at the (blank) `installer` column and correctly report "no install resource
- *    assigned yet" instead of flagging the measure tech as a crew mismatch.
- *
- * 2. `appType` omitted (display use, e.g. "who does rForce show on this order") —
- *    `primary_resource` first, then the role column matching rForce's own type.
- *
- * A `null` result means "rForce hasn't assigned this yet"; callers treat it as
- * non-comparable (no mismatch), never as an assignment to another role's person.
- */
-export function getRForceResource(
-  order: RForceResourceFields,
-  appType?: AppointmentType | null
-): string | null {
-  if (appType) {
-    const role = roleColumnForType(order, appType);
-    if (role) return role;
-    if (normalizeWoType(order.work_order_type) === appType) {
-      return order.primary_resource || null;
-    }
-    return null;
-  }
-  return order.primary_resource || typeMatchedResource(order) || null;
+export function getRForceResource(order: RForceResourceFields): string | null {
+  return order.primary_resource?.trim() || null;
 }

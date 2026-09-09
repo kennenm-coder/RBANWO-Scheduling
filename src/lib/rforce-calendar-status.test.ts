@@ -269,6 +269,15 @@ describe("deriveRForceCalendarStatus", () => {
     expect(result[0].status).toBe("synced");
   });
 
+  it("awaits rForce when Primary Resource is blank despite old job contacts and dates", () => {
+    const rf = makeRForceOrder({ primary_resource: " ", installer: "Old Installer", service_rep: "Old Service", scheduled_start: "2026-08-01T10:00:00" });
+    const appt = makeAppointment({ scheduled_date: "2026-08-14" });
+    const result = deriveRForceCalendarStatus([rf], [appt], [], crews);
+    expect(result[0].status).toBe("awaiting_rforce");
+    expect(result[0].mismatchDetails).toBeUndefined();
+    expect(deriveRForceCalendarStatus([rf], [], [], crews)[0].status).toBe("reference");
+  });
+
   it("returns mismatch when crew/resource differs", () => {
     const rf = makeRForceOrder({
       scheduled_start: "2026-08-14T10:00:00",
