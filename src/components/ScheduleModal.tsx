@@ -37,6 +37,7 @@ import { fetchAccountSuggestions, AccountSuggestion, createAppointmentEvent } fr
 import { executeScheduleMove } from "@/lib/schedule-command";
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { deriveTimesFromOrder } from "@/lib/rforce-times";
+import { isPlausibleScheduleDate, DATE_INPUT_MIN, DATE_INPUT_MAX } from "@/lib/date-guard";
 import { useData } from "./DataProvider";
 import { useCurrentActor } from "./AuthProvider";
 import { X, AlertTriangle, AlertCircle, MapPin, ChevronDown, ChevronRight, Users } from "lucide-react";
@@ -306,6 +307,13 @@ export default function ScheduleModal({
       setError("A reason is required when rescheduling.");
       return;
     }
+    // Reject an impossible date (e.g. a 2-digit year typed as 0026) before it
+    // can save an appointment that would vanish from the calendar yet still
+    // block its work order. See src/lib/date-guard.ts.
+    if (!isPlausibleScheduleDate(selectedDate)) {
+      setError("That date looks wrong — please pick a valid day (check the year).");
+      return;
+    }
 
     setSaving(true);
     setError("");
@@ -560,8 +568,16 @@ export default function ScheduleModal({
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
+                min={DATE_INPUT_MIN}
+                max={DATE_INPUT_MAX}
+                aria-invalid={!isPlausibleScheduleDate(selectedDate)}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
               />
+              {selectedDate && !isPlausibleScheduleDate(selectedDate) && (
+                <p className="mt-1 text-xs text-red-500">
+                  That date looks wrong — check the year.
+                </p>
+              )}
             </div>
           </div>
 
