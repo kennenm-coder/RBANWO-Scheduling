@@ -430,8 +430,13 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       if (result) {
         // Remove from calendar
         setAppointments((prev) => prev.filter((a) => a.id !== id));
-        // Add to unscheduled
-        setUnscheduledAppointments((prev) => [...prev, result]);
+        // Add to unscheduled — dedupe by id: the realtime handler may have
+        // landed first, and a second copy showed twice in the queue.
+        setUnscheduledAppointments((prev) =>
+          prev.find((a) => a.id === result.id)
+            ? prev.map((a) => (a.id === result.id ? result : a))
+            : [...prev, result]
+        );
       }
     },
     []

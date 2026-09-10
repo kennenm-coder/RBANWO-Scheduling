@@ -191,6 +191,14 @@ export default function UnscheduledQueue() {
       await mergeRForce(mergeConfirmItem.fuzzyMatch.appointment, mergeConfirmItem.rforceOrder);
     } catch (err) {
       console.error("Merge failed:", err);
+      // The confirm dialog closes either way — say so, or a failed merge looks
+      // exactly like a successful one.
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(
+        msg.includes("DUPLICATE_WO")
+          ? "Merge failed: that work order is already on another active appointment."
+          : `Merge failed: ${msg.replace(/^SCHEDULING_CONFLICT:\s*/, "")}`
+      );
     } finally {
       setMergingId(null);
       setMergeConfirmItem(null);

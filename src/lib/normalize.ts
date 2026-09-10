@@ -107,13 +107,17 @@ export function timeBlockMatchesHour(
   if (block === "full_day") return true;
 
   // For timed blocks, allow the rForce hour to be anywhere within the block's range.
-  // e.g., "4-6" block → hours 16 and 17 are both valid (16:00–17:59)
+  // e.g., "4-6" block → hours 16 and 17 are both valid (16:00–17:59).
+  // The edge blocks absorb the whole tail of the day, matching how the calendar
+  // PLACES an rForce hour (crew-match timeToBlock: <10 → 9-10, ≥16 → 4-6). With
+  // narrower ranges an 08:00 or 18:00 rForce time was placed correctly and then
+  // flagged as a time mismatch that "Accept rForce time" could never clear.
   const blockRanges: Record<TimeBlock, [number, number]> = {
-    "9-10": [9, 9],
+    "9-10": [0, 9],
     "10-12": [10, 11],
     "12-2": [12, 13],
     "2-4": [14, 15],
-    "4-6": [16, 17],
+    "4-6": [16, 23],
     full_day: [8, 16],
   };
 

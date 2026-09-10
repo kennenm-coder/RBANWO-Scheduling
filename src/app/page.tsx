@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { addDays, subDays, startOfWeek, addWeeks, subWeeks, parseISO, format } from "date-fns";
+import { addDays, subDays, startOfWeek, addWeeks, subWeeks, parseISO, format, isValid } from "date-fns";
+import { isPlausibleScheduleDate } from "@/lib/date-guard";
 import { useSearchParams } from "next/navigation";
 import { useSwipe } from "@/hooks/useSwipe";
 import { useData } from "@/components/DataProvider";
@@ -48,7 +49,10 @@ export default function CalendarPage() {
     const viewParam = searchParams.get("view") as ViewMode | null;
     const crewParam = searchParams.get("crew");
     if (dateParam) {
-      try { setCurrentDate(parseISO(dateParam)); } catch {}
+      // parseISO never throws — it returns Invalid Date, which then crashed the
+      // header's format(). Only jump when the date is real and plausible.
+      const parsed = parseISO(dateParam);
+      if (isValid(parsed) && isPlausibleScheduleDate(dateParam)) setCurrentDate(parsed);
     }
     if (viewParam === "day" || viewParam === "week" || viewParam === "block") {
       setViewMode(viewParam);
@@ -68,7 +72,10 @@ export default function CalendarPage() {
     const dateParam = params.get("date");
     const viewParam = params.get("view") as ViewMode | null;
     if (dateParam) {
-      try { setCurrentDate(parseISO(dateParam)); } catch {}
+      // parseISO never throws — it returns Invalid Date, which then crashed the
+      // header's format(). Only jump when the date is real and plausible.
+      const parsed = parseISO(dateParam);
+      if (isValid(parsed) && isPlausibleScheduleDate(dateParam)) setCurrentDate(parsed);
     }
     if (viewParam === "day" || viewParam === "week" || viewParam === "block") {
       setViewMode(viewParam);

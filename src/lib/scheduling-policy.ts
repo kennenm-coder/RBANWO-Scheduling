@@ -123,12 +123,14 @@ export function resolveScheduleTimes(
     };
   }
 
-  // timed mode
+  // timed mode — a timed job never carries a block. Passing one through (e.g. a
+  // "full_day" left over from a type change) is exactly what put timed rows on
+  // the all-day grid.
   const defaults = getDefaultTimes(type);
   return {
     start: opts.startTime || defaults.start,
     end: opts.endTime || defaults.end,
-    timeBlock: opts.timeBlock || null,
+    timeBlock: null,
   };
 }
 

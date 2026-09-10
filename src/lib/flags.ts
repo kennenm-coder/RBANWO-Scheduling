@@ -39,6 +39,7 @@ import {
 } from "./normalize";
 import { checkSchedulingConflicts } from "./scheduling-validation";
 import { getCrewAvailability } from "./availability";
+import { getSchedulingMode } from "./scheduling-policy";
 import { parseISO } from "date-fns";
 
 /** Build a stable fingerprint string for deduplication and resolution matching. */
@@ -217,8 +218,10 @@ function detectLiveAppFlags(
       }
     }
 
-    // ── Missing time block (scheduled but no time block) ──
-    if (!appt.time_block) {
+    // ── Missing time block (a measure or install scheduled without its block) ──
+    // Timed types (service/JIP/…) legitimately carry no block; measures carry a
+    // measure block and installs carry "full_day".
+    if (!appt.time_block && getSchedulingMode(appt.appointment_type) !== "timed") {
       flags.push(
         makeFlag("live_app", "missing_time", "warning",
           `${appt.customer_name} on ${appt.scheduled_date}: no time block assigned`,

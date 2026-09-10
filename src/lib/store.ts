@@ -26,6 +26,7 @@ import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-va
 import { checkAvailabilityConflict } from "./availability";
 import { deriveTimesFromOrder } from "./rforce-times";
 import { getSchedulingMode, deriveOccupancy } from "./scheduling-policy";
+import { clampMultiDaySpan } from "./scheduling-limits";
 
 // ── Crews ──
 
@@ -489,6 +490,18 @@ export async function linkAppointment(
   const sb = getSupabase();
   if (!sb) throw new Error("No database connection");
 
+  // Stamp the work order on the appointment FIRST. If another active row already
+  // holds that work order, this is what fails (DUPLICATE_WO) — and nothing has
+  // been inserted yet. Inserting the link first left an orphaned, active link
+  // row behind whenever the appointment update was rejected.
+  await updateAppointment(appointmentId, appointmentVersion, {
+    work_order_number: rforceOrder.work_order_number,
+    order_number: rforceOrder.order_number,
+    salesforce_url: rforceOrder.work_order_number
+      ? `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${rforceOrder.work_order_number}`
+      : null,
+  });
+
   const { data: link, error: linkError } = await sb
     .from("sched_appointment_links")
     .insert({
@@ -506,16 +519,8 @@ export async function linkAppointment(
     if (linkError.code === "23505") {
       throw new Error("ALREADY_LINKED");
     }
-    throw linkError;
+    throw new Error(linkError.message || "Failed to link appointment");
   }
-
-  await updateAppointment(appointmentId, appointmentVersion, {
-    work_order_number: rforceOrder.work_order_number,
-    order_number: rforceOrder.order_number,
-    salesforce_url: rforceOrder.work_order_number
-      ? `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${rforceOrder.work_order_number}`
-      : null,
-  });
 
   return link as AppointmentLink;
 }
@@ -968,7 +973,9 @@ export async function approveRForceOrder(
     if (startDate !== endDate) {
       const diffMs = new Date(endDate).getTime() - new Date(startDate).getTime();
       const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1;
-      if (diffDays > 1 && diffDays <= 14) durationDays = diffDays;
+      // Clamp to the calendar's longest tile instead of silently collapsing a
+      // 15+-day range to a single day (which then read as "under-scheduled").
+      if (diffDays > 1) durationDays = clampMultiDaySpan(diffDays);
     }
   }
 
@@ -985,7 +992,8 @@ export async function approveRForceOrder(
       null,
       availability.rules,
       availability.exceptions,
-      availability.blocks
+      availability.blocks,
+      { start, end }
     );
     if (blocked) {
       throw new Error(

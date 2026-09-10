@@ -25,6 +25,7 @@ import {
 import { buildSalesforceUrl } from "./salesforce";
 import { normalizeWoType } from "./normalize";
 import { learnResourceMapping } from "./resource-learning";
+import { getSchedulingMode, resolveScheduleTimes, deriveOccupancy } from "./scheduling-policy";
 
 export interface MergeResult {
   appointment: Appointment;
@@ -85,6 +86,32 @@ export function buildMergeUpdates(
   if (mappedType !== null && mappedType !== appointment.appointment_type) {
     updates.appointment_type = mappedType;
     fieldsUpdated.push("appointment_type");
+
+    // A type change that changes the scheduling MODE (install → service, say)
+    // must re-derive the placement fields, or a now-timed job keeps its
+    // all-day block — the corruption 20260827_001 repaired. Same-mode changes
+    // (service → JIP) keep their times untouched.
+    const newMode = getSchedulingMode(mappedType);
+    if (appointment.scheduled_date && newMode !== getSchedulingMode(appointment.appointment_type)) {
+      const resolved = resolveScheduleTimes(
+        mappedType,
+        newMode === "timed"
+          ? { startTime: appointment.start_time, endTime: appointment.end_time }
+          : { timeBlock: appointment.time_block }
+      );
+      const occupancy = deriveOccupancy({
+        timeBlock: resolved.timeBlock,
+        startTime: resolved.start,
+        endTime: resolved.end,
+      });
+      updates.time_block = resolved.timeBlock;
+      updates.time_block_end = null;
+      updates.start_time = resolved.start;
+      updates.end_time = resolved.end;
+      updates.is_full_day = occupancy.is_full_day;
+      updates.resource_hours = occupancy.resource_hours;
+      fieldsUpdated.push("scheduling");
+    }
   }
 
   if (rforceOrder.work_order_number) {

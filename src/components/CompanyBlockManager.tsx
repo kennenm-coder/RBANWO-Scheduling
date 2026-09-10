@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useData } from "./DataProvider";
 import { CalendarBlock, CalendarBlockKind } from "@/lib/types";
+import { DATE_INPUT_MIN, DATE_INPUT_MAX } from "@/lib/date-guard";
 import { formatDateStr } from "@/lib/calendar-utils";
 import { format } from "date-fns";
 import { CalendarOff, Plus, Trash2, X, Building2, PartyPopper } from "lucide-react";
@@ -168,6 +169,8 @@ export default function CompanyBlockManager() {
               <input
                 type="date"
                 value={startDate}
+                min={DATE_INPUT_MIN}
+                max={DATE_INPUT_MAX}
                 onChange={(e) => setStartDate(e.target.value)}
                 className="w-full px-3 py-2 border border-border rounded-lg bg-background text-sm"
               />
@@ -177,7 +180,8 @@ export default function CompanyBlockManager() {
               <input
                 type="date"
                 value={endDate}
-                min={startDate}
+                min={startDate || DATE_INPUT_MIN}
+                max={DATE_INPUT_MAX}
                 onChange={(e) => setEndDate(e.target.value)}
                 className="w-full px-3 py-2 border border-border rounded-lg bg-background text-sm"
               />

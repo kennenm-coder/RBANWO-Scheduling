@@ -378,7 +378,10 @@ export function checkAvailabilityConflict(
   timeBlockEnd: TimeBlock | null | undefined,
   rules: AvailabilityRule[],
   exceptions: AvailabilityException[],
-  companyBlocks: CalendarBlock[] = []
+  companyBlocks: CalendarBlock[] = [],
+  /** Timed window (HH:MM) for work with no block — lets a partial Late/Office
+   *  window gate a service the way it gates a measure block. */
+  window?: { start: string; end: string } | null
 ): AvailabilityConflictInfo | null {
   if (!crewId || !startDate) return null;
 
@@ -387,7 +390,9 @@ export function checkAvailabilityConflict(
       ? [...MEASURE_TIME_BLOCKS]
       : timeBlock
         ? getSpannedBlocks({ time_block: timeBlock, time_block_end: timeBlockEnd ?? null } as never)
-        : [];
+        : window
+          ? MEASURE_TIME_BLOCKS.filter((b) => blockOverlapsRange(b, window.start, window.end))
+          : [];
 
   const start = parseISO(startDate);
   for (let d = 0; d < Math.max(1, durationDays); d++) {

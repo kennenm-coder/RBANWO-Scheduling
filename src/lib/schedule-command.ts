@@ -32,6 +32,17 @@ function hourToFixedBlock(hour: number): TimeBlock {
   return "4-6";
 }
 
+/** Latest start that still leaves a half-hour inside the 09:00–18:00 measure grid. */
+const MEASURE_GRID_START = "09:00";
+const MEASURE_GRID_LAST_START = "17:30";
+
+/** Clamp an HH:MM start into the measure grid. */
+function clampToMeasureGrid(time: string): string {
+  if (time < MEASURE_GRID_START) return MEASURE_GRID_START;
+  if (time > MEASURE_GRID_LAST_START) return MEASURE_GRID_LAST_START;
+  return time;
+}
+
 // ── Types ──
 
 export interface ScheduleMoveTarget {
@@ -195,6 +206,7 @@ export function validateMove(
       availabilityRules,
       availabilityExceptions,
       calendarBlocks,
+      { start: resolved.startTime, end: resolved.endTime },
     );
     if (block) {
       const crewName = allCrews.find((c) => c.id === target.crewId)?.name || "This crew";
@@ -296,8 +308,13 @@ export function resolveMoveTimes(
       currentAppointment.start_time || "10:00",
       currentAppointment.end_time || "12:00"
     );
-    startTime = snapTo30Min(target.startTime);
-    endTime = target.endTime || addMinutesToTime(startTime, origDuration);
+    // Measure blocks run 09:00–18:00; a drop outside that (e.g. 05:00) would
+    // store a time no block represents. Clamp into the grid, keeping duration.
+    startTime = clampToMeasureGrid(snapTo30Min(target.startTime));
+    endTime =
+      target.endTime && isValidTimeRange(startTime, target.endTime)
+        ? target.endTime
+        : addMinutesToTime(startTime, origDuration);
     timeBlock = hourToFixedBlock(parseInt(startTime.slice(0, 2), 10));
   } else if (mode === "fixed_block") {
     // Block-grid placement, or a crew/date move that keeps the block. A measure
@@ -502,11 +519,14 @@ export async function executeScheduleMove(
   // 3. Check for no-op. Overlap / availability overrides must always persist
   // (they flip allow_overlap / allow_availability_conflict), so exclude them —
   // otherwise confirming an override reports success but writes nothing.
+  // Times compare as HH:MM: the DB returns "10:00:00", so an unchanged edit
+  // used to look like a change and bump the version + log an event every save.
+  const hhmm = (t: string | null | undefined) => (t || "").slice(0, 5);
   if (
     updates.crew_id === currentAppointment.crew_id &&
     updates.scheduled_date === currentAppointment.scheduled_date &&
-    updates.start_time === currentAppointment.start_time &&
-    updates.end_time === currentAppointment.end_time &&
+    hhmm(updates.start_time) === hhmm(currentAppointment.start_time) &&
+    hhmm(updates.end_time) === hhmm(currentAppointment.end_time) &&
     updates.time_block === currentAppointment.time_block &&
     updates.time_block_end === currentAppointment.time_block_end &&
     !!updates.allow_overlap === !!currentAppointment.allow_overlap &&
