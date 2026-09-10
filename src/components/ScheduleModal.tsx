@@ -38,6 +38,13 @@ import { executeScheduleMove } from "@/lib/schedule-command";
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { deriveTimesFromOrder } from "@/lib/rforce-times";
 import { isPlausibleScheduleDate, DATE_INPUT_MIN, DATE_INPUT_MAX } from "@/lib/date-guard";
+
+/** The DB resource-conflict trigger names the clashing row by id; say it in words. */
+function friendlyConflictMessage(detail: string): string {
+  return /resource is already assigned to appointment/i.test(detail)
+    ? "This crew is already booked for those days."
+    : detail;
+}
 import { useData } from "./DataProvider";
 import { useCurrentActor } from "./AuthProvider";
 import { X, AlertTriangle, AlertCircle, MapPin, ChevronDown, ChevronRight, Users } from "lucide-react";
@@ -464,6 +471,9 @@ export default function ScheduleModal({
           // Tag when the scheduler knowingly booked over a blocked availability
           // window so the availability_conflict flag is suppressed.
           allow_availability_conflict: bypassAvailability || availabilityOverridden,
+          // Tag when the scheduler confirmed booking over an occupied slot so the
+          // double-booking index and resource-conflict trigger skip this row.
+          allow_overlap: allowOverlap,
           // Capture immutable snapshot of manual entry for later reconciliation
           original_entry_snapshot: captureOriginalEntry({
             customer_name: customerName,
@@ -504,7 +514,11 @@ export default function ScheduleModal({
           "This appointment was modified by someone else. Please close and try again."
         );
       } else if (msg.includes("SCHEDULING_CONFLICT")) {
-        setError(msg.replace("SCHEDULING_CONFLICT: ", ""));
+        // Same override the edit path offers: confirm to book over the occupied
+        // slot (sets allow_overlap) instead of dead-ending on the error.
+        const detail = friendlyConflictMessage(msg.replace("SCHEDULING_CONFLICT: ", ""));
+        if (!allowOverlap) setOverlapPrompt(detail);
+        else setError(detail);
       } else if (msg.includes("DUPLICATE_WO")) {
         setError("A work order with this number is already scheduled.");
       } else {

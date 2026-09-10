@@ -362,7 +362,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     async (
       appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>
     ) => {
-      const result = await createApptInDb(appt);
+      // Forward the loaded appointments so the client-side conflict pre-check
+      // runs for every caller (friendly "X has a multi-day job on <date>"
+      // message + overlap override) before the DB trigger ever fires.
+      const result = await createApptInDb(appt, appointments);
       if (result) {
         if (result.status === "unscheduled") {
           setUnscheduledAppointments((prev) => [...prev, result]);
@@ -375,7 +378,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       }
       return result;
     },
-    []
+    [appointments]
   );
 
   const handleUpdate = useCallback(
