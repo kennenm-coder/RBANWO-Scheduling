@@ -143,16 +143,22 @@ function detectLiveAppFlags(
       );
     }
 
-    // ── Double booking (covers multi-day, multi-block, and full-day conflicts) ──
-    if (appt.time_block && appt.scheduled_date) {
+    // ── Double booking (covers multi-day, multi-block, full-day and timed conflicts) ──
+    if (appt.scheduled_date) {
       const conflicts = checkSchedulingConflicts(
         appt.crew_id,
         appt.scheduled_date,
         appt.duration_days,
-        appt.time_block,
+        appt.time_block ?? null,
         appt.time_block_end,
         active,
-        appt.id
+        appt.id,
+        {
+          startTime: appt.start_time,
+          endTime: appt.end_time,
+          isFullDay: appt.is_full_day,
+          extraCrewIds: [appt.secondary_crew_id, appt.tertiary_crew_id],
+        }
       );
       for (const conflict of conflicts) {
         // Only flag once per pair: the appointment with the lower ID reports it

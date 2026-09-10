@@ -31,11 +31,14 @@ interface Props {
   stale?: boolean;
   /** Escalation tier: `likely_cancel` (missed ≥2 exports) shows red instead of amber. */
   dropTier?: "present" | "possible_cancel" | "likely_cancel";
-  /** override bypasses the double-booking guard (intentional same-slot overlap). */
-  onApprove: (override?: boolean) => Promise<void>;
+  /** override bypasses the double-booking guard (intentional same-slot overlap);
+   *  availabilityOverride books onto a blocked availability window on purpose. */
+  onApprove: (override?: boolean, availabilityOverride?: boolean) => Promise<void>;
   onDismiss: () => Promise<void>;
   onClick?: () => void;
 }
+
+type ConflictKind = "double_book" | "availability" | "duplicate";
 
 export default function ApprovalCard({
   rforceOrder,
@@ -51,10 +54,14 @@ export default function ApprovalCard({
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
   // "double_book" → same crew booked into the same slot: an override can place
-  // both here. "duplicate" → this same job is already on the calendar elsewhere:
-  // there's nothing to override; the fix is to move the existing one.
-  const [conflictKind, setConflictKind] = useState<"double_book" | "duplicate" | null>(null);
+  // both here. "availability" → the crew is blocked (PTO / Unavailable / company
+  // block) that day: an override can book anyway. "duplicate" → this same job
+  // is already on the calendar elsewhere: nothing to override; move that one.
+  const [conflictKind, setConflictKind] = useState<ConflictKind | null>(null);
   const [override, setOverride] = useState(false);
+  // Overrides already confirmed this attempt — a job can hit BOTH gates in turn,
+  // and the second confirmation must carry the first one along.
+  const [granted, setGranted] = useState({ overlap: false, availability: false });
   const borderColor = crewColorFor(crew, "#888");
   const city = parseCity(rforceOrder.address || "");
   // Drop escalation: red once the order has missed enough exports to be a likely
@@ -65,18 +72,28 @@ export default function ApprovalCard({
   async function runApprove(useOverride: boolean) {
     setLoading(true);
     setError(null);
+    const next = {
+      overlap: granted.overlap || (useOverride && conflictKind === "double_book"),
+      availability: granted.availability || (useOverride && conflictKind === "availability"),
+    };
     try {
-      await onApprove(useOverride);
+      await onApprove(next.overlap, next.availability);
       setConflict(null);
       setConflictKind(null);
       setOverride(false);
+      setGranted({ overlap: false, availability: false });
     } catch (err: unknown) {
       const msg = errorMessage(err);
+      setGranted(next);
+      setOverride(false);
       if (msg.includes("SCHEDULING_CONFLICT") || msg.includes("DOUBLE_BOOK")) {
         setConflictKind("double_book");
         setConflict(
           msg.replace(/^(Error:\s*)?SCHEDULING_CONFLICT:\s*/, "").replace(/^DOUBLE_BOOK$/, "That crew slot is already booked.").slice(0, 200)
         );
+      } else if (msg.includes("AVAILABILITY_CONFLICT")) {
+        setConflictKind("availability");
+        setConflict(msg.replace(/^(Error:\s*)?AVAILABILITY_CONFLICT:\s*/, "").slice(0, 200));
       } else if (msg.includes("DUPLICATE_WO")) {
         setConflictKind("duplicate");
         setConflict(msg.replace(/^(Error:\s*)?DUPLICATE_WO:\s*/, "").slice(0, 200));
@@ -110,10 +127,13 @@ export default function ApprovalCard({
     setConflict(null);
     setConflictKind(null);
     setOverride(false);
+    setGranted({ overlap: false, availability: false });
     setError(null);
   }
 
   const isDouble = conflictKind === "double_book";
+  const isAvail = conflictKind === "availability";
+  const canOverride = isDouble || isAvail;
   const customer = rforceOrder.customer_name || "This order";
 
   const overrideModal =
@@ -132,19 +152,21 @@ export default function ApprovalCard({
           <div className="mb-2 flex items-center gap-2">
             <AlertTriangle size={16} className="text-amber-500 shrink-0" />
             <h3 className="text-sm font-semibold">
-              {isDouble ? "Slot already booked" : "Already on the calendar"}
+              {isDouble ? "Slot already booked" : isAvail ? "Crew is blocked that day" : "Already on the calendar"}
             </h3>
           </div>
           <p className="mb-1 text-xs text-foreground/80">
             {isDouble
               ? `You're placing ${customer} where the crew is already booked:`
-              : `${customer} can't be approved again:`}
+              : isAvail
+                ? `You're placing ${customer} on a day this crew is marked unavailable:`
+                : `${customer} can't be approved again:`}
           </p>
           <p className="mb-3 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs">
             {conflict}
           </p>
 
-          {isDouble ? (
+          {canOverride ? (
             <>
               <label className="mb-3 flex cursor-pointer items-start gap-2 text-xs">
                 <input
@@ -153,7 +175,11 @@ export default function ApprovalCard({
                   onChange={(e) => setOverride(e.target.checked)}
                   className="mt-0.5 shrink-0"
                 />
-                <span>Yes, book both here on purpose (allow the overlap).</span>
+                <span>
+                  {isDouble
+                    ? "Yes, book both here on purpose (allow the overlap)."
+                    : "Yes, book it here anyway (the crew will work through the block)."}
+                </span>
               </label>
               {error && <div className="mb-2 text-[11px] text-red-500">{error}</div>}
               <div className="flex gap-2">

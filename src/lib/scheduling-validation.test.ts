@@ -37,6 +37,72 @@ function makeAppt(overrides: Partial<Appointment> & { id: string }): Appointment
   };
 }
 
+describe("timed, full-day and helper-crew footprints (audit H4 / M3)", () => {
+  it("detects two overlapping timed jobs on the same crew (no block on either side)", () => {
+    const existing = [
+      makeAppt({ id: "svc-1", appointment_type: "service", time_block: null, start_time: "09:00", end_time: "11:00" }),
+    ];
+    const conflicts = checkSchedulingConflicts(
+      "crew-1", "2026-08-10", 1, null, null, existing, undefined,
+      { startTime: "10:00", endTime: "12:00" }
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].reason).toBe("time_overlap");
+    expect(formatConflictMessage(conflicts[0])).toContain("09:00–11:00");
+  });
+
+  it("lets back-to-back timed jobs through", () => {
+    const existing = [
+      makeAppt({ id: "svc-1", appointment_type: "service", time_block: null, start_time: "09:00", end_time: "11:00" }),
+    ];
+    expect(
+      checkSchedulingConflicts("crew-1", "2026-08-10", 1, null, null, existing, undefined, { startTime: "11:00", endTime: "12:00" })
+    ).toHaveLength(0);
+  });
+
+  it("an existing full-day job blocks a timed one", () => {
+    const existing = [makeAppt({ id: "install-1" })]; // install, full_day
+    const conflicts = checkSchedulingConflicts(
+      "crew-1", "2026-08-10", 1, null, null, existing, undefined, { startTime: "10:00", endTime: "11:00" }
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].reason).toBe("full_day_conflict");
+  });
+
+  it("a new all-day install (isFullDay flag) collides with an existing timed job", () => {
+    const existing = [
+      makeAppt({ id: "svc-1", appointment_type: "service", time_block: null, start_time: "09:00", end_time: "11:00" }),
+    ];
+    const conflicts = checkSchedulingConflicts(
+      "crew-1", "2026-08-10", 1, null, null, existing, undefined, { startTime: "08:00", endTime: "16:00", isFullDay: true }
+    );
+    expect(conflicts).toHaveLength(1);
+  });
+
+  it("a measure block collides with a timed job inside its window (dual-role crew)", () => {
+    const existing = [
+      makeAppt({ id: "m-1", appointment_type: "tech_measure", time_block: "10-12", start_time: "10:00", end_time: "12:00" }),
+    ];
+    const conflicts = checkSchedulingConflicts(
+      "crew-1", "2026-08-10", 1, null, null, existing, undefined, { startTime: "11:00", endTime: "11:30" }
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].reason).toBe("time_overlap");
+  });
+
+  it("checks the NEW booking's helper crews too", () => {
+    const existing = [
+      makeAppt({ id: "svc-1", crew_id: "crew-2", appointment_type: "service", time_block: null, start_time: "09:00", end_time: "11:00" }),
+    ];
+    const conflicts = checkSchedulingConflicts(
+      "crew-1", "2026-08-10", 1, null, null, existing, undefined,
+      { startTime: "09:30", endTime: "10:00", extraCrewIds: ["crew-2"] }
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].conflictingAppointmentId).toBe("svc-1");
+  });
+});
+
 describe("checkSchedulingConflicts", () => {
   it("detects same crew, same date, same block conflict", () => {
     const existing = [

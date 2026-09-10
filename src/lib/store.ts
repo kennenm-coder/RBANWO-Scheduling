@@ -23,6 +23,7 @@ import { buildSalesforceUrl } from "./salesforce";
 import { normalizeWoType } from "./normalize";
 import { learnResourceMapping } from "./resource-learning";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
+import { checkAvailabilityConflict } from "./availability";
 import { deriveTimesFromOrder } from "./rforce-times";
 import { getSchedulingMode, deriveOccupancy } from "./scheduling-policy";
 
@@ -115,17 +116,25 @@ export async function createAppointment(
   appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>,
   existingAppointments?: Appointment[]
 ): Promise<Appointment | null> {
-  // Pre-write conflict check — catches multi-day, multi-block, full-day, and secondary/tertiary crew conflicts
-  // that the DB's partial unique index cannot detect. Skipped when the scheduler
-  // confirmed booking over the occupied slot (allow_overlap), same as updates.
-  if (existingAppointments && !appt.allow_overlap && appt.crew_id && appt.scheduled_date && appt.time_block) {
+  // Pre-write conflict check — catches multi-day, multi-block, full-day, timed
+  // and helper-crew conflicts that the DB's partial unique index cannot detect.
+  // Skipped when the scheduler confirmed booking over the occupied slot
+  // (allow_overlap), same as updates.
+  if (existingAppointments && !appt.allow_overlap && appt.crew_id && appt.scheduled_date) {
     const conflicts = checkSchedulingConflicts(
       appt.crew_id,
       appt.scheduled_date,
       appt.duration_days ?? 1,
-      appt.time_block,
+      appt.time_block ?? null,
       appt.time_block_end ?? null,
       existingAppointments,
+      undefined,
+      {
+        startTime: appt.start_time,
+        endTime: appt.end_time,
+        isFullDay: appt.is_full_day,
+        extraCrewIds: [appt.secondary_crew_id, appt.tertiary_crew_id],
+      },
     );
     if (conflicts.length > 0) {
       throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
@@ -148,32 +157,41 @@ export async function updateAppointment(
   updates: Partial<Appointment>,
   existingAppointments?: Appointment[]
 ): Promise<Appointment | null> {
-  // Pre-write conflict check when scheduling fields are changing.
-  // Only runs when the caller provides existing appointments AND the update touches scheduling fields.
-  if (existingAppointments && (updates.crew_id || updates.scheduled_date || updates.time_block)) {
+  // Pre-write conflict check when the update touches anything about WHERE or
+  // WHEN the job sits (crew, helpers, date, times, block, span, day count, or a
+  // return to the calendar). Only runs when the caller provides existing
+  // appointments; skipped when the write itself grants an overlap override.
+  const PLACEMENT_KEYS: (keyof Appointment)[] = [
+    "crew_id", "secondary_crew_id", "tertiary_crew_id", "scheduled_date",
+    "start_time", "end_time", "time_block", "time_block_end", "duration_days",
+    "is_full_day", "status",
+  ];
+  const touchesPlacement = PLACEMENT_KEYS.some((k) => k in updates);
+  if (existingAppointments && touchesPlacement && !updates.allow_overlap) {
     // Merge updates with current appointment to get the full picture.
     // Find the current appointment in the provided list so we can fill in unchanged fields.
     const current = existingAppointments.find((a) => a.id === id);
-    if (current) {
-      const crewId = updates.crew_id ?? current.crew_id;
-      const scheduledDate = updates.scheduled_date ?? current.scheduled_date;
-      const timeBlock = updates.time_block ?? current.time_block;
-      const durationDays = updates.duration_days ?? current.duration_days;
-      const timeBlockEnd = updates.time_block_end ?? current.time_block_end;
-
-      if (crewId && scheduledDate && timeBlock) {
-        const conflicts = checkSchedulingConflicts(
-          crewId,
-          scheduledDate,
-          durationDays ?? 1,
-          timeBlock,
-          timeBlockEnd ?? null,
-          existingAppointments,
-          id, // exclude self
-        );
-        if (conflicts.length > 0) {
-          throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
-        }
+    const merged = current ? { ...current, ...updates } : null;
+    // A row leaving the calendar can't collide with anything.
+    if (merged && merged.status !== "cancelled" && merged.status !== "unscheduled"
+        && merged.crew_id && merged.scheduled_date) {
+      const conflicts = checkSchedulingConflicts(
+        merged.crew_id,
+        merged.scheduled_date,
+        merged.duration_days ?? 1,
+        merged.time_block ?? null,
+        merged.time_block_end ?? null,
+        existingAppointments,
+        id, // exclude self
+        {
+          startTime: merged.start_time,
+          endTime: merged.end_time,
+          isFullDay: merged.is_full_day,
+          extraCrewIds: [merged.secondary_crew_id, merged.tertiary_crew_id],
+        },
+      );
+      if (conflicts.length > 0) {
+        throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
       }
     }
   }
@@ -870,6 +888,15 @@ export async function undismissRForceOrder(
 // The appointment's work_order_number field records intent, so a missing link
 // can be detected and repaired by Phase 16 remediation.
 
+/** Availability rules an approval must respect, plus whether the scheduler overrode them. */
+export interface ApproveAvailabilityGuard {
+  rules: AvailabilityRule[];
+  exceptions: AvailabilityException[];
+  blocks: CalendarBlock[];
+  /** Scheduler confirmed booking onto the blocked window. */
+  allow?: boolean;
+}
+
 export async function approveRForceOrder(
   rforceOrder: RForceOrder,
   crewId: string,
@@ -880,7 +907,10 @@ export async function approveRForceOrder(
   existingAppointments?: Appointment[],
   /** Bypass the double-booking guard (intentional same-slot overlap). Does NOT
    *  bypass the duplicate-work-order guard. */
-  override: boolean = false
+  override: boolean = false,
+  /** When given, booking onto PTO / an Unavailable rule / a company block needs
+   *  `allow` — the same gate the modal and drag paths apply. */
+  availability?: ApproveAvailabilityGuard
 ): Promise<{ appointment: Appointment; link: AppointmentLink | null; warnings: string[] }> {
   const warnings: string[] = [];
   const appointmentType = (normalizeWoType(rforceOrder.work_order_type) || "install") as Appointment["appointment_type"];
@@ -942,6 +972,37 @@ export async function approveRForceOrder(
     }
   }
 
+  // Availability gate — booking onto PTO / an Unavailable rule / an all-day
+  // Office or Late day / a company-wide block needs an explicit override, exactly
+  // as the modal and drag paths require. Approvals used to skip this entirely,
+  // so bulk-approved jobs landed on holidays and only showed up as flags later.
+  if (availability && !availability.allow) {
+    const blocked = checkAvailabilityConflict(
+      crewId,
+      scheduledDate,
+      durationDays,
+      timeBlockToStore,
+      null,
+      availability.rules,
+      availability.exceptions,
+      availability.blocks
+    );
+    if (blocked) {
+      throw new Error(
+        `AVAILABILITY_CONFLICT: This crew is ${blocked.reason} on ${blocked.date}` +
+          (blocked.fullDay ? " (whole day blocked)." : " during this time.")
+      );
+    }
+  }
+  const allowAvailability = !!availability?.allow;
+  // What the row will actually store — the pre-checks below must judge THIS,
+  // not the UI's block (which is "full_day" for any non-measure crew).
+  const conflictOpts = {
+    startTime: start,
+    endTime: end,
+    isFullDay: occupancy.is_full_day,
+  };
+
   const sb = requireSupabase();
 
   // An appointment for this work order may already exist outside the calendar's
@@ -989,10 +1050,11 @@ export async function approveRForceOrder(
         crewId,
         scheduledDate,
         durationDays,
-        tb,
+        timeBlockToStore,
         null,
         existingAppointments,
         existing.id,
+        conflictOpts,
       );
       if (conflicts.length > 0) {
         throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
@@ -1015,6 +1077,7 @@ export async function approveRForceOrder(
         // Set explicitly either way: a tile that was once overridden must not
         // carry that tag into a fresh, un-overridden placement.
         allow_overlap: override,
+        allow_availability_conflict: allowAvailability,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1070,9 +1133,11 @@ export async function approveRForceOrder(
       crewId,
       scheduledDate,
       durationDays,
-      tb,
+      timeBlockToStore,
       null,
       existingAppointments,
+      undefined,
+      conflictOpts,
     );
     if (conflicts.length > 0) {
       throw new Error(`SCHEDULING_CONFLICT: ${formatConflictMessage(conflicts[0])}`);
@@ -1107,6 +1172,7 @@ export async function approveRForceOrder(
         origin: "rforce_approved",
         sync_state: "linked_pending_confirmation",
         allow_overlap: true,
+        allow_availability_conflict: allowAvailability,
       })
       .select()
       .single();
@@ -1188,9 +1254,23 @@ export async function approveRForceOrder(
   if (atomicApptError || !atomicAppt) throw new Error(atomicApptError?.message || "Confirmed appointment could not be loaded");
   if (atomicLinkError || !atomicLink) throw new Error(atomicLinkError?.message || "Confirmed appointment link could not be loaded");
 
+  // The atomic RPC can't set the availability-override tag; stamp it afterwards
+  // so the availability_conflict flag stays suppressed for a deliberate booking.
+  let confirmedAppt = atomicAppt as Appointment;
+  if (allowAvailability) {
+    const { data: tagged, error: tagErr } = await sb
+      .from("sched_appointments")
+      .update({ allow_availability_conflict: true })
+      .eq("id", confirmedAppt.id)
+      .select()
+      .single();
+    if (tagErr || !tagged) warnings.push(`Availability override not recorded: ${tagErr?.message || "no row"}`);
+    else confirmedAppt = tagged as Appointment;
+  }
+
   learnResourceMapping(rforceOrder, crewId);
   return {
-    appointment: atomicAppt as Appointment,
+    appointment: confirmedAppt,
     link: atomicLink as AppointmentLink,
     warnings,
   };

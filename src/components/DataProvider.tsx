@@ -113,7 +113,9 @@ interface DataContextValue {
     crewId: string,
     timeBlock: TimeBlock,
     scheduledDate: string,
-    override?: boolean
+    override?: boolean,
+    /** Scheduler confirmed booking onto a blocked availability window. */
+    availabilityOverride?: boolean
   ) => Promise<Appointment>;
   dismissRForce: (
     workOrderNumber: string,
@@ -383,7 +385,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   const handleUpdate = useCallback(
     async (id: string, version: number, updates: Partial<Appointment>) => {
-      const result = await updateApptInDb(id, version, updates);
+      // Forward the loaded appointments so the client-side conflict pre-check
+      // runs for every caller (it was dead in production without this).
+      const result = await updateApptInDb(id, version, updates, appointments);
       if (result) {
         if (result.status === "unscheduled") {
           // Moved to unscheduled
@@ -405,7 +409,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       }
       return result;
     },
-    []
+    [appointments]
   );
 
   const handleCancel = useCallback(
@@ -517,14 +521,21 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       crewId: string,
       timeBlock: TimeBlock,
       scheduledDate: string,
-      override: boolean = false
+      override: boolean = false,
+      availabilityOverride: boolean = false
     ) => {
       // Throws on failure — caller should catch and surface the message.
       // Translate the DB's UUID-based conflict text into a human sentence
       // (who is booked, when) using the appointments/crews already in memory.
+      // The loaded appointments and availability rules go along so approvals
+      // get the same client pre-check and availability gate as every other path.
       let result;
       try {
-        result = await approveRForceInDb(rforceOrder, crewId, timeBlock, scheduledDate, user?.id, displayName, undefined, override);
+        result = await approveRForceInDb(
+          rforceOrder, crewId, timeBlock, scheduledDate, user?.id, displayName,
+          appointments, override,
+          { rules: availabilityRules, exceptions: availabilityExceptions, blocks: calendarBlocks, allow: availabilityOverride }
+        );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("SCHEDULING_CONFLICT")) {
@@ -549,7 +560,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       }
       return result.appointment;
     },
-    [user?.id, displayName, appointments, crews]
+    [user?.id, displayName, appointments, crews, availabilityRules, availabilityExceptions, calendarBlocks]
   );
 
   const handleDismissRForce = useCallback(

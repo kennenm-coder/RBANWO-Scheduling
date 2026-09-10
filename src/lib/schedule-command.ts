@@ -144,20 +144,36 @@ export function validateMove(
     return { code: "INVALID_TIME_RANGE", message: "End time must be after start time." };
   }
 
+  // A notes-only edit — nothing about WHERE or WHEN the job sits changes — is
+  // never re-judged. Re-prompting "book anyway?" on every edit of an
+  // intentionally-overlapped tile is how override tags got dropped or
+  // re-granted by accident.
+  if (!movesPlacement(target, currentAppointment, resolved)) return null;
+
   // 3. Conflict check — skipped when the scheduler has explicitly opted into an
   // intentional same-slot overlap (allow_overlap). The DB guards likewise skip
-  // rows tagged allow_overlap, so the double-book is placed on purpose.
+  // rows tagged allow_overlap, so the double-book is placed on purpose. Runs for
+  // timed work too (block null): the window decides, as it does in the DB.
   const durationDays = target.durationDays ?? currentAppointment.duration_days ?? 1;
-  const blockForCheck: TimeBlock | null = resolved.timeBlock;
-  if (!target.allowOverlap && blockForCheck) {
+  const helperCrews = [
+    target.additionalUpdates?.secondary_crew_id ?? currentAppointment.secondary_crew_id,
+    target.additionalUpdates?.tertiary_crew_id ?? currentAppointment.tertiary_crew_id,
+  ];
+  if (!target.allowOverlap) {
     const conflicts = checkSchedulingConflicts(
       target.crewId,
       target.scheduledDate,
       durationDays,
-      blockForCheck,
+      resolved.timeBlock,
       resolved.timeBlockEnd,
       allAppointments,
       target.appointmentId,
+      {
+        startTime: resolved.startTime,
+        endTime: resolved.endTime,
+        isFullDay: resolved.wantsFullDay,
+        extraCrewIds: helperCrews,
+      },
     );
     if (conflicts.length > 0) {
       return {
@@ -174,7 +190,7 @@ export function validateMove(
       target.crewId,
       target.scheduledDate,
       durationDays,
-      blockForCheck,
+      resolved.timeBlock,
       resolved.timeBlockEnd,
       availabilityRules,
       availabilityExceptions,
@@ -331,6 +347,33 @@ export function resolveMoveTimes(
 }
 
 /**
+ * Does this move change WHERE or WHEN the job sits — crew, helpers, date,
+ * times, block, span, or day count? Placing a queued tile always counts.
+ */
+export function movesPlacement(
+  target: ScheduleMoveTarget,
+  current: Appointment,
+  resolved: ResolvedMoveTimes
+): boolean {
+  const hhmm = (t: string | null | undefined) => (t || "").slice(0, 5);
+  const extra = target.additionalUpdates;
+  const helperChanged = (key: "secondary_crew_id" | "tertiary_crew_id") =>
+    !!extra && key in extra && (extra[key] ?? null) !== (current[key] ?? null);
+  return (
+    current.status === "unscheduled" ||
+    target.crewId !== current.crew_id ||
+    target.scheduledDate !== current.scheduled_date ||
+    resolved.timeBlock !== (current.time_block ?? null) ||
+    resolved.timeBlockEnd !== (current.time_block_end ?? null) ||
+    resolved.startTime !== hhmm(current.start_time) ||
+    resolved.endTime !== hhmm(current.end_time) ||
+    (target.durationDays ?? current.duration_days) !== current.duration_days ||
+    helperChanged("secondary_crew_id") ||
+    helperChanged("tertiary_crew_id")
+  );
+}
+
+/**
  * Build the partial update object for a scheduling move.
  * This is what gets passed to `updateAppointment()`.
  */
@@ -340,8 +383,9 @@ export function buildMoveUpdates(
   allCrews: Crew[],
   rforceOrders?: RForceOrder[]
 ): Partial<Appointment> {
-  const { startTime, endTime, timeBlock, timeBlockEnd, wantsFullDay } =
-    resolveMoveTimes(target, currentAppointment);
+  const resolved = resolveMoveTimes(target, currentAppointment);
+  const { startTime, endTime, timeBlock, timeBlockEnd, wantsFullDay } = resolved;
+  const placementChanged = movesPlacement(target, currentAppointment, resolved);
 
   // Check for manual override (rForce mismatch)
   let manualOverride = currentAppointment.manual_override;
@@ -401,12 +445,15 @@ export function buildMoveUpdates(
     duration_days: target.durationDays ?? currentAppointment.duration_days,
     manual_override: manualOverride,
     override_source: overrideSource,
-    // Tag only when this move is an intentional overlap. A normal move into a
-    // free slot clears the flag so the appointment is fully guarded again.
-    allow_overlap: !!target.allowOverlap,
-    // Likewise for an intentional booking onto a blocked availability window;
-    // a normal move onto an open slot clears it.
-    allow_availability_conflict: !!target.allowAvailabilityConflict,
+    // Override tags are re-decided only when the placement actually changes: a
+    // move into a free slot clears them so the job is fully guarded again, while
+    // a notes-only edit keeps whatever was granted for the slot it already holds.
+    allow_overlap: placementChanged
+      ? !!target.allowOverlap
+      : !!target.allowOverlap || !!currentAppointment.allow_overlap,
+    allow_availability_conflict: placementChanged
+      ? !!target.allowAvailabilityConflict
+      : !!target.allowAvailabilityConflict || !!currentAppointment.allow_availability_conflict,
   };
 }
 
