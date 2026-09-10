@@ -453,6 +453,49 @@ describe("placing a queued tile schedules it (audit H2)", () => {
   });
 });
 
+describe("overrides survive notes-only edits; timed moves are checked (audit M5 / H4)", () => {
+  const crews = [makeCrew({ id: "crew-1" })];
+
+  it("a notes-only edit of an intentionally-overlapped tile is not re-judged and keeps its override", () => {
+    const mine = makeAppointment({ id: "mine", allow_overlap: true }); // 10-12 on crew-1
+    const other = makeAppointment({ id: "other", time_block: "10-12" }); // the overlap that was approved
+    const target = {
+      appointmentId: "mine",
+      expectedVersion: 1,
+      crewId: "crew-1",
+      scheduledDate: "2026-08-14",
+      timeBlock: "10-12" as const,
+      additionalUpdates: { notes: "gate code 1234", secondary_crew_id: null, tertiary_crew_id: null },
+    };
+    expect(validateMove(target, mine, [mine, other], crews)).toBeNull();
+    expect(buildMoveUpdates(target, mine, crews).allow_overlap).toBe(true);
+  });
+
+  it("moving that tile to a new slot re-arms the guard (override cleared)", () => {
+    const mine = makeAppointment({ id: "mine", allow_overlap: true });
+    const updates = buildMoveUpdates(
+      { appointmentId: "mine", expectedVersion: 1, crewId: "crew-1", scheduledDate: "2026-08-15", timeBlock: "10-12" },
+      mine,
+      crews
+    );
+    expect(updates.allow_overlap).toBe(false);
+  });
+
+  it("a service moved onto another service's window is a conflict (timed jobs were invisible before)", () => {
+    const svcCrew = makeCrew({ id: "crew-svc", crew_type: "svc" });
+    const a = makeAppointment({ id: "a", appointment_type: "service", crew_id: "crew-svc", time_block: null, start_time: "09:00", end_time: "11:00" });
+    const b = makeAppointment({ id: "b", appointment_type: "service", crew_id: "crew-svc", time_block: null, start_time: "13:00", end_time: "14:00" });
+    const err = validateMove(
+      { appointmentId: "b", expectedVersion: 1, crewId: "crew-svc", scheduledDate: "2026-08-14", startTime: "10:00", endTime: "12:00" },
+      b,
+      [a, b],
+      [svcCrew]
+    );
+    expect(err?.code).toBe("SCHEDULING_CONFLICT");
+    expect(err?.message).toContain("09:00–11:00");
+  });
+});
+
 describe("executeScheduleMove", () => {
   it("commits scheduling and descriptive edits in one update", async () => {
     const appt = makeAppointment({ customer_name: "Old Name" });

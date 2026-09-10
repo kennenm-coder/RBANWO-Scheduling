@@ -44,10 +44,13 @@ interface Props {
   onClose: () => void;
   /** Order hasn't appeared in recent imports — likely cancelled in rForce. */
   stale?: boolean;
-  /** override bypasses the double-booking guard (intentional same-slot overlap). */
-  onApprove?: (override?: boolean) => Promise<void>;
+  /** override bypasses the double-booking guard (intentional same-slot overlap);
+   *  availabilityOverride books onto a blocked availability window on purpose. */
+  onApprove?: (override?: boolean, availabilityOverride?: boolean) => Promise<void>;
   onDismiss?: () => Promise<void>;
 }
+
+type ConflictKind = "double_book" | "availability" | "duplicate";
 
 export default function RForceDetailSheet({ order, crew, onClose, stale, onApprove, onDismiss }: Props) {
   const { refreshData } = useData();
@@ -59,8 +62,10 @@ export default function RForceDetailSheet({ order, crew, onClose, stale, onAppro
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<string | null>(null);
-  const [conflictKind, setConflictKind] = useState<"double_book" | "duplicate" | null>(null);
+  const [conflictKind, setConflictKind] = useState<ConflictKind | null>(null);
   const [override, setOverride] = useState(false);
+  // Overrides already confirmed this attempt — a job can hit BOTH gates in turn.
+  const [granted, setGranted] = useState({ overlap: false, availability: false });
 
   const city = parseCity(order.address || "");
 
@@ -68,16 +73,25 @@ export default function RForceDetailSheet({ order, crew, onClose, stale, onAppro
     if (!onApprove) return;
     setApproving(true);
     setError(null);
+    const next = {
+      overlap: granted.overlap || (useOverride && conflictKind === "double_book"),
+      availability: granted.availability || (useOverride && conflictKind === "availability"),
+    };
     try {
-      await onApprove(useOverride);
+      await onApprove(next.overlap, next.availability);
       onClose();
     } catch (err: unknown) {
       const msg = errorMessage(err);
+      setGranted(next);
+      setOverride(false);
       if (msg.includes("SCHEDULING_CONFLICT") || msg.includes("DOUBLE_BOOK")) {
         setConflictKind("double_book");
         setConflict(
           msg.replace(/^(Error:\s*)?SCHEDULING_CONFLICT:\s*/, "").replace(/^DOUBLE_BOOK$/, "That crew slot is already booked.").slice(0, 220)
         );
+      } else if (msg.includes("AVAILABILITY_CONFLICT")) {
+        setConflictKind("availability");
+        setConflict(msg.replace(/^(Error:\s*)?AVAILABILITY_CONFLICT:\s*/, "").slice(0, 220));
       } else if (msg.includes("DUPLICATE_WO")) {
         setConflictKind("duplicate");
         setConflict(msg.replace(/^(Error:\s*)?DUPLICATE_WO:\s*/, "").slice(0, 220));
@@ -94,6 +108,7 @@ export default function RForceDetailSheet({ order, crew, onClose, stale, onAppro
     setConflict(null);
     setConflictKind(null);
     setOverride(false);
+    setGranted({ overlap: false, availability: false });
     setError(null);
   }
 
@@ -315,19 +330,25 @@ export default function RForceDetailSheet({ order, crew, onClose, stale, onAppro
             <div className="mb-2 flex items-center gap-2">
               <AlertTriangle size={16} className="text-amber-500 shrink-0" />
               <h3 className="text-sm font-semibold">
-                {conflictKind === "double_book" ? "Slot already booked" : "Already on the calendar"}
+                {conflictKind === "double_book"
+                  ? "Slot already booked"
+                  : conflictKind === "availability"
+                    ? "Crew is blocked that day"
+                    : "Already on the calendar"}
               </h3>
             </div>
             <p className="mb-1 text-xs text-foreground/80">
               {conflictKind === "double_book"
                 ? `You're placing ${order.customer_name || "this order"} where the crew is already booked:`
-                : `${order.customer_name || "This order"} can't be approved again:`}
+                : conflictKind === "availability"
+                  ? `You're placing ${order.customer_name || "this order"} on a day this crew is marked unavailable:`
+                  : `${order.customer_name || "This order"} can't be approved again:`}
             </p>
             <p className="mb-3 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs">
               {conflict}
             </p>
 
-            {conflictKind === "double_book" ? (
+            {conflictKind === "double_book" || conflictKind === "availability" ? (
               <>
                 <label className="mb-3 flex cursor-pointer items-start gap-2 text-xs">
                   <input
@@ -336,7 +357,11 @@ export default function RForceDetailSheet({ order, crew, onClose, stale, onAppro
                     onChange={(e) => setOverride(e.target.checked)}
                     className="mt-0.5 shrink-0"
                   />
-                  <span>Yes, book both here on purpose (allow the overlap).</span>
+                  <span>
+                    {conflictKind === "double_book"
+                      ? "Yes, book both here on purpose (allow the overlap)."
+                      : "Yes, book it here anyway (the crew will work through the block)."}
+                  </span>
                 </label>
                 {error && <div className="mb-2 text-[11px] text-red-500">{error}</div>}
                 <div className="flex gap-2">

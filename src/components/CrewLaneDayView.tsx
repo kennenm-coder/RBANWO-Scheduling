@@ -375,14 +375,15 @@ export default function CrewLaneDayView({
           onClose={() => setSelectedRForce(null)}
           onApprove={
             selectedRForce.displayItem?.displayMode === "approval"
-              ? async (override?: boolean) => {
+              ? async (override?: boolean, availabilityOverride?: boolean) => {
                   const item = selectedRForce.displayItem!;
                   await approveRForce(
                     item.rforceOrder,
                     item.crewId,
                     item.timeBlock,
                     item.rforceOrder.scheduled_start?.slice(0, 10) || dateStr,
-                    override
+                    override,
+                    availabilityOverride
                   );
                 }
               : undefined
@@ -502,7 +503,7 @@ function CrewSection({
   onCardClick: (a: Appointment) => void;
   onCellClick: (crewId: string, block: TimeBlock) => void;
   onRForceClick: (order: RForceOrder, crew: Crew, displayItem?: RForceDisplayItem) => void;
-  onApproveRForce: (rforceOrder: RForceOrder, crewId: string, timeBlock: TimeBlock, scheduledDate: string, override?: boolean) => Promise<Appointment | null>;
+  onApproveRForce: (rforceOrder: RForceOrder, crewId: string, timeBlock: TimeBlock, scheduledDate: string, override?: boolean, availabilityOverride?: boolean) => Promise<Appointment | null>;
   onDismissRForce: (workOrderNumber: string, rforceDate: string, rforceStartTime?: string) => Promise<void>;
   onAppointmentDrop?: (appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string, startTime?: string, endTime?: string) => void;
@@ -1008,8 +1009,8 @@ function CrewSection({
                                 rforceOrder={item.rforceOrder}
                                 stale={item.stale} dropTier={item.dropTier}
                                 crew={crew}
-                                onApprove={async (override) => {
-                                  await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate, override);
+                                onApprove={async (override, availabilityOverride) => {
+                                  await onApproveRForce(item.rforceOrder, item.crewId, item.timeBlock, rfDate, override, availabilityOverride);
                                 }}
                                 onDismiss={async () => {
                                   await onDismissRForce(

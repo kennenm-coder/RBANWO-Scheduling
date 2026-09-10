@@ -413,13 +413,20 @@ export default function CrewLaneWeekView({
           endTime: endTimes.end,
           additionalUpdates: { end_time: endTimes.end },
           auditAction: "drag_resized",
+          // A resize keeps whatever overrides the tile already holds — it used to
+          // wipe them, so resizing an intentionally-overlapped tile always failed.
+          allowOverlap: !!appt.allow_overlap,
+          allowAvailabilityConflict: !!appt.allow_availability_conflict,
         },
         appt,
         appointments,
         crews,
         rforceOrders,
         updateAppointment,
-        { id: actorId, name: actorName }
+        { id: actorId, name: actorName },
+        availabilityRules,
+        availabilityExceptions,
+        calendarBlocks
       );
       if (!result.ok) throw new Error(result.error.message);
       showToast(newEnd ? `Extended to ${newEnd}` : "Shrunk to single block", "success");
@@ -651,10 +658,10 @@ export default function CrewLaneWeekView({
           onClose={() => setSelectedRForce(null)}
           onApprove={
             selectedRForce.displayItem?.displayMode === "approval"
-              ? async (override?: boolean) => {
+              ? async (override?: boolean, availabilityOverride?: boolean) => {
                   const item = selectedRForce.displayItem!;
                   const dateStr = selectedRForce.order.scheduled_start?.slice(0, 10) || format(new Date(), "yyyy-MM-dd");
-                  await approveRForce(selectedRForce.order, item.crewId, item.timeBlock, dateStr, override);
+                  await approveRForce(selectedRForce.order, item.crewId, item.timeBlock, dateStr, override, availabilityOverride);
                 }
               : undefined
           }
@@ -808,7 +815,7 @@ function MeasureTimeLaneCell({
   onAppointmentDrop?: (apptId: string, srcCrewId: string, srcDate: string, srcBlock: TimeBlock | null, targetBlock: TimeBlock) => void;
   onResizeDrop?: (apptId: string, targetBlock: TimeBlock) => void;
   onQueueDrop?: (order: RForceOrder) => void;
-  onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string, override?: boolean) => Promise<Appointment | null>;
+  onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string, override?: boolean, availabilityOverride?: boolean) => Promise<Appointment | null>;
   onDismissRForce?: (workOrderNumber: string, rforceDate: string, startTime?: string) => Promise<void>;
   hasMismatch: (appt: Appointment) => boolean;
   /** Booked here but rForce doesn't reflect it yet → clock icon on the tile. */
@@ -1055,8 +1062,8 @@ function MeasureTimeLaneCell({
                             stale={rf.stale} dropTier={rf.dropTier}
                             crew={crewObj}
                             compact
-                            onApprove={async (override) => {
-                              await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr, override);
+                            onApprove={async (override, availabilityOverride) => {
+                              await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr, override, availabilityOverride);
                             }}
                             onDismiss={() =>
                               onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16)) ?? Promise.resolve()
@@ -1171,7 +1178,7 @@ function StandardCell({
   getMultiDayLabel: (a: Appointment, d: Date) => string | null;
   onDrop?: (order: RForceOrder) => void;
   onAppointmentDrop?: (apptId: string, srcCrewId: string, srcDate: string, srcBlock: TimeBlock | null) => void;
-  onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string, override?: boolean) => Promise<Appointment | null>;
+  onApproveRForce?: (order: RForceOrder, crewId: string, tb: TimeBlock, date: string, override?: boolean, availabilityOverride?: boolean) => Promise<Appointment | null>;
   onDismissRForce?: (workOrderNumber: string, rforceDate: string, startTime?: string) => Promise<void>;
   hasMismatch: (appt: Appointment) => boolean;
   /** Booked here but rForce doesn't reflect it yet → clock icon on the tile. */
@@ -1282,8 +1289,8 @@ function StandardCell({
             stale={rf.stale} dropTier={rf.dropTier}
             crew={crewObj}
             compact
-            onApprove={async (override) => {
-              await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr, override);
+            onApprove={async (override, availabilityOverride) => {
+              await onApproveRForce?.(rf.rforceOrder, crew.id, rf.timeBlock, dateStr, override, availabilityOverride);
             }}
             onDismiss={async () => {
               await onDismissRForce?.(rf.rforceOrder.work_order_number, dateStr, rf.rforceOrder.scheduled_start?.slice(11, 16));
