@@ -75,6 +75,40 @@ function makeRF(overrides: Partial<RForceOrder> = {}): RForceOrder {
   };
 }
 
+describe("buildMergeUpdates — a mode-changing type re-derives the placement (audit M12)", () => {
+  it("install → service drops the all-day block and stores timed occupancy", () => {
+    // Was: appointment_type flipped to a timed type while time_block stayed
+    // "full_day" / is_full_day true — the corruption 20260827_001 repaired.
+    const appt = makeAppt({ id: "a1", is_full_day: true });
+    const rf = makeRF({ work_order_type: "Service" });
+    const { updates, fieldsUpdated } = buildMergeUpdates(appt, rf);
+    expect(updates.appointment_type).toBe("service");
+    expect(updates.time_block).toBeNull();
+    expect(updates.time_block_end).toBeNull();
+    expect(updates.is_full_day).toBe(false);
+    expect(updates.resource_hours).toBe(8);
+    expect(fieldsUpdated).toContain("scheduling");
+  });
+
+  it("a same-mode change (service → JIP) leaves the times alone", () => {
+    const appt = makeAppt({ id: "a2", appointment_type: "service", time_block: null, start_time: "09:00", end_time: "10:00" });
+    const rf = makeRF({ work_order_type: "JIP" });
+    const { updates, fieldsUpdated } = buildMergeUpdates(appt, rf);
+    expect(updates.appointment_type).toBe("jip");
+    expect(updates.time_block).toBeUndefined();
+    expect(updates.start_time).toBeUndefined();
+    expect(fieldsUpdated).not.toContain("scheduling");
+  });
+
+  it("does not touch placement on an unscheduled row", () => {
+    const appt = makeAppt({ id: "a3", scheduled_date: null, crew_id: null, status: "unscheduled" });
+    const rf = makeRF({ work_order_type: "Service" });
+    const { updates } = buildMergeUpdates(appt, rf);
+    expect(updates.appointment_type).toBe("service");
+    expect(updates.time_block).toBeUndefined();
+  });
+});
+
 describe("buildMergeUpdates", () => {
   it("applies rForce-wins fields (WO#, order#, address, customer, product_count)", () => {
     const appt = makeAppt({ id: "a1" });

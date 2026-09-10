@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { ViewMode, Appointment } from "@/lib/types";
+import { DATE_INPUT_MIN, DATE_INPUT_MAX, isPlausibleScheduleDate } from "@/lib/date-guard";
 import { formatDateFull, formatWeekRange, formatDateStr, typeLabel } from "@/lib/calendar-utils";
 import { searchAppointments } from "@/lib/search-utils";
 import {
@@ -138,8 +139,12 @@ export default function CalendarHeader({
             ref={nativeDateRef}
             type="date"
             value={format(currentDate, "yyyy-MM-dd")}
+            min={DATE_INPUT_MIN}
+            max={DATE_INPUT_MAX}
             onChange={(e) => {
-              if (e.target.value && onDateChange) {
+              // A half-typed year ("26") is a real date to the browser and used
+              // to fling the calendar (and a refetch) off to the year 26.
+              if (e.target.value && isPlausibleScheduleDate(e.target.value) && onDateChange) {
                 onDateChange(parseISO(e.target.value));
               }
             }}
@@ -195,8 +200,12 @@ export default function CalendarHeader({
                 ref={dateRef}
                 type="date"
                 autoFocus
+                min={DATE_INPUT_MIN}
+                max={DATE_INPUT_MAX}
                 className="border border-border rounded px-2 py-1 text-sm bg-background"
-                onChange={(e) => handleDatePick(e.target.value)}
+                onChange={(e) => {
+                  if (isPlausibleScheduleDate(e.target.value)) handleDatePick(e.target.value);
+                }}
               />
               <div className="flex gap-1 mt-2">
                 {[

@@ -397,7 +397,8 @@ export default function ScheduleModal({
         editingAppointment?.time_block_end ?? null,
         availabilityRules,
         availabilityExceptions,
-        calendarBlocks
+        calendarBlocks,
+        { start, end }
       );
       if (block) {
         const crewName = selectedCrew?.name || "This crew";

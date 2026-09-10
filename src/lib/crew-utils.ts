@@ -1,5 +1,5 @@
 import { Crew, CrewType, AppointmentType, Appointment, TimeBlock, AvailabilityRule, AvailabilityException } from "./types";
-import { MEASURE_TIME_BLOCKS, getSpannedBlocks } from "./calendar-utils";
+import { MEASURE_TIME_BLOCKS, getSpannedBlocks, timeBlockStartEnd } from "./calendar-utils";
 import { addDays, parseISO } from "date-fns";
 import { getCrewRoleForDate } from "./availability";
 
@@ -230,7 +230,7 @@ export function getBlockedTimeBlocks(
   });
 
   for (const appt of dayAppts) {
-    if (appt.time_block === "full_day") {
+    if (appt.is_full_day || appt.time_block === "full_day") {
       // Full-day blocks everything
       blocked.add("full_day");
       for (const b of MEASURE_TIME_BLOCKS) {
@@ -242,10 +242,15 @@ export function getBlockedTimeBlocks(
       for (const b of spanned) {
         blocked.add(b);
       }
-    } else if (!appt.time_block && appt.appointment_type !== "tech_measure") {
-      // Non-measure appointment without a block = treat as full day
+    } else if (appt.start_time && appt.end_time) {
+      // Timed work (service/JIP/…) blocks only the measure blocks its window
+      // touches. Treating any block-less job as all-day let a 1-hour service
+      // grey out a dual-role crew's whole measure lane for the day.
+      const start = appt.start_time.slice(0, 5);
+      const end = appt.end_time.slice(0, 5);
       for (const b of MEASURE_TIME_BLOCKS) {
-        blocked.add(b);
+        const win = timeBlockStartEnd(b);
+        if (start < win.end && end > win.start) blocked.add(b);
       }
     }
   }

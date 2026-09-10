@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { AvailabilityRule, AvailabilityKind } from "@/lib/types";
+import { DATE_INPUT_MIN, DATE_INPUT_MAX } from "@/lib/date-guard";
 import {
   fetchAvailabilityRules,
   upsertAvailabilityRule,
@@ -397,6 +398,8 @@ export default function AvailabilityEditor({
               <input
                 type="date"
                 value={effectiveStart}
+                min={DATE_INPUT_MIN}
+                max={DATE_INPUT_MAX}
                 onChange={(e) => setEffectiveStart(e.target.value)}
                 className="w-full border border-border rounded-lg px-2.5 py-1.5 text-sm bg-background"
               />
@@ -408,6 +411,8 @@ export default function AvailabilityEditor({
               <input
                 type="date"
                 value={effectiveEnd}
+                min={effectiveStart || DATE_INPUT_MIN}
+                max={DATE_INPUT_MAX}
                 onChange={(e) => setEffectiveEnd(e.target.value)}
                 className="w-full border border-border rounded-lg px-2.5 py-1.5 text-sm bg-background"
               />

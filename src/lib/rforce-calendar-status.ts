@@ -24,6 +24,7 @@ import {
   MISSED_EXPORTS_FOR_NOT_IN_RFORCE,
   type AwaitingTier,
 } from "./rforce-staleness";
+import { clampMultiDaySpan } from "./scheduling-limits";
 
 /** Which 2-hour measure block an hour falls in. Local copy to avoid a circular
  *  import with calendar-utils (which imports from this module). */
@@ -187,8 +188,9 @@ function detectMismatch(
   if (rf.scheduled_start && appt.scheduled_date) {
     const rfStart = rf.scheduled_start.slice(0, 10);
     const rfEnd = (rf.scheduled_end || rf.scheduled_start).slice(0, 10);
-    const rfDays = Math.max(
-      1,
+    // Same cap approval applies, so a 20-day rForce range compared against a
+    // 14-day tile isn't a permanent, unfixable "under-scheduled".
+    const rfDays = clampMultiDaySpan(
       Math.round((new Date(rfEnd).getTime() - new Date(rfStart).getTime()) / 86_400_000) + 1
     );
     const apptDays = Math.max(1, appt.duration_days || 1);

@@ -131,8 +131,18 @@ export default function AppointmentSheet({
         reason: null,
       });
       onClose();
-    } catch {
-      alert("Failed to restore. The appointment may have been modified.");
+    } catch (err: unknown) {
+      // Restoring re-fires the DB conflict guard: the slot may have been taken
+      // since, or a row that was unscheduled before it was cancelled has no
+      // crew/date to restore into.
+      const msg = err instanceof Error ? err.message : "";
+      alert(
+        msg.includes("SCHEDULING_CONFLICT") || msg === "DOUBLE_BOOK"
+          ? "Can't restore — that crew slot is now booked by another job. Move the other job first, or reschedule this one."
+          : msg === "VERSION_CONFLICT"
+            ? "This appointment was modified by someone else. Please close and try again."
+            : "Failed to restore. The appointment may be missing its crew or date — reschedule it instead."
+      );
     } finally {
       setRestoring(false);
     }

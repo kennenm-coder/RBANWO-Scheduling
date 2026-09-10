@@ -106,7 +106,13 @@ describe("timeBlockMatchesHour", () => {
     expect(timeBlockMatchesHour("9-10", 10)).toBe(false);
     expect(timeBlockMatchesHour("10-12", 9)).toBe(false);
     expect(timeBlockMatchesHour("4-6", 15)).toBe(false);
-    expect(timeBlockMatchesHour("4-6", 18)).toBe(false);
+  });
+
+  it("edge blocks absorb the tail of the day, matching how rForce hours are placed", () => {
+    // timeToBlock puts 08:00 in 9-10 and 18:00 in 4-6; comparison must agree or
+    // the time mismatch can never be cleared.
+    expect(timeBlockMatchesHour("9-10", 8)).toBe(true);
+    expect(timeBlockMatchesHour("4-6", 18)).toBe(true);
   });
 
   it("full_day matches any hour", () => {
