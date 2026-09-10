@@ -9,12 +9,14 @@
 import { Appointment, AvailabilityRule, AvailabilityException, CalendarBlock, Crew, RForceOrder, TimeBlock } from "./types";
 import {
   getSchedulingMode,
-  resolveScheduleTimes,
+  coerceFixedBlock,
+  isValidTimeRange,
   snapTo30Min,
   addMinutesToTime,
   timeDurationMinutes,
   deriveOccupancy,
 } from "./scheduling-policy";
+import { MEASURE_TIME_BLOCKS, timeBlockStartEnd } from "./calendar-utils";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
 import { checkAvailabilityConflict } from "./availability";
 import { getEligibleCrews } from "./crew-utils";
@@ -91,6 +93,7 @@ export interface ScheduleMoveTarget {
 export type ScheduleErrorCode =
   | "NOT_FOUND"
   | "INELIGIBLE_CREW"
+  | "INVALID_TIME_RANGE"
   | "SCHEDULING_CONFLICT"
   | "AVAILABILITY_CONFLICT"
   | "VERSION_CONFLICT"
@@ -132,50 +135,47 @@ export function validateMove(
     };
   }
 
-  // 2. Resolve times based on scheduling mode
-  const mode = getSchedulingMode(currentAppointment.appointment_type);
-  const resolved = resolveScheduleTimes(currentAppointment.appointment_type, {
-    timeBlock: target.timeBlock,
-    startTime: target.startTime,
-    endTime: target.endTime,
-  });
+  // 2. Resolve exactly what this move would store — times, block, and the
+  // multi-block span — so the checks below judge the real footprint rather than
+  // a looser approximation. (Checking only the first block of a spanning
+  // measure once let it land on top of another crew's job unnoticed.)
+  const resolved = resolveMoveTimes(target, currentAppointment);
+  if (!isValidTimeRange(resolved.startTime, resolved.endTime)) {
+    return { code: "INVALID_TIME_RANGE", message: "End time must be after start time." };
+  }
 
   // 3. Conflict check — skipped when the scheduler has explicitly opted into an
   // intentional same-slot overlap (allow_overlap). The DB guards likewise skip
   // rows tagged allow_overlap, so the double-book is placed on purpose.
   const durationDays = target.durationDays ?? currentAppointment.duration_days ?? 1;
-  if (!target.allowOverlap && (resolved.timeBlock || mode === "timed")) {
-    const blockForCheck = resolved.timeBlock || (mode === "full_day" ? "full_day" : null);
-    if (blockForCheck) {
-      const conflicts = checkSchedulingConflicts(
-        target.crewId,
-        target.scheduledDate,
-        durationDays,
-        blockForCheck,
-        target.timeBlockEnd ?? null,
-        allAppointments,
-        target.appointmentId,
-      );
-      if (conflicts.length > 0) {
-        return {
-          code: "SCHEDULING_CONFLICT",
-          message: formatConflictMessage(conflicts[0]),
-        };
-      }
+  const blockForCheck: TimeBlock | null = resolved.timeBlock;
+  if (!target.allowOverlap && blockForCheck) {
+    const conflicts = checkSchedulingConflicts(
+      target.crewId,
+      target.scheduledDate,
+      durationDays,
+      blockForCheck,
+      resolved.timeBlockEnd,
+      allAppointments,
+      target.appointmentId,
+    );
+    if (conflicts.length > 0) {
+      return {
+        code: "SCHEDULING_CONFLICT",
+        message: formatConflictMessage(conflicts[0]),
+      };
     }
   }
 
   // 4. Availability check — booking onto a blocked window (PTO / Unavailable /
   // Late or Office day) requires an explicit override, just like double-booking.
   if (!target.allowAvailabilityConflict && (availabilityRules.length > 0 || calendarBlocks.length > 0)) {
-    const blockForCheck: TimeBlock | null =
-      resolved.timeBlock || (mode === "full_day" ? "full_day" : null);
     const block = checkAvailabilityConflict(
       target.crewId,
       target.scheduledDate,
       durationDays,
       blockForCheck,
-      target.timeBlockEnd ?? null,
+      resolved.timeBlockEnd,
       availabilityRules,
       availabilityExceptions,
       calendarBlocks,
@@ -194,23 +194,65 @@ export function validateMove(
   return null;
 }
 
+/** Everything a move will store about WHEN the job sits. */
+export interface ResolvedMoveTimes {
+  startTime: string;
+  endTime: string;
+  timeBlock: TimeBlock | null;
+  /** Last block of a multi-block measure span, or null for a single block. */
+  timeBlockEnd: TimeBlock | null;
+  wantsFullDay: boolean;
+}
+
 /**
- * Build the partial update object for a scheduling move.
- * This is what gets passed to `updateAppointment()`.
+ * Where a multi-block measure's span ends after a move. An explicit
+ * `target.timeBlockEnd` always wins (null clears it). Otherwise: same start
+ * block → keep the span (a crew or date change); a new start block → slide the
+ * span by the same number of blocks when it still fits the grid, else drop it.
+ * Never returns an end at or before the start — that inverted span used to
+ * vanish from the grid and from every conflict check.
  */
-export function buildMoveUpdates(
+function resolveBlockSpan(
   target: ScheduleMoveTarget,
-  currentAppointment: Appointment,
-  allCrews: Crew[],
-  rforceOrders?: RForceOrder[]
-): Partial<Appointment> {
+  current: Appointment,
+  timeBlock: TimeBlock | null
+): TimeBlock | null {
+  if (!timeBlock || timeBlock === "full_day") return null;
+  const startIdx = MEASURE_TIME_BLOCKS.indexOf(timeBlock);
+  if (startIdx < 0) return null;
+
+  let end: TimeBlock | null;
+  if (target.timeBlockEnd !== undefined) {
+    end = target.timeBlockEnd;
+  } else if (!current.time_block_end || !current.time_block) {
+    end = null;
+  } else if (current.time_block === timeBlock) {
+    end = current.time_block_end;
+  } else {
+    const delta = startIdx - MEASURE_TIME_BLOCKS.indexOf(current.time_block);
+    const shifted = MEASURE_TIME_BLOCKS.indexOf(current.time_block_end) + delta;
+    end = shifted >= 0 && shifted < MEASURE_TIME_BLOCKS.length ? MEASURE_TIME_BLOCKS[shifted] : null;
+  }
+  if (!end) return null;
+  return MEASURE_TIME_BLOCKS.indexOf(end) > startIdx ? end : null;
+}
+
+/**
+ * Resolve the times, block, and span a move will store. Shared by the pre-move
+ * validation and the update builder so both judge the SAME footprint — a
+ * mismatch between the two is how a spanning measure once slipped past the
+ * conflict check.
+ */
+export function resolveMoveTimes(
+  target: ScheduleMoveTarget,
+  currentAppointment: Appointment
+): ResolvedMoveTimes {
   const mode = getSchedulingMode(currentAppointment.appointment_type);
   // Whether this move is all-day. The checkbox (target.isFullDay) wins; otherwise
   // only genuine full-day-mode types (installs/LSWP) default to all-day. Measures
   // are never all-day.
   const wantsFullDay = mode === "fixed_block" ? false : (target.isFullDay ?? mode === "full_day");
 
-  // Resolve times
   let startTime: string;
   let endTime: string;
   let timeBlock: TimeBlock | null;
@@ -218,8 +260,18 @@ export function buildMoveUpdates(
   if (wantsFullDay) {
     // All-day work occupies the standard workday; time_block stays the full-day
     // placement key so the week/block grid keeps rendering it in the install row.
-    startTime = target.startTime || "08:00";
-    endTime = target.endTime || "16:00";
+    // A caller's own window is honoured only when it is a real forward window —
+    // a timed job flipped to full-day from a 17:00 start would otherwise store
+    // 17:00–16:00.
+    const start = target.startTime;
+    const end = target.endTime || "16:00";
+    if (start && isValidTimeRange(start, end)) {
+      startTime = start;
+      endTime = end;
+    } else {
+      startTime = "08:00";
+      endTime = "16:00";
+    }
     timeBlock = "full_day";
   } else if (mode === "fixed_block" && target.exactTime && target.startTime) {
     // Day-view exact-time drop for a measure job: keep the precise time and
@@ -231,13 +283,16 @@ export function buildMoveUpdates(
     startTime = snapTo30Min(target.startTime);
     endTime = target.endTime || addMinutesToTime(startTime, origDuration);
     timeBlock = hourToFixedBlock(parseInt(startTime.slice(0, 2), 10));
-  } else if (mode === "fixed_block" && target.timeBlock) {
-    const resolved = resolveScheduleTimes(currentAppointment.appointment_type, {
-      timeBlock: target.timeBlock,
-    });
-    startTime = resolved.start;
-    endTime = resolved.end;
-    timeBlock = resolved.timeBlock;
+  } else if (mode === "fixed_block") {
+    // Block-grid placement, or a crew/date move that keeps the block. A measure
+    // is never full_day; a missing block falls back to the first measure block.
+    timeBlock = coerceFixedBlock(
+      currentAppointment.appointment_type,
+      target.timeBlock ?? currentAppointment.time_block
+    );
+    const window = timeBlockStartEnd(timeBlock);
+    startTime = window.start;
+    endTime = window.end;
   } else if (target.startTime) {
     // Timed placement (service/JIP/…, or a full-day-default type with the box
     // unchecked). Honour an explicit end, else a scheduler-set hour count, else
@@ -258,13 +313,35 @@ export function buildMoveUpdates(
   } else {
     // No explicit start (e.g. block-grid move of a non-full-day timed job) —
     // preserve existing times, drop any stale full-day block tag.
-    startTime = target.startTime || currentAppointment.start_time || "08:00";
+    startTime = currentAppointment.start_time || "08:00";
     endTime = target.endTime || currentAppointment.end_time || "09:00";
     if (target.resourceHours && target.resourceHours > 0 && startTime) {
       endTime = addMinutesToTime(startTime, Math.round(target.resourceHours * 60));
     }
-    timeBlock = mode === "fixed_block" ? (target.timeBlock ?? currentAppointment.time_block) : null;
+    timeBlock = null;
   }
+
+  // A spanning measure ends at the end of its LAST block, not its first —
+  // otherwise the stored window (and the DB's interval check) covered only
+  // block one while the grid drew all of them.
+  const timeBlockEnd = resolveBlockSpan(target, currentAppointment, timeBlock);
+  if (timeBlockEnd) endTime = timeBlockStartEnd(timeBlockEnd).end;
+
+  return { startTime, endTime, timeBlock, timeBlockEnd, wantsFullDay };
+}
+
+/**
+ * Build the partial update object for a scheduling move.
+ * This is what gets passed to `updateAppointment()`.
+ */
+export function buildMoveUpdates(
+  target: ScheduleMoveTarget,
+  currentAppointment: Appointment,
+  allCrews: Crew[],
+  rforceOrders?: RForceOrder[]
+): Partial<Appointment> {
+  const { startTime, endTime, timeBlock, timeBlockEnd, wantsFullDay } =
+    resolveMoveTimes(target, currentAppointment);
 
   // Check for manual override (rForce mismatch)
   let manualOverride = currentAppointment.manual_override;
@@ -311,11 +388,12 @@ export function buildMoveUpdates(
     crew_id: target.crewId,
     scheduled_date: target.scheduledDate,
     time_block: timeBlock,
-    // A block span only makes sense for measures; clear it for everyone else so a
-    // stale span can't linger when a job leaves the measure grid.
-    time_block_end: timeBlock && timeBlock !== "full_day"
-      ? (target.timeBlockEnd ?? currentAppointment.time_block_end)
-      : null,
+    // Resolved alongside the times (see resolveBlockSpan): kept, slid, or
+    // cleared with the block; always null once a job leaves the measure grid.
+    time_block_end: timeBlockEnd,
+    // Placing a queued tile is what schedules it — without this the row kept
+    // status 'unscheduled' and stayed in the queue after landing on the calendar.
+    ...(currentAppointment.status === "unscheduled" ? { status: "scheduled" as const } : {}),
     start_time: startTime,
     end_time: endTime,
     is_full_day: occupancy.is_full_day,
@@ -438,6 +516,15 @@ export async function executeScheduleMove(
           code: "VERSION_CONFLICT",
           message: "Someone else just updated this appointment — please try again",
         },
+      };
+    }
+    // Checked before the conflict branch: the DB raises this for an end-before-
+    // start window, and it must surface as a plain error — never as an overlap
+    // the scheduler could "book anyway" into existence.
+    if (msg.includes("INVALID_TIME_RANGE")) {
+      return {
+        ok: false,
+        error: { code: "INVALID_TIME_RANGE", message: "End time must be after start time." },
       };
     }
     if (msg === "DOUBLE_BOOK" || msg.includes("SCHEDULING_CONFLICT")) {

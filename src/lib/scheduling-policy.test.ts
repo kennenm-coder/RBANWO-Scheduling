@@ -11,8 +11,65 @@ import {
   snapTo30Min,
   addMinutesToTime,
   timeDurationMinutes,
+  coerceFixedBlock,
+  isValidTimeRange,
 } from "./scheduling-policy";
 import { AppointmentType } from "./types";
+
+describe("coerceFixedBlock — a measure is never full_day", () => {
+  it("keeps a real measure block", () => {
+    expect(coerceFixedBlock("tech_measure", "2-4")).toBe("2-4");
+  });
+
+  it("coerces full_day / missing to the first measure block (the Day-view lane-click case)", () => {
+    expect(coerceFixedBlock("tech_measure", "full_day")).toBe("9-10");
+    expect(coerceFixedBlock("tech_measure", null)).toBe("9-10");
+    expect(coerceFixedBlock("tech_measure", undefined)).toBe("9-10");
+  });
+
+  it("leaves non-measure types alone", () => {
+    expect(coerceFixedBlock("install", "full_day")).toBe("full_day");
+    expect(coerceFixedBlock("service", null)).toBe("full_day");
+  });
+});
+
+describe("resolveScheduleTimes never stores a measure as full_day", () => {
+  it("falls back to the first block when handed full_day", () => {
+    expect(resolveScheduleTimes("tech_measure", { timeBlock: "full_day" })).toEqual({
+      start: "09:00",
+      end: "10:00",
+      timeBlock: "9-10",
+    });
+  });
+
+  it("falls back to the first block when handed nothing", () => {
+    expect(resolveScheduleTimes("tech_measure", {}).timeBlock).toBe("9-10");
+  });
+});
+
+describe("isValidTimeRange", () => {
+  it("accepts a forward window (HH:MM or HH:MM:SS)", () => {
+    expect(isValidTimeRange("09:00", "10:00")).toBe(true);
+    expect(isValidTimeRange("09:00:00", "10:30:00")).toBe(true);
+  });
+
+  it("rejects an end at or before the start, and missing ends", () => {
+    expect(isValidTimeRange("17:00", "09:00")).toBe(false);
+    expect(isValidTimeRange("10:00", "10:00")).toBe(false);
+    expect(isValidTimeRange("10:00", null)).toBe(false);
+    expect(isValidTimeRange(null, "10:00")).toBe(false);
+  });
+});
+
+describe("time arithmetic stays inside the day", () => {
+  it("snapTo30Min does not round up to the invalid 24:00", () => {
+    expect(snapTo30Min("23:45")).toBe("23:30");
+  });
+
+  it("addMinutesToTime clamps to 23:59 instead of landing on the start", () => {
+    expect(addMinutesToTime("23:30", 60)).toBe("23:59");
+  });
+});
 
 describe("getSchedulingMode", () => {
   it("returns fixed_block for tech_measure", () => {
@@ -188,8 +245,9 @@ describe("addMinutesToTime", () => {
     expect(addMinutesToTime("08:00", 480)).toBe("16:00");
   });
 
-  it("clamps at 23:xx", () => {
-    expect(addMinutesToTime("22:00", 180)).toBe("23:00");
+  it("clamps to the last minute of the day", () => {
+    // Overflow past midnight stops at 23:59 (never wraps, never lands on the start).
+    expect(addMinutesToTime("22:00", 180)).toBe("23:59");
   });
 });
 

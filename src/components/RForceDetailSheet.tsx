@@ -377,7 +377,10 @@ export default function RForceDetailSheet({ order, crew, onClose, stale, onAppro
         <ScheduleModal
           date={
             order.scheduled_start
-              ? new Date(order.scheduled_start.slice(0, 10))
+              // Local midnight. `new Date("YYYY-MM-DD")` is UTC midnight, which
+              // formats as the previous day in US time zones — the modal then
+              // opened on the day BEFORE the rForce date.
+              ? new Date(order.scheduled_start.slice(0, 10) + "T00:00:00")
               : new Date()
           }
           prefill={order}
