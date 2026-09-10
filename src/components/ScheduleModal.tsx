@@ -31,6 +31,8 @@ import {
   deriveOccupancy,
   addMinutesToTime,
   timeDurationMinutes,
+  coerceFixedBlock,
+  isValidTimeRange,
   SchedulingMode,
 } from "@/lib/scheduling-policy";
 import { fetchAccountSuggestions, AccountSuggestion, createAppointmentEvent } from "@/lib/store";
@@ -38,6 +40,10 @@ import { executeScheduleMove } from "@/lib/schedule-command";
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { deriveTimesFromOrder } from "@/lib/rforce-times";
 import { isPlausibleScheduleDate, DATE_INPUT_MIN, DATE_INPUT_MAX } from "@/lib/date-guard";
+import { useData } from "./DataProvider";
+import { useCurrentActor } from "./AuthProvider";
+import { X, AlertTriangle, AlertCircle, MapPin, ChevronDown, ChevronRight, Users } from "lucide-react";
+import { format } from "date-fns";
 
 /** The DB resource-conflict trigger names the clashing row by id; say it in words. */
 function friendlyConflictMessage(detail: string): string {
@@ -45,10 +51,6 @@ function friendlyConflictMessage(detail: string): string {
     ? "This crew is already booked for those days."
     : detail;
 }
-import { useData } from "./DataProvider";
-import { useCurrentActor } from "./AuthProvider";
-import { X, AlertTriangle, AlertCircle, MapPin, ChevronDown, ChevronRight, Users } from "lucide-react";
-import { format } from "date-fns";
 
 interface Props {
   date: Date;
@@ -70,7 +72,7 @@ export default function ScheduleModal({
   crewId,
   timeBlock: initialTimeBlock,
   prefill,
-  editingAppointment,
+  editingAppointment: editingAppointmentProp,
   rescheduleMode,
   initialStartTime,
   initialEndTime,
@@ -81,6 +83,7 @@ export default function ScheduleModal({
   const {
     crews,
     appointments,
+    unscheduledAppointments,
     rforceOrders,
     timeOffRequests,
     availabilityRules,
@@ -91,6 +94,21 @@ export default function ScheduleModal({
   } = useData();
   const { actorId, actorName } = useCurrentActor();
   useEscapeKey(useCallback(() => onClose(), [onClose]));
+
+  // Placing a job that already sits in the queue as an unscheduled tile must
+  // UPDATE that row (it still holds the work order), not insert a second one:
+  // the one-active-row-per-work-order index would reject the duplicate, and
+  // that rejection read as "this crew is already booked".
+  const prefillWo = prefill?.work_order_number?.trim().toLowerCase();
+  const queuedForPrefill =
+    !editingAppointmentProp && prefillWo
+      ? unscheduledAppointments.find(
+          (a) => (a.work_order_number || "").trim().toLowerCase() === prefillWo
+        )
+      : undefined;
+  const editingAppointment = editingAppointmentProp ?? queuedForPrefill;
+  /** True when a queued tile is being placed — reads as a new booking, saves as an update. */
+  const placingQueued = !editingAppointmentProp && !!queuedForPrefill;
 
   // Derive appointment type: editing > prefill rForce type > target crew type > tech_measure
   function deriveAppointmentType(): AppointmentType {
@@ -136,8 +154,13 @@ export default function ScheduleModal({
   const [selectedDate, setSelectedDate] = useState(
     editingAppointment?.scheduled_date || format(date, "yyyy-MM-dd")
   );
-  const [selectedBlock, setSelectedBlock] = useState<TimeBlock>(
-    editingAppointment?.time_block || initialTimeBlock || prefillTimes?.time_block || "full_day"
+  // A measure is coerced onto a real measure block: Day view hands every lane
+  // "full_day", which used to save measures as full-day rows.
+  const [selectedBlock, setSelectedBlock] = useState<TimeBlock>(() =>
+    coerceFixedBlock(
+      type,
+      editingAppointment?.time_block || initialTimeBlock || prefillTimes?.time_block || "full_day"
+    )
   );
   const [customerName, setCustomerName] = useState(
     editingAppointment?.customer_name || prefill?.customer_name || ""
@@ -245,6 +268,8 @@ export default function ScheduleModal({
     if (typeInitRef.current === type) return;
     typeInitRef.current = type;
     setIsFullDayChecked(getSchedulingMode(type) === "full_day");
+    // Switching to a measure must land on a real measure block, never full_day.
+    setSelectedBlock((b) => coerceFixedBlock(type, b));
   }, [type]);
 
   useEffect(() => {
@@ -337,10 +362,19 @@ export default function ScheduleModal({
       end = resolved.end;
       resolvedBlock = resolved.timeBlock ?? selectedBlock;
     } else if (wantsFullDay) {
-      start = startTime || "08:00";
+      // Canonical workday. A start carried over from a late timed slot (e.g.
+      // 17:00) would otherwise invert the window to 17:00–16:00.
+      start = startTime && isValidTimeRange(startTime, "16:00") ? startTime : "08:00";
       end = "16:00";
       resolvedBlock = "full_day";
     } else {
+      // The DB refuses an end at or before the start, and its refusal used to
+      // surface as a double-book the scheduler could "book anyway" into place.
+      if (!isValidTimeRange(startTime, endTime)) {
+        setError("End time must be after start time.");
+        setSaving(false);
+        return;
+      }
       start = startTime;
       end = endTime;
       resolvedBlock = null;
@@ -513,6 +547,9 @@ export default function ScheduleModal({
         setError(
           "This appointment was modified by someone else. Please close and try again."
         );
+      } else if (msg.includes("INVALID_TIME_RANGE")) {
+        // A backwards window is a plain mistake — never offer to "book anyway".
+        setError("End time must be after start time.");
       } else if (msg.includes("SCHEDULING_CONFLICT")) {
         // Same override the edit path offers: confirm to book over the occupied
         // slot (sets allow_overlap) instead of dead-ending on the error.
@@ -538,7 +575,7 @@ export default function ScheduleModal({
       <div className="relative bg-background rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg max-h-[90vh] overflow-y-auto animate-slide-up safe-area-bottom">
         <div className="sticky top-0 bg-background p-4 flex items-center justify-between border-b border-border z-10">
           <h2 className="text-lg font-semibold">
-            {rescheduleMode ? "Reschedule Appointment" : editingAppointment ? "Edit Appointment" : "New Appointment"}
+            {rescheduleMode ? "Reschedule Appointment" : editingAppointment && !placingQueued ? "Edit Appointment" : "New Appointment"}
           </h2>
           <button
             onClick={onClose}
@@ -953,7 +990,7 @@ export default function ScheduleModal({
               ? "Saving..."
               : rescheduleMode
                 ? "Reschedule Appointment"
-                : editingAppointment
+                : editingAppointment && !placingQueued
                   ? "Update Appointment"
                   : "Schedule Appointment"}
           </button>

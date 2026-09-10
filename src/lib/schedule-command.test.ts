@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { validateMove, buildMoveUpdates, executeScheduleMove } from "./schedule-command";
+import { validateMove, buildMoveUpdates, executeScheduleMove, resolveMoveTimes } from "./schedule-command";
 import { Appointment, AvailabilityRule, Crew } from "./types";
 
 function makeAvailabilityRule(overrides: Partial<AvailabilityRule> = {}): AvailabilityRule {
@@ -327,6 +327,129 @@ describe("buildMoveUpdates", () => {
     );
     expect(updates.manual_override).toBe(false);
     expect(updates.override_source).toBeNull();
+  });
+});
+
+describe("multi-block measure spans survive moves correctly (audit C1)", () => {
+  const crews = [makeCrew({ id: "crew-1" }), makeCrew({ id: "crew-2", name: "Other Tech" })];
+  // A measure spanning 10-12 → 2-4 (three blocks) on crew-1.
+  const spanning = makeAppointment({
+    id: "span",
+    crew_id: "crew-1",
+    time_block: "10-12",
+    time_block_end: "2-4",
+    start_time: "10:00",
+    end_time: "16:00",
+  });
+
+  it("keeps the span on a crew change and stores the end of the LAST block", () => {
+    const r = resolveMoveTimes(
+      { appointmentId: "span", expectedVersion: 1, crewId: "crew-2", scheduledDate: "2026-08-14", timeBlock: "10-12" },
+      spanning
+    );
+    expect(r.timeBlock).toBe("10-12");
+    expect(r.timeBlockEnd).toBe("2-4");
+    expect(r.startTime).toBe("10:00");
+    expect(r.endTime).toBe("16:00"); // was 12:00 — only block one — before the fix
+  });
+
+  it("detects a conflict on block TWO of the span when moved onto another crew", () => {
+    // crew-2 already has a measure in 12-2, the middle of the span.
+    const blocker = makeAppointment({ id: "blocker", crew_id: "crew-2", time_block: "12-2", start_time: "12:00", end_time: "14:00" });
+    const err = validateMove(
+      { appointmentId: "span", expectedVersion: 1, crewId: "crew-2", scheduledDate: "2026-08-14", timeBlock: "10-12" },
+      spanning,
+      [spanning, blocker],
+      crews
+    );
+    expect(err?.code).toBe("SCHEDULING_CONFLICT");
+  });
+
+  it("slides the span when the start block changes and it still fits", () => {
+    const r = resolveMoveTimes(
+      { appointmentId: "span", expectedVersion: 1, crewId: "crew-1", scheduledDate: "2026-08-14", timeBlock: "12-2" },
+      spanning
+    );
+    expect(r.timeBlockEnd).toBe("4-6");
+    expect(r.endTime).toBe("18:00");
+  });
+
+  it("drops the span (never inverts it) when the slide would run off the grid", () => {
+    const r = resolveMoveTimes(
+      { appointmentId: "span", expectedVersion: 1, crewId: "crew-1", scheduledDate: "2026-08-14", timeBlock: "4-6" },
+      spanning
+    );
+    expect(r.timeBlockEnd).toBeNull();
+    expect(r.endTime).toBe("18:00");
+  });
+
+  it("an explicit null clears the span", () => {
+    const r = resolveMoveTimes(
+      { appointmentId: "span", expectedVersion: 1, crewId: "crew-1", scheduledDate: "2026-08-14", timeBlock: "10-12", timeBlockEnd: null },
+      spanning
+    );
+    expect(r.timeBlockEnd).toBeNull();
+    expect(r.endTime).toBe("12:00");
+  });
+});
+
+describe("a measure is never stored as full_day (audit C2)", () => {
+  it("coerces a full_day target block to the first measure block", () => {
+    const measure = makeAppointment({ time_block: null, start_time: null as any, end_time: null as any });
+    const r = resolveMoveTimes(
+      { appointmentId: "appt-1", expectedVersion: 1, crewId: "crew-1", scheduledDate: "2026-08-14", timeBlock: "full_day" },
+      measure
+    );
+    expect(r.timeBlock).toBe("9-10");
+    expect(r.wantsFullDay).toBe(false);
+  });
+});
+
+describe("time-window sanity (audit H5)", () => {
+  const svcCrew = makeCrew({ id: "crew-svc", crew_type: "svc" });
+  const service = makeAppointment({ id: "svc", appointment_type: "service", crew_id: "crew-svc", time_block: null, start_time: "09:00", end_time: "10:00" });
+
+  it("rejects an end at or before the start with INVALID_TIME_RANGE, not a conflict", () => {
+    const err = validateMove(
+      { appointmentId: "svc", expectedVersion: 1, crewId: "crew-svc", scheduledDate: "2026-08-14", startTime: "17:00", endTime: "09:00" },
+      service,
+      [service],
+      [svcCrew]
+    );
+    expect(err?.code).toBe("INVALID_TIME_RANGE");
+  });
+
+  it("a full-day flip from a late timed start uses the canonical workday instead of inverting", () => {
+    const install = makeAppointment({ id: "inst", appointment_type: "install", start_time: "17:00", end_time: "18:00", time_block: null });
+    const r = resolveMoveTimes(
+      { appointmentId: "inst", expectedVersion: 1, crewId: "crew-1", scheduledDate: "2026-08-14", isFullDay: true, startTime: "17:00" },
+      install
+    );
+    expect(r.startTime).toBe("08:00");
+    expect(r.endTime).toBe("16:00");
+    expect(r.timeBlock).toBe("full_day");
+  });
+});
+
+describe("placing a queued tile schedules it (audit H2)", () => {
+  it("flips status to scheduled when the current row is unscheduled", () => {
+    const queued = makeAppointment({ id: "q", status: "unscheduled", crew_id: null, scheduled_date: null, time_block: null });
+    const updates = buildMoveUpdates(
+      { appointmentId: "q", expectedVersion: 1, crewId: "crew-1", scheduledDate: "2026-08-14", timeBlock: "10-12" },
+      queued,
+      [makeCrew()]
+    );
+    expect(updates.status).toBe("scheduled");
+    expect(updates.crew_id).toBe("crew-1");
+  });
+
+  it("does not touch status on an already-scheduled row", () => {
+    const updates = buildMoveUpdates(
+      { appointmentId: "appt-1", expectedVersion: 1, crewId: "crew-1", scheduledDate: "2026-08-15", timeBlock: "10-12" },
+      makeAppointment(),
+      [makeCrew()]
+    );
+    expect(updates.status).toBeUndefined();
   });
 });
 

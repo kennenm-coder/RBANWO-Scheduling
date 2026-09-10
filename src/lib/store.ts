@@ -90,6 +90,27 @@ export async function fetchAppointments(
   return (data as Appointment[]) ?? [];
 }
 
+/**
+ * Turn a Supabase appointment-write error into a real Error carrying a stable,
+ * matchable code. Two different unique indexes both raise 23505 — the per-slot
+ * double-booking index and the one-active-row-per-work-order index — and
+ * telling them apart is what lets the UI say "that work order is already on the
+ * calendar" instead of the misleading "this crew is already booked". Any other
+ * DB message (e.g. the resource-conflict trigger's) is preserved verbatim.
+ */
+export function toAppointmentWriteError(
+  error: { code?: string; message?: string },
+  fallback: string
+): Error {
+  if (error.code === "PGRST116") return new Error("VERSION_CONFLICT");
+  if (error.code === "23505") {
+    return /idx_unique_active_work_order/.test(error.message || "")
+      ? new Error("DUPLICATE_WO: an active appointment already exists for that work order")
+      : new Error("DOUBLE_BOOK");
+  }
+  return new Error(error.message || fallback);
+}
+
 export async function createAppointment(
   appt: Omit<Appointment, "id" | "version" | "created_at" | "updated_at" | "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id"> & Partial<Pick<Appointment, "origin" | "sync_state" | "original_entry_snapshot" | "last_reconciled_import_id">>,
   existingAppointments?: Appointment[]
@@ -117,16 +138,7 @@ export async function createAppointment(
     .insert(appt)
     .select()
     .single();
-  if (error) {
-    if (error.code === "23505") {
-      throw new Error("DOUBLE_BOOK");
-    }
-    // Preserve the DB message (e.g. the resource-conflict trigger's
-    // "SCHEDULING_CONFLICT: …") as a real Error so callers can pattern-match it.
-    // Throwing the raw object left the modal with nothing to show but a blank
-    // "Failed to save" — the real reason (a double-book) was lost.
-    throw new Error(error.message || "Failed to create appointment");
-  }
+  if (error) throw toAppointmentWriteError(error, "Failed to create appointment");
   return data as Appointment;
 }
 
@@ -182,18 +194,7 @@ export async function updateAppointment(
     .eq("version", version)
     .select()
     .single();
-  if (error) {
-    if (error.code === "PGRST116") {
-      throw new Error("VERSION_CONFLICT");
-    }
-    if (error.code === "23505") {
-      throw new Error("DOUBLE_BOOK");
-    }
-    // Preserve the DB message (e.g. the scheduling-conflict trigger's
-    // "SCHEDULING_CONFLICT: …") as a real Error so callers can pattern-match it
-    // instead of receiving a raw object that stringifies to "[object Object]".
-    throw new Error(error.message || "Failed to update appointment");
-  }
+  if (error) throw toAppointmentWriteError(error, "Failed to update appointment");
   return data as Appointment;
 }
 
@@ -224,6 +225,16 @@ export async function unscheduleAppointment(
       start_time: null,
       end_time: null,
       time_block: null,
+      // A queued tile has no placement, so nothing about its old placement may
+      // survive: a leftover span re-inverted on re-placement, stale helper crews
+      // made the DB reject a re-approval for a crew nobody picked, and a
+      // lingering "book anyway" tag let the row skip every conflict check when
+      // it came back onto the calendar.
+      time_block_end: null,
+      secondary_crew_id: null,
+      tertiary_crew_id: null,
+      allow_overlap: false,
+      allow_availability_conflict: false,
       reschedule_reason: reason || "Unscheduled by user",
       version: version + 1,
       updated_at: new Date().toISOString(),
@@ -232,10 +243,7 @@ export async function unscheduleAppointment(
     .eq("version", version)
     .select()
     .single();
-  if (error) {
-    if (error.code === "PGRST116") throw new Error("VERSION_CONFLICT");
-    throw error;
-  }
+  if (error) throw toAppointmentWriteError(error, "Failed to unschedule appointment");
   return data as Appointment;
 }
 
@@ -1004,7 +1012,9 @@ export async function approveRForceOrder(
         duration_days: durationDays,
         status: "scheduled",
         // Overlap tag excludes this row from the double-booking unique index.
-        ...(override ? { allow_overlap: true } : {}),
+        // Set explicitly either way: a tile that was once overridden must not
+        // carry that tag into a fresh, un-overridden placement.
+        allow_overlap: override,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

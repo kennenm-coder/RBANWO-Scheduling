@@ -485,8 +485,10 @@ export default function IssuesPage() {
       try {
         // Extend the tile to span rForce's days. The DB conflict trigger rejects
         // any extension that would collide with another job on the added days —
-        // those are skipped, never double-booked.
-        await updateAppointment(appt.id, appt.version, { duration_days: targetDays });
+        // those are skipped, never double-booked. Drop any old "book anyway"
+        // tag first: it was granted for the original slot, not the added days,
+        // and would otherwise let the trigger wave the extension through.
+        await updateAppointment(appt.id, appt.version, { duration_days: targetDays, allow_overlap: false });
         fixed++;
       } catch {
         skipped++;

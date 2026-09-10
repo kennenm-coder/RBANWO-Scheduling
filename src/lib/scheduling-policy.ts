@@ -77,9 +77,24 @@ export function getValidBlocks(type: AppointmentType): TimeBlock[] | null {
 }
 
 /**
+ * The block a fixed_block (measure) type will actually be stored in. A measure
+ * is always block-based, so a missing or "full_day" block — a Day-view lane
+ * click hands every lane "full_day", and an rForce order may carry no usable
+ * time — is coerced to the first measure block. Saving a measure as full_day
+ * was the corruption repaired in 20260827_001; this keeps it from coming back.
+ * Non-measure types get their block back untouched.
+ */
+export function coerceFixedBlock(type: AppointmentType, block: TimeBlock | null | undefined): TimeBlock {
+  if (getSchedulingMode(type) !== "fixed_block") return block ?? "full_day";
+  return block && block !== "full_day" && MEASURE_TIME_BLOCKS.includes(block)
+    ? block
+    : MEASURE_TIME_BLOCKS[0];
+}
+
+/**
  * Resolve start/end times for a scheduling target.
  *
- * - fixed_block: derives from the time block
+ * - fixed_block: derives from the time block (never full_day)
  * - timed: uses provided start/end or defaults
  * - full_day: uses workday start/end
  */
@@ -93,9 +108,10 @@ export function resolveScheduleTimes(
 ): { start: string; end: string; timeBlock: TimeBlock | null } {
   const mode = getSchedulingMode(type);
 
-  if (mode === "fixed_block" && opts.timeBlock && opts.timeBlock !== "full_day") {
-    const { start, end } = timeBlockStartEnd(opts.timeBlock);
-    return { start, end, timeBlock: opts.timeBlock };
+  if (mode === "fixed_block") {
+    const block = coerceFixedBlock(type, opts.timeBlock);
+    const { start, end } = timeBlockStartEnd(block);
+    return { start, end, timeBlock: block };
   }
 
   if (mode === "full_day") {
@@ -143,18 +159,26 @@ export function snapTo30Min(time: string): string {
   const snappedM = Math.round(m / 30) * 30;
   const finalH = snappedM === 60 ? h + 1 : h;
   const finalM = snappedM === 60 ? 0 : snappedM;
+  // 23:45 would otherwise round up to the invalid "24:00".
+  if (finalH >= 24) return "23:30";
   return `${String(finalH).padStart(2, "0")}:${String(finalM).padStart(2, "0")}`;
 }
 
+/** Last valid minute of a day, for clamping time arithmetic. */
+const END_OF_DAY_MINUTES = 23 * 60 + 59;
+
 /**
  * Compute the end time by adding a duration (in minutes) to a start time.
+ * Clamped to 23:59 — an overflow past midnight must not wrap or land on the
+ * start time (which would make an end-before-start window).
  */
 export function addMinutesToTime(time: string, minutes: number): string {
   const [hStr, mStr] = time.split(":");
-  const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr || "0", 10) + minutes;
+  const raw = parseInt(hStr, 10) * 60 + parseInt(mStr || "0", 10) + minutes;
+  const totalMinutes = Math.max(0, Math.min(raw, END_OF_DAY_MINUTES));
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
-  return `${String(Math.min(h, 23)).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 /**
@@ -164,6 +188,20 @@ export function timeDurationMinutes(start: string, end: string): number {
   const [sH, sM] = start.split(":").map(Number);
   const [eH, eM] = end.split(":").map(Number);
   return (eH * 60 + eM) - (sH * 60 + sM);
+}
+
+/**
+ * Is `start`..`end` a real, forward window (both present, end after start)?
+ * Accepts HH:MM or HH:MM:SS. An end at or before the start is rejected — the
+ * DB refuses it too, and letting it through used to be misread as a
+ * double-book that the scheduler could "override" into existence.
+ */
+export function isValidTimeRange(
+  start: string | null | undefined,
+  end: string | null | undefined
+): boolean {
+  if (!start || !end) return false;
+  return timeDurationMinutes(start.slice(0, 5), end.slice(0, 5)) > 0;
 }
 
 /**
