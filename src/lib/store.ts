@@ -95,8 +95,9 @@ export async function createAppointment(
   existingAppointments?: Appointment[]
 ): Promise<Appointment | null> {
   // Pre-write conflict check — catches multi-day, multi-block, full-day, and secondary/tertiary crew conflicts
-  // that the DB's partial unique index cannot detect.
-  if (existingAppointments && appt.crew_id && appt.scheduled_date && appt.time_block) {
+  // that the DB's partial unique index cannot detect. Skipped when the scheduler
+  // confirmed booking over the occupied slot (allow_overlap), same as updates.
+  if (existingAppointments && !appt.allow_overlap && appt.crew_id && appt.scheduled_date && appt.time_block) {
     const conflicts = checkSchedulingConflicts(
       appt.crew_id,
       appt.scheduled_date,
@@ -120,7 +121,11 @@ export async function createAppointment(
     if (error.code === "23505") {
       throw new Error("DOUBLE_BOOK");
     }
-    throw error;
+    // Preserve the DB message (e.g. the resource-conflict trigger's
+    // "SCHEDULING_CONFLICT: …") as a real Error so callers can pattern-match it.
+    // Throwing the raw object left the modal with nothing to show but a blank
+    // "Failed to save" — the real reason (a double-book) was lost.
+    throw new Error(error.message || "Failed to create appointment");
   }
   return data as Appointment;
 }
