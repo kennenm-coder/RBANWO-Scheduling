@@ -41,6 +41,7 @@ import {
   createAppointment as createApptInDb,
   updateAppointment as updateApptInDb,
   cancelAppointment as cancelApptInDb,
+  deleteAppointment as deleteApptInDb,
   unscheduleAppointment as unscheduleApptInDb,
   createTimeOffRequest as createTimeOffInDb,
   updateTimeOffRequest as updateTimeOffInDb,
@@ -99,6 +100,9 @@ interface DataContextValue {
     version: number,
     reason?: string
   ) => Promise<void>;
+  /** Hard-delete an appointment (admin-only in the UI). Removes it and its links
+   *  from local state; the row and its links/events are gone from the database. */
+  deleteAppointment: (id: string) => Promise<void>;
   unscheduleAppointment: (
     id: string,
     version: number,
@@ -424,6 +428,17 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handleDelete = useCallback(
+    async (id: string) => {
+      await deleteApptInDb(id);
+      // Purge from every list the row could live in.
+      setAppointments((prev) => prev.filter((a) => a.id !== id));
+      setUnscheduledAppointments((prev) => prev.filter((a) => a.id !== id));
+      setActiveLinks((prev) => prev.filter((l) => l.appointment_id !== id));
+    },
+    []
+  );
+
   const handleUnschedule = useCallback(
     async (id: string, version: number, reason?: string) => {
       const result = await unscheduleApptInDb(id, version, reason);
@@ -652,6 +667,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         createAppointment: handleCreate,
         updateAppointment: handleUpdate,
         cancelAppointment: handleCancel,
+        deleteAppointment: handleDelete,
         unscheduleAppointment: handleUnschedule,
         mergeRForce: handleMerge,
         approveRForce: handleApproveRForce,
