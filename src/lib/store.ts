@@ -228,6 +228,24 @@ export async function cancelAppointment(
   });
 }
 
+/**
+ * Permanently delete an appointment and everything hanging off it — its rForce
+ * links and audit events — so a junk duplicate (e.g. a mis-dated ghost tile)
+ * leaves nothing behind and stops holding its work order in the active-WO
+ * index. This is a HARD delete with no soft-cancel fallback; the UI gates it to
+ * admins and confirms first. Children are removed before the row so a missing
+ * ON DELETE CASCADE can't turn this into a foreign-key error.
+ */
+export async function deleteAppointment(id: string): Promise<void> {
+  const sb = requireSupabase();
+  const { error: linkErr } = await sb.from("sched_appointment_links").delete().eq("appointment_id", id);
+  if (linkErr) throw new Error(linkErr.message || "Failed to remove appointment links");
+  // Audit events are best-effort — a leftover event row must not block the delete.
+  await sb.from("sched_appointment_events").delete().eq("appointment_id", id);
+  const { error } = await sb.from("sched_appointments").delete().eq("id", id);
+  if (error) throw new Error(error.message || "Failed to delete appointment");
+}
+
 /** Move an appointment back to the queue by setting status='unscheduled' and clearing scheduling fields. */
 export async function unscheduleAppointment(
   id: string,

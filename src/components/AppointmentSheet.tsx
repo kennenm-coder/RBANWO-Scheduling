@@ -8,7 +8,8 @@ import { updateSchedulerNotes, createAppointmentEvent } from "@/lib/store";
 import { crewColorFor } from "@/lib/preferences";
 import { getRForceResource } from "@/lib/normalize";
 import { useData } from "./DataProvider";
-import { useCurrentActor } from "./AuthProvider";
+import { useCurrentActor, useAuth } from "./AuthProvider";
+import { canAdmin } from "@/lib/auth";
 import {
   X,
   MapPin,
@@ -46,14 +47,32 @@ export default function AppointmentSheet({
   onReschedule,
   onFlag,
 }: Props) {
-  const { crews, rforceOrders, activeLinks, cancelAppointment, unscheduleAppointment, updateAppointment, refreshData } = useData();
+  const { crews, rforceOrders, activeLinks, cancelAppointment, deleteAppointment, unscheduleAppointment, updateAppointment, refreshData } = useData();
   const { actorId, actorName } = useCurrentActor();
+  const { role } = useAuth();
+  const isAdmin = canAdmin(role);
   useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [cancelling, setCancelling] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [restoring, setRestoring] = useState(false);
   const [unscheduling, setUnscheduling] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteAppointment(appointment.id);
+      onClose();
+    } catch (err: unknown) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const activeLink = useMemo(() => {
     return activeLinks.find((l) => l.appointment_id === appointment.id) || null;
@@ -393,6 +412,48 @@ export default function AppointmentSheet({
                   <RotateCcw size={16} />
                   Restore
                 </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="px-3 py-2.5 border border-danger text-danger rounded-lg text-sm font-medium hover:bg-danger/10 flex items-center gap-1.5"
+                    title="Permanently delete this appointment"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : showDeleteConfirm ? (
+            <div className="pt-4 border-t border-border space-y-3">
+              <div className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2.5 text-sm">
+                <div className="flex items-center gap-1.5 font-semibold text-danger mb-1">
+                  <AlertTriangle size={15} className="shrink-0" />
+                  Permanently delete this appointment?
+                </div>
+                <p className="text-foreground/80">
+                  This removes <span className="font-medium">{appointment.customer_name}</span>{" "}
+                  and its rForce link from the database. This <span className="font-semibold">cannot be undone</span> —
+                  use it only for duplicate or junk tiles. (To take a real job off the calendar, use Unschedule or Cancel instead.)
+                </p>
+              </div>
+              {deleteError && <div className="text-xs text-danger">{deleteError}</div>}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex-1 py-2.5 bg-danger text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <Trash2 size={16} />
+                  {deleting ? "Deleting..." : "Permanently delete"}
+                </button>
+                <button
+                  onClick={() => { setShowDeleteConfirm(false); setDeleteError(null); }}
+                  disabled={deleting}
+                  className="px-4 py-2.5 border border-border rounded-lg font-medium hover:bg-surface disabled:opacity-50"
+                >
+                  Back
+                </button>
               </div>
             </div>
           ) : showCancelForm ? (
@@ -464,6 +525,16 @@ export default function AppointmentSheet({
                   {unscheduling ? "..." : "Unschedule"}
                 </button>
                 <div className="flex-1" />
+                {isAdmin && (
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="px-3 py-1.5 border border-danger text-danger rounded-lg text-xs hover:bg-danger/10 flex items-center gap-1"
+                    title="Permanently delete (admins only) — for duplicate/junk tiles"
+                  >
+                    <Trash2 size={12} />
+                    Delete
+                  </button>
+                )}
                 <button
                   onClick={() => setShowCancelForm(true)}
                   className="px-3 py-1.5 bg-danger text-white rounded-lg text-xs hover:opacity-90 flex items-center gap-1"
