@@ -6,6 +6,8 @@ import { buildQueueItems } from "@/lib/queue-pipeline";
 import { openSalesforce } from "@/lib/salesforce";
 import { formatDateStr, formatProductBreakdown } from "@/lib/calendar-utils";
 import ScheduleModal from "./ScheduleModal";
+import { useAuth } from "./AuthProvider";
+import { canAdmin } from "@/lib/auth";
 import LinkModal from "./LinkModal";
 import MergeConfirmModal from "./MergeConfirmModal";
 import {
@@ -54,6 +56,8 @@ import {
   Info,
   Minus,
   Plus,
+  Trash2,
+  Check,
 } from "lucide-react";
 import { useSchedulerDrag } from "@/lib/drag-context";
 
@@ -132,7 +136,10 @@ export default function UnscheduledQueue() {
     scheduledWorkOrders,
     mergeRForce,
     rejectMatch,
+    deleteAppointment,
   } = useData();
+  const { role } = useAuth();
+  const isAdmin = canAdmin(role);
 
   const { filters, setFilters, resetFilters, isDefault } = useQueueFilters();
   const [showMore, setShowMore] = useState(false);
@@ -499,6 +506,8 @@ export default function UnscheduledQueue() {
                 ? () => rejectMatch(item.fuzzyMatch!.appointment.id, item.workOrderNumber!)
                 : undefined
             }
+            canDelete={isAdmin}
+            onDelete={deleteAppointment}
           />
         ))}
       </div>
@@ -585,6 +594,8 @@ function QueueItemCard({
   onLinkApp,
   onMerge,
   onRejectMatch,
+  canDelete,
+  onDelete,
 }: {
   item: QueueItem;
   rforceOrders: RForceOrder[];
@@ -595,8 +606,17 @@ function QueueItemCard({
   onLinkApp: (appt: Appointment) => void;
   onMerge: () => void;
   onRejectMatch?: () => void;
+  /** Admin-only: show a permanent-delete control on app-backed queue tiles. */
+  canDelete?: boolean;
+  onDelete?: (id: string) => Promise<void>;
 }) {
   const { setDraggedOrder, setDraggedMeta } = useSchedulerDrag();
+  // A queued app appointment (the "Returned" category) is a real row we can
+  // hard-delete to clear a duplicate; rForce-order tiles have no row to delete.
+  const deletableApptId = item.category === "app_unscheduled" ? item.id : null;
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const cfg = CATEGORY_CONFIG[item.category];
   const Icon = cfg.icon;
   const woColor = getWoTypeColor(item.normalizedWoType);
@@ -903,6 +923,52 @@ function QueueItemCard({
               >
                 <ExternalLink size={12} />
               </button>
+            )}
+            {/* Admin-only permanent delete for a duplicate/junk queued tile. */}
+            {canDelete && deletableApptId && onDelete && (
+              confirmingDelete ? (
+                <span className={`flex items-center gap-1 text-[11px] ${item.workOrderNumber ? "" : "ml-auto"}`}>
+                  {deleteError ? (
+                    <span className="text-danger" title={deleteError}>Failed</span>
+                  ) : (
+                    <span className="text-danger font-medium">Delete?</span>
+                  )}
+                  <button
+                    onClick={async () => {
+                      setDeleting(true);
+                      setDeleteError(null);
+                      try {
+                        await onDelete(deletableApptId);
+                        // Row is gone; the card unmounts when the queue re-renders.
+                      } catch (err: unknown) {
+                        setDeleteError(err instanceof Error ? err.message : "Failed");
+                        setDeleting(false);
+                      }
+                    }}
+                    disabled={deleting}
+                    className="p-1 rounded-md bg-danger text-white hover:opacity-90 disabled:opacity-50"
+                    title="Permanently delete this tile"
+                  >
+                    {deleting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                  </button>
+                  <button
+                    onClick={() => { setConfirmingDelete(false); setDeleteError(null); }}
+                    disabled={deleting}
+                    className="p-1 rounded-md border border-border hover:bg-surface disabled:opacity-50"
+                    title="Keep it"
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setConfirmingDelete(true)}
+                  className={`p-1 rounded-md text-danger hover:bg-danger/10 transition-colors ${item.workOrderNumber ? "" : "ml-auto"}`}
+                  title="Permanently delete this duplicate tile (admins only)"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )
             )}
           </div>
         </div>
