@@ -53,6 +53,17 @@ export async function upsertCrew(
   return data as Crew | null;
 }
 
+/** Update just a resource's SHARED default color (crew.color). Manager/admin action. */
+export async function updateCrewColor(id: string, color: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb
+    .from("sched_crews")
+    .update({ color, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 export async function deactivateCrew(id: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;

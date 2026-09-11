@@ -2,7 +2,9 @@
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useData } from "./DataProvider";
-import { upsertCrew, deactivateCrew, toggleCrewActive } from "@/lib/store";
+import { useAuth } from "./AuthProvider";
+import { canManage } from "@/lib/auth";
+import { upsertCrew, deactivateCrew, toggleCrewActive, updateCrewColor } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
 import { pickNewCrewColor } from "@/lib/crew-colors";
 import { Crew, CrewType, ManagesType } from "@/lib/types";
@@ -14,7 +16,7 @@ import {
 import {
   Plus, Pencil, Trash2, X, Save, AlertTriangle,
   UserPlus, Link2, ToggleLeft, ToggleRight, Archive, RotateCcw,
-  Check, HelpCircle,
+  Check, HelpCircle, Palette,
 } from "lucide-react";
 import AvailabilityEditor from "./AvailabilityEditor";
 import CompanyBlockManager from "./CompanyBlockManager";
@@ -49,10 +51,44 @@ export default function ResourceManager() {
     unresolveFlag,
     refreshData,
   } = useData();
+  const { role } = useAuth();
+  // Only managers/admins may edit a resource's SHARED default color. Everyone
+  // else recolors resources just for themselves via Settings → Resource colors;
+  // letting schedulers change crew.color here clobbered the color for all users.
+  const canEditDefaultColor = canManage(role);
   const [editing, setEditing] = useState<Partial<Crew> | null>(null);
   const [aliasInput, setAliasInput] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [linkingAlias, setLinkingAlias] = useState<string | null>(null);
+
+  // Default-color editor (manager/admin only): edits the SHARED crew.color that
+  // everyone sees by default. Personal per-account colors stay in Settings.
+  const [showDefaultColors, setShowDefaultColors] = useState(false);
+  const [colorDrafts, setColorDrafts] = useState<Record<string, string>>({});
+  const [savingColors, setSavingColors] = useState(false);
+
+  function openDefaultColors() {
+    const drafts: Record<string, string> = {};
+    for (const c of crews) if (c.is_active) drafts[c.id] = c.color || "#2563eb";
+    setColorDrafts(drafts);
+    setShowDefaultColors(true);
+  }
+
+  async function saveDefaultColors() {
+    setSavingColors(true);
+    try {
+      const changed = crews.filter(
+        (c) => c.is_active && colorDrafts[c.id] && colorDrafts[c.id] !== (c.color || "")
+      );
+      for (const c of changed) await updateCrewColor(c.id, colorDrafts[c.id]);
+      await refreshData();
+      setShowDefaultColors(false);
+    } catch (err) {
+      alert(`Save failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingColors(false);
+    }
+  }
 
   // Close editing modal on Escape
   useEffect(() => {
@@ -214,6 +250,16 @@ export default function ResourceManager() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {canEditDefaultColor && (
+            <button
+              onClick={openDefaultColors}
+              className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border text-muted border-border hover:bg-surface transition-colors"
+              title="Set the shared default colors everyone sees (managers only)"
+            >
+              <Palette size={12} />
+              Default colors
+            </button>
+          )}
           {inactiveCount > 0 && (
             <button
               onClick={() => setShowInactive(!showInactive)}
@@ -514,37 +560,29 @@ export default function ResourceManager() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-muted mb-1">Type</label>
-                <select
-                  value={editing.crew_type || "install_in_house"}
-                  onChange={(e) => {
-                    const nextType = e.target.value as CrewType;
-                    // For a NEW resource, keep the auto-assigned color unique to
-                    // the chosen type. Existing resources keep their set color.
-                    setEditing({
-                      ...editing,
-                      crew_type: nextType,
-                      ...(editing.id ? {} : { color: pickNewCrewColor(nextType, allCrews, editing.name || "") }),
-                    });
-                  }}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
-                >
-                  {TYPE_ORDER.map((t) => (
-                    <option key={t} value={t}>{crewTypeLabel(t)}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-muted mb-1">Color</label>
-                <input
-                  type="color"
-                  value={editing.color || "#2563eb"}
-                  onChange={(e) => setEditing({ ...editing, color: e.target.value })}
-                  className="w-full h-9 border border-border rounded-lg cursor-pointer"
-                />
-              </div>
+            <div>
+              <label className="block text-xs text-muted mb-1">Type</label>
+              <select
+                value={editing.crew_type || "install_in_house"}
+                onChange={(e) => {
+                  const nextType = e.target.value as CrewType;
+                  // For a NEW resource, keep the auto-assigned color unique to
+                  // the chosen type. Existing resources keep their set color.
+                  setEditing({
+                    ...editing,
+                    crew_type: nextType,
+                    ...(editing.id ? {} : { color: pickNewCrewColor(nextType, allCrews, editing.name || "") }),
+                  });
+                }}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
+              >
+                {TYPE_ORDER.map((t) => (
+                  <option key={t} value={t}>{crewTypeLabel(t)}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-muted mt-1">
+                New resources get an auto-assigned color.{canEditDefaultColor && " Change shared defaults with the Default colors button."} Recolor for yourself in Settings → Resource colors.
+              </p>
             </div>
 
             <div>
@@ -687,6 +725,86 @@ export default function ResourceManager() {
               <Save size={14} />
               Save
             </button>
+          </div>
+        </div>
+      )}
+
+      {showDefaultColors && canEditDefaultColor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setShowDefaultColors(false)}
+          />
+          <div className="relative bg-background rounded-2xl w-full max-w-lg p-4 space-y-3 animate-slide-up max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold flex items-center gap-1.5">
+                  <Palette size={15} /> Default colors
+                </h3>
+                <p className="text-[11px] text-muted mt-0.5">
+                  The shared color each resource shows to everyone by default. Individual
+                  accounts can still recolor resources just for themselves in Settings.
+                </p>
+              </div>
+              <button onClick={() => setShowDefaultColors(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              {TYPE_ORDER.map((type) => {
+                const list = crews.filter((c) => c.is_active && c.crew_type === type);
+                if (list.length === 0) return null;
+                return (
+                  <div key={type}>
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-2">
+                      {crewTypeLabel(type)}
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+                      {list.map((crew) => {
+                        const val = colorDrafts[crew.id] || crew.color || "#2563eb";
+                        return (
+                          <div key={crew.id} className="flex items-center gap-2">
+                            <label
+                              className="relative w-5 h-5 rounded-full shrink-0 cursor-pointer border border-border overflow-hidden"
+                              style={{ backgroundColor: val }}
+                              title="Change default color"
+                            >
+                              <input
+                                type="color"
+                                value={val}
+                                onChange={(e) =>
+                                  setColorDrafts({ ...colorDrafts, [crew.id]: e.target.value })
+                                }
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                              />
+                            </label>
+                            <span className="text-sm truncate flex-1">{crew.name}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setShowDefaultColors(false)}
+                className="flex-1 py-2.5 rounded-lg font-medium border border-border hover:bg-surface"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveDefaultColors}
+                disabled={savingColors}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-primary text-white rounded-lg font-medium hover:opacity-90 disabled:opacity-60"
+              >
+                <Save size={14} />
+                {savingColors ? "Saving…" : "Save defaults"}
+              </button>
+            </div>
           </div>
         </div>
       )}
