@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo, useCallback } from "react";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
+import { useActorName } from "@/hooks/useActorName";
 import EventHistory from "./EventHistory";
 
 interface Props {
@@ -52,6 +53,7 @@ export default function AppointmentSheet({
   const { role } = useAuth();
   const isAdmin = canAdmin(role);
   useEscapeKey(useCallback(() => onClose(), [onClose]));
+  const scheduledByName = useActorName(appointment.scheduled_by);
   const [cancelling, setCancelling] = useState(false);
   const [showCancelForm, setShowCancelForm] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -325,7 +327,7 @@ export default function AppointmentSheet({
           {(appointment.scheduled_by || appointment.created_at) && (
             <div className="text-xs text-muted space-y-0.5">
               {appointment.scheduled_by && (
-                <div>Scheduled by {appointment.scheduled_by}</div>
+                <div>Scheduled by {scheduledByName}</div>
               )}
               {appointment.created_at && (
                 <div>Created {new Date(appointment.created_at).toLocaleDateString()}</div>
