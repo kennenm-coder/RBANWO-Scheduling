@@ -1,0 +1,25 @@
+-- 2026-09-08: RLS lockdown to allowlisted scheduling roles.
+--
+-- All sched_* tables previously had USING (true) policies for anon and/or
+-- authenticated, so anyone holding the public anon key (it ships in the JS
+-- bundle) could read and write every appointment. This was fixed for the WHOLE
+-- shared Supabase project in one place, because the tables this app touches
+-- (work_orders, time_off_requests, allowed_emails) are owned by the Duck Force
+-- calendar app:
+--
+--   Betterthengooglecal/supabase/migrations/019_lock_down_shared_tables.sql
+--
+-- What it does for this app:
+--   * drops every policy on each sched_* table and creates one:
+--       FOR ALL USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+--   * sched_profiles: read for any allowlisted user; own-row update + admin
+--     manage unchanged. sched_user_preferences unchanged (auth.uid()-scoped).
+--   * work_orders: adds INSERT/UPDATE for scheduling roles (rForce import,
+--     geocode, scheduler notes). Read stays allowlisted-any-role.
+--   * time_off_requests: adds write for scheduling roles.
+--
+-- The localhost dev bypass (isDevBypass) skips the login wall but the database
+-- now refuses unauthenticated queries — sign in with ?forceLogin=1 locally.
+--
+-- Nothing to run from this file; it documents the change for this repo.
+SELECT 1;
