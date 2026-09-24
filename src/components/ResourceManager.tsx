@@ -7,6 +7,7 @@ import { canManage } from "@/lib/auth";
 import { upsertCrew, deactivateCrew, toggleCrewActive, updateCrewColor } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
 import { pickNewCrewColor } from "@/lib/crew-colors";
+import { crewColorFor, getPreferences, setPreferences } from "@/lib/preferences";
 import { Crew, CrewType, ManagesType } from "@/lib/types";
 import {
   categorizeResourceNames,
@@ -56,6 +57,25 @@ export default function ResourceManager() {
   // else recolors resources just for themselves via Settings → Resource colors;
   // letting schedulers change crew.color here clobbered the color for all users.
   const canEditDefaultColor = canManage(role);
+
+  // Personal per-account color overrides. ANY user (scheduler or manager) can
+  // recolor a resource just for themselves by clicking its color dot below —
+  // this writes preferences.color_overrides, never the shared crew.color. Prefs
+  // aren't React state, so bump a tick to re-render after a change.
+  const [, bumpColorTick] = useState(0);
+  function setPersonalColor(crewId: string, color: string) {
+    const prefs = getPreferences();
+    setPreferences({ color_overrides: { ...prefs.color_overrides, [crewId]: color } });
+    bumpColorTick((n) => n + 1);
+  }
+  function resetPersonalColor(crewId: string) {
+    const prefs = getPreferences();
+    const next = { ...prefs.color_overrides };
+    delete next[crewId];
+    setPreferences({ color_overrides: next });
+    bumpColorTick((n) => n + 1);
+  }
+
   const [editing, setEditing] = useState<Partial<Crew> | null>(null);
   const [aliasInput, setAliasInput] = useState("");
   const [showInactive, setShowInactive] = useState(false);
@@ -247,6 +267,9 @@ export default function ResourceManager() {
           <h3 className="text-sm font-semibold">All Resources</h3>
           <p className="text-xs text-muted mt-0.5">
             {activeCount} active{inactiveCount > 0 && `, ${inactiveCount} archived`}
+          </p>
+          <p className="text-[10px] text-muted mt-0.5">
+            Click a color dot to recolor a resource just for you.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -442,10 +465,28 @@ export default function ResourceManager() {
                       <ToggleLeft size={18} />
                     </button>
                   )}
-                  <div
-                    className="w-4 h-4 rounded-full shrink-0 border border-white shadow-sm"
-                    style={{ backgroundColor: c.color }}
-                  />
+                  <label
+                    className="relative w-4 h-4 rounded-full shrink-0 border border-white shadow-sm cursor-pointer overflow-hidden"
+                    style={{ backgroundColor: crewColorFor(c) }}
+                    title="Change this resource's color just for you"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="color"
+                      value={crewColorFor(c)}
+                      onChange={(e) => setPersonalColor(c.id, e.target.value)}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                    />
+                  </label>
+                  {getPreferences().color_overrides?.[c.id] && (
+                    <button
+                      onClick={() => resetPersonalColor(c.id)}
+                      className="shrink-0 -ml-1 text-muted hover:text-foreground"
+                      title="Reset to the shared team color"
+                    >
+                      <RotateCcw size={11} />
+                    </button>
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">{c.name}</span>

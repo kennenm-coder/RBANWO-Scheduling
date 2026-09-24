@@ -396,7 +396,10 @@ CREATE TABLE sched_profiles (
 -- Per-user UI preferences. Used by preferences.ts.
 
 CREATE TABLE sched_user_preferences (
-  user_id UUID PRIMARY KEY REFERENCES sched_profiles(id) ON DELETE CASCADE,
+  -- FK to auth.users (NOT sched_profiles): access is governed by the Duck Force
+  -- allowlist, and the app never writes sched_profiles rows, so keying prefs off
+  -- a profile blocked every non-admin from saving. See migration 20260924_001.
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   theme TEXT NOT NULL DEFAULT 'system'
     CHECK (theme IN ('light', 'dark', 'system')),
   default_view TEXT NOT NULL DEFAULT 'week'
