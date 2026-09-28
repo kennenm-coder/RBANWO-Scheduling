@@ -5,20 +5,21 @@ a lighter path than the tracked-import-endpoint plan originally sketched here.
 
 ## What shipped (two-tier, export-count model)
 
-rForce cancellations arrive as absence from the **daily full export** (confirmed
-against live data: the midday batch refreshes every active order; incremental
-hourly syncs touch only a handful). We count how many daily exports an order has
-missed and escalate in two tiers:
+rForce cancellations arrive as absence from the **full export**. Since 2026-09-28
+the Power Automate feed runs **hourly, 8am–5pm**, and every run is a full refresh
+of the active set (before that it was every two hours, 8am–2pm). We still count at
+**day** grain — all of a day's runs stamp the same `updated_at` date, so a day is
+the finest miss the table can express — and escalate in two tiers:
 
 - **missed 1 export → 🟡 possible cancel** — amber tag on the overlay tile only
   (`ApprovalCard`, driven by `RForceDisplayItem.stale` / `dropTier`).
 - **missed ≥2 exports → 🔴 likely cancel** — red tile tag **and** the Issue
   Center "Dropped from rForce" review (`deriveDroppedTiles`).
 
-Because each daily export overwrites `updated_at`, the work_orders table can't
-retain which days an export ran. Rather than route Power Automate through a
-tracked endpoint (the original plan below), the app **records each daily export it
-observes on load** into `sched_import_runs` (see `detectLatestExportDate` +
+Because each export overwrites `updated_at`, the work_orders table can't retain
+which days an export ran. Rather than route Power Automate through a tracked
+endpoint (the original plan below), the app **records the export date it observes
+on load** into `sched_import_runs` (see `detectLatestExportDate` +
 `recordImportRun`); miss-counting reads that log (`missedExportCount` /
 `dropTier` in `src/lib/rforce-staleness.ts`). A day the export fails simply never
 enters the log, so it isn't counted as a miss (gap-safe). Thresholds live as
@@ -26,6 +27,21 @@ enters the log, so it isn't counted as a miss (gap-safe). Thresholds live as
 "complete"`) tiles are explicitly excluded so finished jobs stay for record
 keeping. History accumulates forward from launch; before ~2 exports are logged,
 tiles under-escalate (amber, never a false red) — an acceptable cold start.
+
+## Invariant: the feed must keep upserting the FULL active set
+
+This whole model infers "still in rForce" from "an import touched this row". The
+calendar app's `/api/upload` therefore re-upserts **every** order on **every** run
+and bumps `updated_at`, whether or not anything changed. That looks like waste and
+is a standing temptation to optimize — the diff needed to narrow it is already
+computed there for the import log.
+
+**Don't.** Narrowing the feed to changed rows only would mean an unchanged but
+perfectly live order stops having its `updated_at` bumped, so within two days it
+accumulates 2 missed exports and escalates to 🔴 likely cancel. The failure mode is
+a wall of false cancellations across the board, not a subtle regression. Changing
+the write pattern requires replacing this detection model first (see the tracked-
+import plan below, which is exactly that replacement).
 
 The original tracked-import plan is retained below for reference; it remains the
 most precise option if the client-side detection ever proves too coarse.

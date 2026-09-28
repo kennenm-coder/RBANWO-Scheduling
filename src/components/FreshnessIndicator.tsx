@@ -16,10 +16,11 @@ import {
  * Staleness thresholds.
  * - Page data older than WARN_MINUTES shows a yellow warning.
  * - Page data older than STALE_MINUTES shows a red alert with auto-refresh prompt.
- * - The rForce daily full export runs ~once a day. If the newest observed export
- *   date is EXPORT_WARN_DAYS or more calendar days old, note that the daily feed
- *   may have stopped. (This tracks the Power Automate daily export via
- *   sched_import_runs / `exportDates`, NOT the legacy manual-CSV-upload table.)
+ * - The rForce full export runs hourly, 8am–5pm, but we only ever observe it at
+ *   day grain (every run stamps the same `updated_at` date). If the newest observed
+ *   export date is EXPORT_WARN_DAYS or more calendar days old, note that the feed
+ *   may have stopped. (This tracks the Power Automate feed via sched_import_runs /
+ *   `exportDates`, NOT the legacy manual-CSV-upload table.)
  */
 const WARN_MINUTES = 15;
 const STALE_MINUTES = 30;
@@ -113,10 +114,11 @@ export default function FreshnessIndicator() {
   const isWarn = minutesSinceRefresh >= WARN_MINUTES;
   const isStale = minutesSinceRefresh >= STALE_MINUTES;
 
-  // Newest observed daily-export date (`YYYY-MM-DD`, newest first). This is the
-  // real rForce feed — Power Automate writes work_orders directly and the app
-  // logs each daily export it sees (sched_import_runs). The 30s `now` tick
-  // re-renders this, so the day count re-derives after midnight.
+  // Newest observed export date (`YYYY-MM-DD`, newest first). This is the real
+  // rForce feed — Power Automate writes work_orders directly and the app logs the
+  // first export it observes each day (sched_import_runs); the day's later hourly
+  // runs land on the same date and add nothing new. The 30s `now` tick re-renders
+  // this, so the day count re-derives after midnight.
   const latestExportDate = exportDates.length > 0 ? exportDates[0] : null;
   const exportAgeDays = latestExportDate ? daysSinceDate(latestExportDate) : null;
   const exportStale =
@@ -222,7 +224,7 @@ export default function FreshnessIndicator() {
               )}
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-medium">
-                  Daily rForce Export
+                  rForce Export
                 </div>
                 {latestExportDate ? (
                   <div className="text-[11px] text-muted">
@@ -231,7 +233,7 @@ export default function FreshnessIndicator() {
                     {exportDayLabel(latestExportDate)}
                     {exportStale && (
                       <span className="text-amber-500 font-medium block">
-                        No full export in {exportAgeDays} days — daily feed may have stopped
+                        No full export in {exportAgeDays} days — hourly feed may have stopped
                       </span>
                     )}
                   </div>
@@ -277,7 +279,7 @@ export default function FreshnessIndicator() {
             <div className="text-[10px] text-muted/60 text-center">
               Appointment changes sync in real time.
               <br />
-              rForce data refreshes on the daily export.
+              rForce data refreshes hourly, 8am–5pm.
             </div>
           </div>
         </>

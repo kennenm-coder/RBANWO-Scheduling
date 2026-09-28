@@ -45,21 +45,32 @@ export function isOrderStale(order: HasUpdatedAt, latest: number): boolean {
 
 // ── Two-tier "dropped from rForce" detection (export-count model) ──
 //
-// Cancellations aren't a status; a cancelled job just stops appearing in the
-// daily full export. We escalate by *how many daily exports* an order has missed:
+// Cancellations aren't a status; a cancelled job just stops appearing in the full
+// export. We escalate by *how many days of exports* an order has missed:
 //   • missed 1  → 🟡 "possible cancel"  (early warning; soft tag on the tile)
 //   • missed 2+ → 🔴 "likely cancel"    (Issue Center review)
-// Counting misses in export *events* (not wall-clock days) makes it robust to a
-// day the export fails to run: that day simply never enters the export-date list.
+// The feed runs hourly (8am–5pm), but we count per DAY: every run stamps the same
+// `updated_at` date, so a day is the finest grain the table can tell us apart. That
+// also makes this robust to a day the feed fails entirely — that day simply never
+// enters the export-date list, so it isn't counted as a miss.
 
 /** Missed daily exports before a tile is tagged 🟡 "possible cancel". */
 export const MISSED_EXPORTS_FOR_AMBER = 1;
 /** Missed daily exports before a tile is flagged 🔴 "likely cancel". */
 export const MISSED_EXPORTS_FOR_RED = 2;
 /**
- * Minimum rows sharing one `updated_at` date for it to count as a *full* daily
- * export rather than an incremental hourly sync (which touch only a handful of
- * changed orders). The daily export refreshes hundreds; incrementals < ~20.
+ * Minimum rows sharing one `updated_at` date for that date to count as a day the
+ * full export ran. Since 2026-09-28 the Power Automate feed runs hourly, 8am–5pm,
+ * and every run is a *full* refresh of the active set — so a normal day clusters
+ * many hundreds of rows on one date and clears this easily. The threshold exists
+ * to reject a date whose only rows came from stray writes (a manual CSV upload, a
+ * scheduler note) rather than the feed; it is not a per-run size test, because all
+ * of a day's runs collapse into the same `updated_at` date.
+ *
+ * This is why the feed must keep upserting the FULL active set: the day-cluster
+ * and the per-order "last seen" date below both depend on every live order having
+ * its `updated_at` bumped by every run. Narrowing the feed to changed rows only
+ * would starve both and flag healthy orders as cancelled.
  */
 export const MIN_FULL_EXPORT_SIZE = 100;
 
