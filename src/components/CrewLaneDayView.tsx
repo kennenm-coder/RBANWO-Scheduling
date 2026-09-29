@@ -24,6 +24,8 @@ import {
   getAppointmentsForCrewAndDay,
   getRForceDisplayItems,
   timeBlockStartEnd,
+  isRemoteMeasure,
+  REMOTE_BLOCK,
 } from "@/lib/calendar-utils";
 import { deriveRForceCalendarStatus, deriveAppointmentRForceState } from "@/lib/rforce-calendar-status";
 import type { AwaitingTier } from "@/lib/rforce-staleness";
@@ -252,6 +254,28 @@ export default function CrewLaneDayView({
     }
   }
 
+  /**
+   * Dropped on a tech's Remote row: the measure was done remotely, so it keeps
+   * no place on the clock. It stacks freely there — the remote row is exempt
+   * from the double-booking and availability gates.
+   */
+  async function handleRemoteDrop(appointmentId: string, targetCrewId: string) {
+    const appt = appointments.find((a) => a.id === appointmentId);
+    if (!appt) return;
+    const targetCrew = crews.find((c) => c.id === targetCrewId);
+    await runMove(
+      {
+        appointmentId: appt.id,
+        expectedVersion: appt.version,
+        crewId: targetCrewId,
+        scheduledDate: dateStr,
+        timeBlock: REMOTE_BLOCK,
+      },
+      appt,
+      `Moved to ${targetCrew?.name ? `${targetCrew.name}'s ` : ""}Remote row`
+    );
+  }
+
   async function handleAppointmentDrop(appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) {
     const appt = appointments.find((a) => a.id === appointmentId);
     if (!appt) return;
@@ -305,6 +329,10 @@ export default function CrewLaneDayView({
             onApproveRForce={approveRForce}
             onDismissRForce={dismissRForce}
             onAppointmentDrop={handleAppointmentDrop}
+            onRemoteDrop={handleRemoteDrop}
+            onRemoteQueueDrop={(order, crewId) =>
+              setScheduleTarget({ crewId, block: REMOTE_BLOCK, prefill: order })
+            }
             onQueueDrop={(order, crewId, startTime, endTime) =>
               setScheduleTarget({
                 crewId,
@@ -467,6 +495,112 @@ interface DayDragPreview {
   invalidReason?: string;
 }
 
+/**
+ * A measure tech's Remote row — the strip above their timeline holding measures
+ * they did remotely. Those take none of the tech's day, so the row has no clock
+ * position: chips sit left to right, and a drop here (a queue tile or a tile
+ * already on the calendar) records that job as remote.
+ */
+function RemoteLane({
+  crew,
+  appts,
+  date,
+  onCardClick,
+  onEmptyClick,
+  onRemoteDrop,
+  onRemoteQueueDrop,
+}: {
+  crew: Crew;
+  appts: Appointment[];
+  date: Date;
+  onCardClick: (a: Appointment) => void;
+  onEmptyClick: () => void;
+  onRemoteDrop?: (appointmentId: string, targetCrewId: string) => void;
+  onRemoteQueueDrop?: (order: RForceOrder, crewId: string) => void;
+}) {
+  const { draggedAppointment, draggedOrder, setDraggedAppointment, setDraggedOrder } =
+    useSchedulerDrag();
+  const [dragOver, setDragOver] = useState(false);
+
+  function handleDragOver(e: React.DragEvent) {
+    if (!draggedAppointment && !draggedOrder) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (!dragOver) setDragOver(true);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    // The timeline below is also a drop target; this row owns the drop.
+    e.stopPropagation();
+    setDragOver(false);
+    const dragged = draggedAppointment;
+    if (dragged) {
+      onRemoteDrop?.(dragged.appointment.id, crew.id);
+      setDraggedAppointment(null);
+      return;
+    }
+    const order = draggedOrder;
+    if (order) {
+      onRemoteQueueDrop?.(order, crew.id);
+      setDraggedOrder(null);
+    }
+  }
+
+  return (
+    <div
+      className={`flex items-center gap-1 min-h-[22px] px-1 border-b border-dashed border-border/50 bg-muted/5 ${
+        dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""
+      }`}
+      onDragOver={handleDragOver}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={handleDrop}
+      title="Remote measures — no on-site time"
+    >
+      <span className="w-12 shrink-0 text-[7px] uppercase tracking-wide text-muted/50">
+        Remote
+      </span>
+      {appts.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", a.id);
+            setDraggedAppointment({
+              appointment: a,
+              sourceCrewId: crew.id,
+              sourceDate: format(date, "yyyy-MM-dd"),
+              sourceTimeBlock: a.time_block,
+            });
+          }}
+          onDragEnd={() => setDraggedAppointment(null)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onCardClick(a);
+          }}
+          className="max-w-[200px] truncate rounded border border-border bg-background px-1.5 py-0.5 text-[10px] leading-tight hover:border-primary cursor-grab active:cursor-grabbing"
+          style={{ borderLeft: `3px solid ${crewColorFor(crew)}` }}
+          title={`${a.customer_name} · remote measure`}
+        >
+          {a.customer_name || "—"}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onEmptyClick();
+        }}
+        className="px-1 text-[9px] text-muted/40 hover:text-primary"
+      >
+        + Remote
+      </button>
+    </div>
+  );
+}
+
 function CrewSection({
   title,
   crews,
@@ -486,6 +620,8 @@ function CrewSection({
   onDismissRForce,
   onAppointmentDrop,
   onQueueDrop,
+  onRemoteDrop,
+  onRemoteQueueDrop,
   hasMismatch,
   pendingTier,
 }: {
@@ -507,6 +643,10 @@ function CrewSection({
   onDismissRForce: (workOrderNumber: string, rforceDate: string, rforceStartTime?: string) => Promise<void>;
   onAppointmentDrop?: (appointmentId: string, targetCrewId: string, startTime?: string, endTime?: string) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string, startTime?: string, endTime?: string) => void;
+  /** An existing appointment dropped on a crew's Remote row. */
+  onRemoteDrop?: (appointmentId: string, targetCrewId: string) => void;
+  /** A queue tile dropped on a crew's Remote row. */
+  onRemoteQueueDrop?: (order: RForceOrder, crewId: string) => void;
   hasMismatch: (appt: Appointment) => boolean;
   /** Booked here but rForce doesn't reflect it yet → clock icon on the tile. */
   pendingTier: (appt: Appointment) => AwaitingTier | undefined;
@@ -599,8 +739,14 @@ function CrewSection({
             {/* Crew rows */}
             {crews.map((crew) => {
               const off = isCrewOff(crew);
-              const crewAppts = getAppointmentsForCrewAndDay(appointments, crew.id, date)
+              const crewDayAppts = getAppointmentsForCrewAndDay(appointments, crew.id, date)
                 .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+              // Remote measures hold no place on the clock, so they never join the
+              // timeline lanes — they live in the Remote row above it.
+              const crewRemoteAppts = crewDayAppts.filter(isRemoteMeasure);
+              const crewAppts = crewDayAppts.filter((a) => !isRemoteMeasure(a));
+              // Only techs who take measures get a Remote row.
+              const showRemoteRow = crewHasType(crew, "measure_tech");
               const crewItems = rforceDisplayItems.filter((r) => r.crewId === crew.id);
               const crewApprovals = crewItems.filter((r) => r.displayMode === "approval");
               const crewDiscrepancies = crewItems.filter((r) => r.displayMode === "discrepancy");
@@ -959,6 +1105,18 @@ function CrewSection({
                       </div>
                     )}
                   </div>
+                  <div className="flex-1 flex flex-col min-w-0">
+                  {showRemoteRow && (
+                    <RemoteLane
+                      crew={crew}
+                      appts={crewRemoteAppts}
+                      onCardClick={onCardClick}
+                      onEmptyClick={() => onCellClick(crew.id, REMOTE_BLOCK)}
+                      onRemoteDrop={onRemoteDrop}
+                      onRemoteQueueDrop={onRemoteQueueDrop}
+                      date={date}
+                    />
+                  )}
                   {twoLayer ? (
                     /* Two-layer layout: rForce on top, app on bottom */
                     <div className="flex-1 flex flex-col min-w-0">
@@ -1293,6 +1451,7 @@ function CrewSection({
                       })}
                     </div>
                   )}
+                  </div>
                 </div>
               );
             })}

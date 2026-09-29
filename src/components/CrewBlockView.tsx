@@ -16,6 +16,8 @@ import {
 import {
   getAppointmentsForCrewAndDay,
   MEASURE_TIME_BLOCKS,
+  MEASURE_ROW_BLOCKS,
+  REMOTE_BLOCK,
   appointmentSpansBlock,
   typeLabel,
   timeBlockStartEnd,
@@ -37,8 +39,9 @@ import { useCurrentActor } from "./AuthProvider";
 import { useToast } from "./Toast";
 import { addMinutesToTime, getNextAvailableStart, getSchedulingMode, timeDurationMinutes } from "@/lib/scheduling-policy";
 
-// Measure tech block labels (2-hour blocks)
+// Measure tech row labels — the remote row, then the 2-hour on-site blocks
 const MEASURE_BLOCK_LABELS: Record<string, string> = {
+  remote: "Remote",
   "9-10": "9–10a",
   "10-12": "10–12",
   "12-2": "12–2p",
@@ -130,6 +133,8 @@ export default function CrewBlockView({
     crewId: string;
     startTime?: string;
     endTime?: string;
+    /** The row that was dropped on (e.g. the remote row), when the cell had one. */
+    timeBlock?: TimeBlock;
   } | null>(null);
 
   // Sun–Sat week
@@ -297,7 +302,7 @@ export default function CrewBlockView({
                   isFullDay: fullDay,
                 });
               }}
-              onAppointmentDrop={(draggedAppt, targetCrewId, targetDay) => {
+              onAppointmentDrop={(draggedAppt, targetCrewId, targetDay, targetBlock) => {
                 // Re-resolve by ID so the modal opens against the current
                 // record/version, not the snapshot captured at drag start.
                 const appt = appointments.find((a) => a.id === draggedAppt.id) ?? draggedAppt;
@@ -327,6 +332,7 @@ export default function CrewBlockView({
                   endTime: nextStart
                     ? addMinutesToTime(nextStart, Math.max(duration, 30))
                     : undefined,
+                  timeBlock: targetBlock,
                 });
               }}
               today={today}
@@ -389,6 +395,7 @@ export default function CrewBlockView({
         <ScheduleModal
           date={moveConfirmTarget.date}
           crewId={moveConfirmTarget.crewId}
+          timeBlock={moveConfirmTarget.timeBlock}
           editingAppointment={moveConfirmAppt}
           rescheduleMode
           initialStartTime={moveConfirmTarget.startTime}
@@ -418,7 +425,7 @@ interface SectionBlockProps {
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string, day: Date, block?: TimeBlock) => void;
-  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date) => void;
+  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date, targetBlock?: TimeBlock) => void;
   today: Date;
 }
 
@@ -516,7 +523,7 @@ interface CrewRowProps {
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string, day: Date, block?: TimeBlock) => void;
-  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date) => void;
+  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date, targetBlock?: TimeBlock) => void;
   today: Date;
 }
 
@@ -645,7 +652,7 @@ interface MeasureCrewRowsProps {
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string, day: Date, block?: TimeBlock) => void;
-  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date) => void;
+  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date, targetBlock?: TimeBlock) => void;
   today: Date;
 }
 
@@ -664,7 +671,8 @@ function MeasureCrewRows({
 }: MeasureCrewRowsProps) {
   const { draggedOrder, draggedAppointment, setDraggedOrder, setDraggedAppointment } = useSchedulerDrag();
   const crewColor = crewColorFor(crew);
-  const blocks = MEASURE_TIME_BLOCKS; // "9-10", "10-12", "12-2", "2-4", "4-6"
+  // "remote", then "9-10", "10-12", "12-2", "2-4", "4-6"
+  const blocks = MEASURE_ROW_BLOCKS;
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
   // Live presence (visual-only): report/highlight the hovered crew×day.
   const { setHoveredCell, hoverColorFor } = usePresence();
@@ -701,7 +709,7 @@ function MeasureCrewRows({
   return (
     <>
       {blocks.map((block, blockIdx) => (
-        <tr key={`${crew.id}-${block}`}>
+        <tr key={`${crew.id}-${block}`} className={block === REMOTE_BLOCK ? "bg-muted/5" : ""}>
           {/* Crew name + time label — each row gets its own cell for alignment */}
           <td
             className={`border border-border p-1 whitespace-nowrap text-[11px] ${blockIdx === 0 ? "border-t" : "border-t-0"}`}
@@ -711,7 +719,12 @@ function MeasureCrewRows({
             {blockIdx === 0 && (
               <div className="font-semibold">{crewShortName(crew)}</div>
             )}
-            <div className="text-[9px] text-muted font-normal">{MEASURE_BLOCK_LABELS[block] || block}</div>
+            <div
+              className={`text-[9px] font-normal ${block === REMOTE_BLOCK ? "text-muted/70 italic" : "text-muted"}`}
+              title={block === REMOTE_BLOCK ? "Measures done remotely — no on-site time" : undefined}
+            >
+              {MEASURE_BLOCK_LABELS[block] || block}
+            </div>
           </td>
 
           {weekDays.map((day) => {
@@ -750,7 +763,10 @@ function MeasureCrewRows({
             const blockAppts = dayAppts.filter(
               (a) => a.time_block && appointmentSpansBlock(a, block)
             );
-            const fullDayAppts = blockIdx === 0 ? (fullDayByDay.get(dateStr) || []) : [];
+            // Cross-type all-day work belongs on the first ON-SITE row, not in
+            // the remote row above it.
+            const fullDayAppts =
+              block === MEASURE_TIME_BLOCKS[0] ? (fullDayByDay.get(dateStr) || []) : [];
             const cellKey = `${dateStr}-${block}`;
             const isDragOver = dragOverCell === cellKey;
 
@@ -785,7 +801,9 @@ function MeasureCrewRows({
                   }
                   const dragged = draggedAppointment;
                   if (dragged) {
-                    onAppointmentDrop?.(dragged.appointment, crew.id, day);
+                    // Pass the row that was dropped on so the confirm modal opens
+                    // on THAT block (including the remote row), not the tile's old one.
+                    onAppointmentDrop?.(dragged.appointment, crew.id, day, block as TimeBlock);
                     setDraggedAppointment(null);
                   }
                 }}
@@ -838,7 +856,7 @@ interface HourlyCrewRowsProps {
   crewShortName: (crew: Crew) => string;
   onAppointmentClick: (appt: Appointment) => void;
   onQueueDrop?: (order: RForceOrder, crewId: string, day: Date, block?: TimeBlock) => void;
-  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date) => void;
+  onAppointmentDrop?: (appt: Appointment, targetCrewId: string, targetDay: Date, targetBlock?: TimeBlock) => void;
   today: Date;
 }
 

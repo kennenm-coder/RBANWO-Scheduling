@@ -1,6 +1,6 @@
 import { AvailabilityRule, AvailabilityException, CalendarBlock, TimeBlock, AvailabilityKind } from "./types";
 import { parseISO, differenceInCalendarWeeks, format, addDays } from "date-fns";
-import { MEASURE_TIME_BLOCKS, timeBlockStartEnd, getSpannedBlocks } from "./calendar-utils";
+import { MEASURE_TIME_BLOCKS, REMOTE_BLOCK, timeBlockStartEnd, getSpannedBlocks } from "./calendar-utils";
 
 export interface CrewDayAvailability {
   available: boolean;
@@ -384,6 +384,12 @@ export function checkAvailabilityConflict(
   window?: { start: string; end: string } | null
 ): AvailabilityConflictInfo | null {
   if (!crewId || !startDate) return null;
+  // A remote measure occupies none of the tech's day, so a blocked window —
+  // PTO, an Office/Late day, a company holiday — has nothing to collide with.
+  // It is usually recorded after the fact, and refusing it (or demanding an
+  // override) would only stop the scheduler from writing down work that is
+  // already done.
+  if (timeBlock === REMOTE_BLOCK) return null;
 
   const occupiedBlocks: TimeBlock[] =
     timeBlock === "full_day"

@@ -76,6 +76,9 @@ export const TIME_BLOCK_HOUR: Record<TimeBlock, number> = {
   "2-4": 14,
   "4-6": 16,
   full_day: 8,
+  // A remote measure has no clock position; the hour is never compared (see
+  // timeBlockMatchesHour), and this value only keeps the record exhaustive.
+  remote: 8,
 };
 
 /**
@@ -106,6 +109,11 @@ export function timeBlockMatchesHour(
   // Full-day appointments: any hour is acceptable
   if (block === "full_day") return true;
 
+  // A remote measure occupies no window, so rForce's hour can never disagree
+  // with it — only the DATE has to line up. Comparing the hour would flag every
+  // remote measure forever, with nothing the scheduler could do to clear it.
+  if (block === "remote") return true;
+
   // For timed blocks, allow the rForce hour to be anywhere within the block's range.
   // e.g., "4-6" block → hours 16 and 17 are both valid (16:00–17:59).
   // The edge blocks absorb the whole tail of the day, matching how the calendar
@@ -119,6 +127,7 @@ export function timeBlockMatchesHour(
     "2-4": [14, 15],
     "4-6": [16, 23],
     full_day: [8, 16],
+    remote: [0, 23],
   };
 
   const [lo, hi] = blockRanges[block];

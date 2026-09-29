@@ -7,7 +7,12 @@
  */
 
 import { AppointmentType, TimeBlock } from "./types";
-import { MEASURE_TIME_BLOCKS, timeBlockStartEnd } from "./calendar-utils";
+import {
+  MEASURE_TIME_BLOCKS,
+  MEASURE_ROW_BLOCKS,
+  REMOTE_BLOCK,
+  timeBlockStartEnd,
+} from "./calendar-utils";
 
 // ── Scheduling modes ──
 
@@ -71,7 +76,7 @@ export function getDefaultTimes(type: AppointmentType): { start: string; end: st
  */
 export function getValidBlocks(type: AppointmentType): TimeBlock[] | null {
   if (getSchedulingMode(type) === "fixed_block") {
-    return [...MEASURE_TIME_BLOCKS];
+    return [...MEASURE_ROW_BLOCKS];
   }
   return null;
 }
@@ -86,7 +91,10 @@ export function getValidBlocks(type: AppointmentType): TimeBlock[] | null {
  */
 export function coerceFixedBlock(type: AppointmentType, block: TimeBlock | null | undefined): TimeBlock {
   if (getSchedulingMode(type) !== "fixed_block") return block ?? "full_day";
-  return block && block !== "full_day" && MEASURE_TIME_BLOCKS.includes(block)
+  // The remote row is a legitimate measure placement and must survive a crew or
+  // date move untouched — coercing it into 9-10 would silently turn a remote
+  // measure into an on-site visit that occupies the tech's morning.
+  return block && block !== "full_day" && MEASURE_ROW_BLOCKS.includes(block)
     ? block
     : MEASURE_TIME_BLOCKS[0];
 }
@@ -235,6 +243,9 @@ export function deriveOccupancy(opts: {
   endTime?: string | null;
   fullDay?: boolean;
 }): { is_full_day: boolean; resource_hours: number | null } {
+  // A remote measure occupies none of the tech's day: never all-day, and zero
+  // hours rather than the half hour its bookkeeping window spans.
+  if (opts.timeBlock === REMOTE_BLOCK) return { is_full_day: false, resource_hours: 0 };
   const isFullDay = opts.fullDay ?? opts.timeBlock === "full_day";
   return {
     is_full_day: isFullDay,

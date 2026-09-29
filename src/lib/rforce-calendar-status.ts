@@ -172,7 +172,15 @@ function detectMismatch(
   // a rForce time that lands in a DIFFERENT block is a real mismatch (wrong
   // window). This avoids false positives from block-vs-exact-minute differences
   // (e.g. rForce 10:30 in a 10–12 block). full_day work has no block to compare.
-  if (rf.scheduled_start && appt.time_block && appt.time_block !== "full_day") {
+  // A remote measure has no window to compare — only its DATE has to match
+  // rForce. (rForce still carries whatever on-site time the job was booked with,
+  // so comparing would flag every remote measure with no way to clear it.)
+  if (
+    rf.scheduled_start &&
+    appt.time_block &&
+    appt.time_block !== "full_day" &&
+    appt.time_block !== "remote"
+  ) {
     const rfHour = parseInt(rf.scheduled_start.slice(11, 13), 10);
     if (!Number.isNaN(rfHour)) {
       const rfBlock = hourToBlock(rfHour);
