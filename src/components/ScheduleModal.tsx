@@ -16,6 +16,7 @@ import {
   timeBlockLabel,
   timeBlockStartEnd,
   typeLabel,
+  REMOTE_BLOCK,
 } from "@/lib/calendar-utils";
 import { buildSalesforceUrl } from "@/lib/salesforce";
 import { validateAppointment } from "@/lib/scheduling-rules";
@@ -156,10 +157,21 @@ export default function ScheduleModal({
   );
   // A measure is coerced onto a real measure block: Day view hands every lane
   // "full_day", which used to save measures as full-day rows.
+  //
+  // A caller that names a REAL row (a drop on the 2-4 or the remote row) wins
+  // over the record's current block — that row is what the scheduler dropped on.
+  // "full_day" is the Day view's placeholder for "some lane", never a choice, so
+  // it doesn't override anything.
+  const targetBlock =
+    initialTimeBlock && initialTimeBlock !== "full_day" ? initialTimeBlock : null;
   const [selectedBlock, setSelectedBlock] = useState<TimeBlock>(() =>
     coerceFixedBlock(
       type,
-      editingAppointment?.time_block || initialTimeBlock || prefillTimes?.time_block || "full_day"
+      targetBlock ||
+        editingAppointment?.time_block ||
+        initialTimeBlock ||
+        prefillTimes?.time_block ||
+        "full_day"
     )
   );
   const [customerName, setCustomerName] = useState(
@@ -680,6 +692,12 @@ export default function ScheduleModal({
                     </option>
                   ))}
                 </select>
+                {selectedBlock === REMOTE_BLOCK && (
+                  <p className="mt-1 text-[11px] text-muted">
+                    Takes no time on the tech&apos;s day — it stacks on the Remote row even
+                    when their blocks are full.
+                  </p>
+                )}
               </div>
             )}
             {/* Full-day toggle — everyone except measures. Installs default on,

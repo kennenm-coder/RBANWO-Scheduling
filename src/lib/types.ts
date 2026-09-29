@@ -51,13 +51,24 @@ export interface OriginalEntrySnapshot {
   captured_at: string;
 }
 
+/**
+ * Where a job sits on a crew's day.
+ *
+ * "9-10" … "4-6" are the measure grid; "full_day" is the all-day install row.
+ * "remote" is the extra row ABOVE the measure grid: a measure the tech did
+ * remotely, so it occupies none of their on-site day. Remote rows stack freely
+ * (no double-book guard), carry no working hours, and skip the availability
+ * gate — they are a record of work done, not a visit that fills a slot. Only
+ * `tech_measure` ever uses it. See MEASURE_ROW_BLOCKS / REMOTE_WINDOW.
+ */
 export type TimeBlock =
   | "9-10"
   | "10-12"
   | "12-2"
   | "2-4"
   | "4-6"
-  | "full_day";
+  | "full_day"
+  | "remote";
 
 export type ManagesType = "install" | "service" | "jip" | "measure";
 

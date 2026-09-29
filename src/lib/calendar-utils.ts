@@ -32,7 +32,39 @@ export const MEASURE_TIME_BLOCKS: TimeBlock[] = [
 
 export const INSTALL_TIME_BLOCKS: TimeBlock[] = ["full_day"];
 
+/** The extra row above the measure grid: a measure done remotely. */
+export const REMOTE_BLOCK: TimeBlock = "remote";
+
+/**
+ * The rows a measure tech's day is drawn in — the remote row first, then the
+ * five on-site blocks. Views iterate this; everything that does block MATH
+ * (spans, resize, availability windows) stays on MEASURE_TIME_BLOCKS, because
+ * the remote row has no position on the clock.
+ */
+export const MEASURE_ROW_BLOCKS: TimeBlock[] = [REMOTE_BLOCK, ...MEASURE_TIME_BLOCKS];
+
+/**
+ * The window a remote measure is stored with. A scheduled row must carry a real
+ * forward start/end (the DB refuses anything else), but a remote measure takes
+ * none of the tech's day — so it sits in the half hour before the 9 AM grid,
+ * where it can never overlap an on-site block even if some path ever judged it
+ * by its window.
+ */
+export const REMOTE_WINDOW = { start: "08:00", end: "08:30" } as const;
+
+/** Is this a measure the tech did remotely (the extra row, no on-site time)? */
+export function isRemoteMeasure(appointment: {
+  time_block?: TimeBlock | null;
+}): boolean {
+  return appointment.time_block === REMOTE_BLOCK;
+}
+
 export function appointmentSpansBlock(appointment: Appointment, block: TimeBlock): boolean {
+  // The remote row is exact-match only: it is never part of a measure's span,
+  // and a remote measure never reaches into the on-site grid.
+  if (block === REMOTE_BLOCK || appointment.time_block === REMOTE_BLOCK) {
+    return appointment.time_block === block;
+  }
   if (!appointment.time_block || block === "full_day") return appointment.time_block === block;
   if (!appointment.time_block_end) return appointment.time_block === block;
   const startIdx = MEASURE_TIME_BLOCKS.indexOf(appointment.time_block);
@@ -65,6 +97,8 @@ export function timeBlockLabel(block: TimeBlock): string {
       return "4:00 – 6:00 PM";
     case "full_day":
       return "Full Day (8 AM)";
+    case "remote":
+      return "Remote Measure";
   }
 }
 
@@ -119,7 +153,11 @@ export function formatTimeShort(hhmm: string | null | undefined): string {
 export function formatAppointmentTimeRange(appt: {
   start_time?: string | null;
   end_time?: string | null;
+  time_block?: TimeBlock | null;
 }): string {
+  // A remote measure's stored window is bookkeeping, not a visit time — showing
+  // "8–8:30a" on the tile would read as an appointment the customer was given.
+  if (appt.time_block === REMOTE_BLOCK) return "Remote";
   if (!appt.start_time) return "";
   const start = formatTimeShort(appt.start_time);
   const end = appt.end_time ? formatTimeShort(appt.end_time) : "";
@@ -156,13 +194,19 @@ export function timeBlockStartEnd(block: TimeBlock): {
       return { start: "16:00", end: "18:00" };
     case "full_day":
       return { start: "08:00", end: "16:00" };
+    case "remote":
+      return { start: REMOTE_WINDOW.start, end: REMOTE_WINDOW.end };
   }
 }
 
+/**
+ * The blocks a scheduler may pick for a type. Measures include the remote row,
+ * so a measure can be recorded as remote (or moved off it) from the modal.
+ */
 export function getTimeBlocksForType(
   type: AppointmentType
 ): TimeBlock[] {
-  if (type === "tech_measure") return MEASURE_TIME_BLOCKS;
+  if (type === "tech_measure") return MEASURE_ROW_BLOCKS;
   return INSTALL_TIME_BLOCKS;
 }
 
@@ -582,9 +626,15 @@ export function getRForceDisplayItems(
 
     const hour = parseInt(rf.scheduled_start.slice(11, 13), 10);
     const isMeasure = crew.crew_type === "measure_tech";
-    const timeBlock: TimeBlock = isMeasure ? timeToBlock(hour) : "full_day";
+    let timeBlock: TimeBlock = isMeasure ? timeToBlock(hour) : "full_day";
 
     const calendarStatus = statusByWo.get(normalizeWo(rf.work_order_number));
+    // The scheduler put this job on the remote row — show its rForce counterpart
+    // there too, instead of the on-site block rForce's hour implies. Otherwise
+    // the pair sits in two different rows and reads as two jobs.
+    if (calendarStatus?.linkedAppointment && isRemoteMeasure(calendarStatus.linkedAppointment)) {
+      timeBlock = REMOTE_BLOCK;
+    }
 
     if (calendarStatus?.linkedAppointment) {
       const appt = calendarStatus.linkedAppointment;

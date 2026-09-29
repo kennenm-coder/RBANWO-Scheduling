@@ -12,7 +12,7 @@
  */
 
 import { Appointment, TimeBlock } from "./types";
-import { getSpannedBlocks, timeBlockStartEnd } from "./calendar-utils";
+import { getSpannedBlocks, timeBlockStartEnd, REMOTE_BLOCK } from "./calendar-utils";
 import { addDays, format, parseISO } from "date-fns";
 
 export interface SchedulingConflict {
@@ -64,6 +64,12 @@ interface Footprint {
   blocks: TimeBlock[];
   /** Minutes from midnight. Block-based work derives it from its blocks. */
   window: { start: number; end: number } | null;
+  /**
+   * A remote measure — it occupies none of the tech's day, so it collides with
+   * nothing (not even a full-day job) and nothing collides with it. Mirrors the
+   * DB guard, which returns early for remote rows on either side.
+   */
+  remote: boolean;
 }
 
 function toMinutes(time: string): number {
@@ -78,7 +84,12 @@ function buildFootprint(
   endTime: string | null | undefined,
   isFullDay: boolean | null | undefined
 ): Footprint {
-  if (isFullDay || timeBlock === "full_day") return { fullDay: true, blocks: [], window: null };
+  if (timeBlock === REMOTE_BLOCK) {
+    return { fullDay: false, blocks: [], window: null, remote: true };
+  }
+  if (isFullDay || timeBlock === "full_day") {
+    return { fullDay: true, blocks: [], window: null, remote: false };
+  }
 
   const blocks = timeBlock
     ? getSpannedBlocks({ time_block: timeBlock, time_block_end: timeBlockEnd ?? null } as Appointment)
@@ -93,7 +104,7 @@ function buildFootprint(
   } else if (startTime && endTime) {
     window = { start: toMinutes(startTime), end: toMinutes(endTime) };
   }
-  return { fullDay: false, blocks, window };
+  return { fullDay: false, blocks, window, remote: false };
 }
 
 /**
@@ -107,6 +118,9 @@ function footprintsOverlap(
   a: Footprint,
   b: Footprint
 ): { block: TimeBlock | null; timed: boolean } | null {
+  // A remote measure takes no time from the tech's day — it stacks freely on
+  // the remote row and never blocks (or is blocked by) on-site work.
+  if (a.remote || b.remote) return null;
   if (a.fullDay || b.fullDay) return { block: a.blocks[0] ?? b.blocks[0] ?? null, timed: false };
   if (a.blocks.length > 0 && b.blocks.length > 0) {
     const hit = a.blocks.find((x) => b.blocks.includes(x));

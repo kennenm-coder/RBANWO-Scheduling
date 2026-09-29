@@ -16,7 +16,7 @@ import {
   timeDurationMinutes,
   deriveOccupancy,
 } from "./scheduling-policy";
-import { MEASURE_TIME_BLOCKS, timeBlockStartEnd } from "./calendar-utils";
+import { MEASURE_TIME_BLOCKS, REMOTE_BLOCK, timeBlockStartEnd } from "./calendar-utils";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
 import { checkAvailabilityConflict } from "./availability";
 import { getEligibleCrews } from "./crew-utils";
@@ -302,6 +302,9 @@ export function resolveMoveTimes(
     }
     timeBlock = "full_day";
   } else if (mode === "fixed_block" && target.exactTime && target.startTime) {
+    // NOTE: an exact-time drop wins over the remote row on purpose — dragging a
+    // remote measure onto the day-view timeline is how a scheduler says the job
+    // needs a real visit after all, and it lands in the block it was dropped on.
     // Day-view exact-time drop for a measure job: keep the precise time and
     // derive which block it lands in.
     const origDuration = timeDurationMinutes(
@@ -316,6 +319,17 @@ export function resolveMoveTimes(
         ? target.endTime
         : addMinutesToTime(startTime, origDuration);
     timeBlock = hourToFixedBlock(parseInt(startTime.slice(0, 2), 10));
+  } else if (
+    mode === "fixed_block" &&
+    (target.timeBlock ?? currentAppointment.time_block) === REMOTE_BLOCK
+  ) {
+    // The remote row: a measure the tech did remotely. It keeps a real forward
+    // window because the DB requires one, but occupies none of the tech's day
+    // (see deriveOccupancy / the conflict guard).
+    timeBlock = REMOTE_BLOCK;
+    const window = timeBlockStartEnd(REMOTE_BLOCK);
+    startTime = window.start;
+    endTime = window.end;
   } else if (mode === "fixed_block") {
     // Block-grid placement, or a crew/date move that keeps the block. A measure
     // is never full_day; a missing block falls back to the first measure block.

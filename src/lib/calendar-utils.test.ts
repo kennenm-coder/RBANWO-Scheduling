@@ -13,6 +13,7 @@ import {
   getTimeBlocksForType,
   timeToBlock,
   MEASURE_TIME_BLOCKS,
+  MEASURE_ROW_BLOCKS,
   INSTALL_TIME_BLOCKS,
 } from "./calendar-utils";
 import { Appointment } from "./types";
@@ -172,8 +173,9 @@ describe("timeBlockStartEnd", () => {
 });
 
 describe("getTimeBlocksForType", () => {
-  it("returns measure blocks for tech_measure", () => {
-    expect(getTimeBlocksForType("tech_measure")).toBe(MEASURE_TIME_BLOCKS);
+  it("returns the measure rows — remote row first — for tech_measure", () => {
+    expect(getTimeBlocksForType("tech_measure")).toBe(MEASURE_ROW_BLOCKS);
+    expect(MEASURE_ROW_BLOCKS).toEqual(["remote", ...MEASURE_TIME_BLOCKS]);
   });
 
   it("returns install blocks for install", () => {

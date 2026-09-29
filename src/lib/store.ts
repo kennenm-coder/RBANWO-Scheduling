@@ -18,7 +18,7 @@ import {
   MatchRejection,
   TimeBlock,
 } from "./types";
-import { timeBlockStartEnd, formatDateStr } from "./calendar-utils";
+import { timeBlockStartEnd, formatDateStr, REMOTE_BLOCK } from "./calendar-utils";
 import { buildSalesforceUrl } from "./salesforce";
 import { normalizeWoType } from "./normalize";
 import { learnResourceMapping } from "./resource-learning";
@@ -964,7 +964,9 @@ export async function approveRForceOrder(
   // May be null for timed types (service/JIP), whose block grid places them by
   // start hour rather than in the full-day row.
   let timeBlockToStore: TimeBlock | null = tb;
-  if (derived) {
+  // Approved onto the remote row: the job takes none of the tech's day, so it
+  // keeps the remote window rather than rForce's on-site time.
+  if (derived && tb !== REMOTE_BLOCK) {
     if (tb === "full_day") {
       // Default / queue placement — take the real window and its natural block.
       start = derived.start_time;

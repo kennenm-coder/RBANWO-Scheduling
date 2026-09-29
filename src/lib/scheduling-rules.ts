@@ -1,6 +1,7 @@
 import { Appointment, Crew, TimeOffRequest } from "./types";
 import { parseISO, differenceInWeeks } from "date-fns";
 import { getTimeOffForDate } from "./store";
+import { isRemoteMeasure } from "./calendar-utils";
 
 interface ValidationResult {
   valid: boolean;
@@ -37,7 +38,9 @@ export function validateAppointment(
   }
 
   if (appointment.appointment_type === "tech_measure") {
-    const crewAppts = otherAppts.filter((a) => a.crew_id === crew.id);
+    // Remote measures don't fill the tech's day, so they don't count toward the
+    // "how many stops is this?" warning.
+    const crewAppts = otherAppts.filter((a) => a.crew_id === crew.id && !isRemoteMeasure(a));
     if (crewAppts.length >= 4) {
       warnings.push(
         `${crew.name} already has ${crewAppts.length} appointments this day (max recommended: 3-4)`
@@ -73,11 +76,15 @@ export function validateAppointment(
     }
   }
 
-  const blockConflict = otherAppts.find(
-    (a) =>
-      a.crew_id === crew.id &&
-      a.time_block === appointment.time_block
-  );
+  // The remote row stacks freely — several remote measures on one tech/day is
+  // normal, not a double-book.
+  const blockConflict = isRemoteMeasure(appointment)
+    ? undefined
+    : otherAppts.find(
+        (a) =>
+          a.crew_id === crew.id &&
+          a.time_block === appointment.time_block
+      );
   if (blockConflict) {
     // Warning, not a hard error: double-booking is allowed via the explicit
     // override in the save flow, so this must not disable the Save button.

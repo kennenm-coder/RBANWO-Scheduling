@@ -23,6 +23,9 @@ import {
   getAppointmentsForCrewAndDay,
   getRForceDisplayItems,
   MEASURE_TIME_BLOCKS,
+  MEASURE_ROW_BLOCKS,
+  REMOTE_BLOCK,
+  isRemoteMeasure,
   timeBlockStartEnd,
   appointmentSpansBlock,
   formatAppointmentTimeRange,
@@ -54,6 +57,7 @@ interface Props {
 }
 
 const SHORT_BLOCK_LABELS: Record<string, string> = {
+  remote: "REM",
   "9-10": "9–10a",
   "10-12": "10–12",
   "12-2": "12–2p",
@@ -260,7 +264,7 @@ export default function CrewLaneWeekView({
           const visible = items.filter((d) => d.displayMode === "synced" || d.displayMode === "regular" || d.displayMode === "discrepancy");
           let cellMax = 1;
           if (showTimeLanes) {
-            for (const block of MEASURE_TIME_BLOCKS) {
+            for (const block of MEASURE_ROW_BLOCKS) {
               const ba = cellAppts.filter((a) => appointmentSpansBlock(a, block)).length;
               const br =
                 approvals.filter((r) => r.timeBlock === block).length +
@@ -849,7 +853,7 @@ function MeasureTimeLaneCell({
   }, [rforceOrders]);
 
   const allApptsSorted = [...cellAppts].sort((a, b) => {
-    const blockOrder = MEASURE_TIME_BLOCKS as string[];
+    const blockOrder = MEASURE_ROW_BLOCKS as string[];
     const aIdx = a.time_block ? blockOrder.indexOf(a.time_block) : 99;
     const bIdx = b.time_block ? blockOrder.indexOf(b.time_block) : 99;
     return aIdx - bIdx;
@@ -858,7 +862,7 @@ function MeasureTimeLaneCell({
   // full-day job assigned to this measure tech. They MUST still be shown or a
   // scheduler could book over an appointment they can't see.
   const offBlockAppts = allApptsSorted.filter(
-    (a) => !MEASURE_TIME_BLOCKS.some((b) => appointmentSpansBlock(a, b))
+    (a) => !isRemoteMeasure(a) && !MEASURE_TIME_BLOCKS.some((b) => appointmentSpansBlock(a, b))
   );
 
   const approvalItems = cellDisplayItems.filter((d) => d.displayMode === "approval");
@@ -981,7 +985,7 @@ function MeasureTimeLaneCell({
       )}
       {(!off || cellAppts.length > 0 || allRForceSorted.length > 0 || discrepancyItems.length > 0) && (
         <div>
-          {MEASURE_TIME_BLOCKS.map((block) => {
+          {MEASURE_ROW_BLOCKS.map((block) => {
             const isBlocked = blockedBlocks.has(block);
             const isUnavailable = availability ? availability.unavailableBlocks.has(block) : false;
             const blockAppts = allApptsSorted.filter((a) => appointmentSpansBlock(a, block));
@@ -1024,12 +1028,19 @@ function MeasureTimeLaneCell({
             return (
               <div
                 key={block}
-                className={`flex items-stretch min-h-[18px] border-b border-border/20 last:border-b-0 ${isDropTarget ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+                className={`flex items-stretch min-h-[18px] border-b border-border/20 last:border-b-0 ${
+                  block === REMOTE_BLOCK ? "bg-muted/5" : ""
+                } ${isDropTarget ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
                 onDragOver={handleBlockDragOver}
                 onDragLeave={handleBlockDragLeave}
                 onDrop={handleBlockDrop}
+                title={block === REMOTE_BLOCK ? "Remote measures — no on-site time" : undefined}
               >
-                <div className="w-[32px] shrink-0 text-[7px] text-muted flex items-center justify-center bg-surface/30 leading-none">
+                <div
+                  className={`w-[32px] shrink-0 text-[7px] flex items-center justify-center bg-surface/30 leading-none ${
+                    block === REMOTE_BLOCK ? "text-muted/60 italic" : "text-muted"
+                  }`}
+                >
                   {SHORT_BLOCK_LABELS[block] || block}
                 </div>
                 <div className="flex-1 min-w-0 px-0.5">
@@ -1089,7 +1100,9 @@ function MeasureTimeLaneCell({
                               sourceDate={dateStr}
                               sourceTimeBlock={block}
                               spanBlocks={spanLen}
-                              showResizeHandle={true}
+                              // Nothing to stretch: the remote row has no
+                              // neighbouring blocks to grow into.
+                              showResizeHandle={block !== REMOTE_BLOCK}
                             >
                               <CompactAppointmentContent
                                 appointment={a}
