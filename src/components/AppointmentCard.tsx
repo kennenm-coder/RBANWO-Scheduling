@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Appointment, Crew } from "@/lib/types";
+import { describeHelperDays, helperDayOffsets } from "@/lib/crew-days";
 import { typeLabel, formatProductBreakdown, formatAppointmentTimeRange } from "@/lib/calendar-utils";
 import { parseCity } from "@/lib/crew-utils";
 import { crewColorFor } from "@/lib/preferences";
@@ -73,14 +74,18 @@ export default function AppointmentCard({
   };
   const city = parseCity(appointment.address);
 
+  // A helper on only part of a multi-day span says so, so the lead's own tile
+  // shows who is actually alongside them and when ("Mike (Day 2)").
   const helpers: string[] = [];
-  if (appointment.secondary_crew_id && allCrews) {
-    const sec = allCrews.find((c) => c.id === appointment.secondary_crew_id);
-    if (sec) helpers.push(sec.name.split(" ")[0]);
-  }
-  if (appointment.tertiary_crew_id && allCrews) {
-    const ter = allCrews.find((c) => c.id === appointment.tertiary_crew_id);
-    if (ter) helpers.push(ter.name.split(" ")[0]);
+  for (const helperId of [appointment.secondary_crew_id, appointment.tertiary_crew_id]) {
+    if (!helperId || !allCrews) continue;
+    const helper = allCrews.find((c) => c.id === helperId);
+    if (!helper) continue;
+    const days = describeHelperDays(
+      helperDayOffsets(appointment, helperId),
+      appointment.duration_days
+    );
+    helpers.push(days ? `${helper.name.split(" ")[0]} (${days})` : helper.name.split(" ")[0]);
   }
   // Parse additional crew members from notes "[Resources: Name, Name]"
   const additionalMembers = appointment.notes?.match(/^\[Resources: ([^\]]*)\]/)?.[1] || "";

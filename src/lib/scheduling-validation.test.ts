@@ -330,3 +330,154 @@ describe("formatConflictMessage", () => {
     expect(msg).toContain("Jones");
   });
 });
+
+describe("partial helper days", () => {
+  // A 3-day install starting Mon 2026-08-10, helper only on day 2 (Tue the 11th).
+  const partialHost = () =>
+    makeAppt({
+      id: "install-3day",
+      customer_name: "Partial Host",
+      crew_id: "crew-1",
+      secondary_crew_id: "crew-helper",
+      secondary_day_offsets: [1],
+      scheduled_date: "2026-08-10",
+      duration_days: 3,
+      is_full_day: true,
+    });
+
+  it("leaves the helper free on a day it does not work", () => {
+    const conflicts = checkSchedulingConflicts(
+      "crew-helper", "2026-08-10", 1, "full_day", null, [partialHost()], undefined,
+      { isFullDay: true }
+    );
+    expect(conflicts).toEqual([]);
+  });
+
+  it("still books the helper on the day it does work", () => {
+    const conflicts = checkSchedulingConflicts(
+      "crew-helper", "2026-08-11", 1, "full_day", null, [partialHost()], undefined,
+      { isFullDay: true }
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].conflictDate).toBe("2026-08-11");
+  });
+
+  it("leaves the helper free on the last day too", () => {
+    const conflicts = checkSchedulingConflicts(
+      "crew-helper", "2026-08-12", 1, "full_day", null, [partialHost()], undefined,
+      { isFullDay: true }
+    );
+    expect(conflicts).toEqual([]);
+  });
+
+  it("keeps the lead booked for the whole span", () => {
+    for (const date of ["2026-08-10", "2026-08-11", "2026-08-12"]) {
+      const conflicts = checkSchedulingConflicts(
+        "crew-1", date, 1, "full_day", null, [partialHost()], undefined,
+        { isFullDay: true }
+      );
+      expect(conflicts, `lead should be busy on ${date}`).toHaveLength(1);
+    }
+  });
+
+  it("keeps a helper with no day list booked for the whole span", () => {
+    const wholeSpan = makeAppt({
+      id: "install-3day-b",
+      crew_id: "crew-1",
+      secondary_crew_id: "crew-helper",
+      scheduled_date: "2026-08-10",
+      duration_days: 3,
+      is_full_day: true,
+    });
+    for (const date of ["2026-08-10", "2026-08-11", "2026-08-12"]) {
+      const conflicts = checkSchedulingConflicts(
+        "crew-helper", date, 1, "full_day", null, [wholeSpan], undefined,
+        { isFullDay: true }
+      );
+      expect(conflicts, `whole-span helper should be busy on ${date}`).toHaveLength(1);
+    }
+  });
+
+  it("judges the NEW booking's partial helper on its own days only", () => {
+    // The helper already has a one-day job on Mon the 10th.
+    const existing = [
+      makeAppt({
+        id: "solo",
+        crew_id: "crew-helper",
+        scheduled_date: "2026-08-10",
+        duration_days: 1,
+        is_full_day: true,
+      }),
+    ];
+    // New 3-day install from the 10th; helper joins on day 3 (the 12th) only.
+    const ok = checkSchedulingConflicts(
+      "crew-1", "2026-08-10", 3, "full_day", null, existing, undefined,
+      { isFullDay: true, extraCrewIds: ["crew-helper"], extraCrewDays: { "crew-helper": [2] } }
+    );
+    expect(ok).toEqual([]);
+
+    // Same booking, helper on day 1 instead — now it clashes.
+    const clash = checkSchedulingConflicts(
+      "crew-1", "2026-08-10", 3, "full_day", null, existing, undefined,
+      { isFullDay: true, extraCrewIds: ["crew-helper"], extraCrewDays: { "crew-helper": [0] } }
+    );
+    expect(clash).toHaveLength(1);
+    expect(clash[0].conflictDate).toBe("2026-08-10");
+  });
+
+  it("still clashes when a whole-span helper is added to the new booking", () => {
+    const existing = [
+      makeAppt({
+        id: "solo",
+        crew_id: "crew-helper",
+        scheduled_date: "2026-08-12",
+        duration_days: 1,
+        is_full_day: true,
+      }),
+    ];
+    const conflicts = checkSchedulingConflicts(
+      "crew-1", "2026-08-10", 3, "full_day", null, existing, undefined,
+      { isFullDay: true, extraCrewIds: ["crew-helper"] }
+    );
+    expect(conflicts).toHaveLength(1);
+  });
+
+  it("reports the earliest clashing day when two helper days collide", () => {
+    const existing = [
+      makeAppt({
+        id: "host",
+        crew_id: "crew-1",
+        secondary_crew_id: "crew-helper",
+        secondary_day_offsets: [0, 2],
+        scheduled_date: "2026-08-10",
+        duration_days: 3,
+        is_full_day: true,
+      }),
+    ];
+    const conflicts = checkSchedulingConflicts(
+      "crew-9", "2026-08-10", 3, "full_day", null, existing, undefined,
+      { isFullDay: true, extraCrewIds: ["crew-helper"], extraCrewDays: { "crew-helper": [0, 2] } }
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].conflictDate).toBe("2026-08-10");
+  });
+
+  it("treats an out-of-span day list as the whole span, not as free time", () => {
+    // A 2-day job carrying a stale day-3 list: the helper stays booked rather
+    // than silently freed. Mirrors normalizeDayOffsets and the DB guard.
+    const stale = makeAppt({
+      id: "shortened",
+      crew_id: "crew-1",
+      secondary_crew_id: "crew-helper",
+      secondary_day_offsets: [2],
+      scheduled_date: "2026-08-10",
+      duration_days: 2,
+      is_full_day: true,
+    });
+    const conflicts = checkSchedulingConflicts(
+      "crew-helper", "2026-08-10", 1, "full_day", null, [stale], undefined,
+      { isFullDay: true }
+    );
+    expect(conflicts).toHaveLength(1);
+  });
+});

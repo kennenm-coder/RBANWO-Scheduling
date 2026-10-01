@@ -1,6 +1,7 @@
 "use client";
 
 import { Appointment, Crew, RForceOrder, AppointmentLink } from "@/lib/types";
+import { describeHelperDays } from "@/lib/crew-days";
 import { typeLabel, timeBlockLabel, formatTime12, formatDateStr, formatDateStrFull, isRemoteMeasure } from "@/lib/calendar-utils";
 import { addDays, parseISO, format } from "date-fns";
 import { openSalesforce, mapsHref } from "@/lib/salesforce";
@@ -110,6 +111,13 @@ export default function AppointmentSheet({
     : null;
   const tertiaryCrew = appointment.tertiary_crew_id
     ? crews.find((c) => c.id === appointment.tertiary_crew_id)
+    : null;
+  // Null for a helper on the whole span — the usual case needs no caption.
+  const secondaryDays = appointment.secondary_crew_id
+    ? describeHelperDays(appointment.secondary_day_offsets, appointment.duration_days)
+    : null;
+  const tertiaryDays = appointment.tertiary_crew_id
+    ? describeHelperDays(appointment.tertiary_day_offsets, appointment.duration_days)
     : null;
   const additionalMembers = appointment.notes?.match(/^\[Resources: ([^\]]*)\]/)?.[1] || "";
   const isCancelled = appointment.status === "cancelled";
@@ -250,8 +258,18 @@ export default function AppointmentSheet({
           <InfoRow icon={<User size={16} />} label="Crew">
             <div>
               <div>{crew?.name || "Unknown"}</div>
-              {secondaryCrew && <div className="text-xs opacity-80">+ {secondaryCrew.name}</div>}
-              {tertiaryCrew && <div className="text-xs opacity-80">+ {tertiaryCrew.name}</div>}
+              {secondaryCrew && (
+                <div className="text-xs opacity-80">
+                  + {secondaryCrew.name}
+                  {secondaryDays && <span className="opacity-75"> · {secondaryDays}</span>}
+                </div>
+              )}
+              {tertiaryCrew && (
+                <div className="text-xs opacity-80">
+                  + {tertiaryCrew.name}
+                  {tertiaryDays && <span className="opacity-75"> · {tertiaryDays}</span>}
+                </div>
+              )}
               {additionalMembers && (
                 <div className="text-xs opacity-70 mt-0.5">
                   Crew members: {additionalMembers}

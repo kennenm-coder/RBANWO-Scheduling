@@ -23,6 +23,7 @@ import { buildSalesforceUrl } from "./salesforce";
 import { normalizeWoType } from "./normalize";
 import { learnResourceMapping } from "./resource-learning";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
+import { extraCrewDaysOf } from "./crew-days";
 import { checkAvailabilityConflict } from "./availability";
 import { deriveTimesFromOrder } from "./rforce-times";
 import { getSchedulingMode, deriveOccupancy } from "./scheduling-policy";
@@ -146,6 +147,7 @@ export async function createAppointment(
         endTime: appt.end_time,
         isFullDay: appt.is_full_day,
         extraCrewIds: [appt.secondary_crew_id, appt.tertiary_crew_id],
+        extraCrewDays: extraCrewDaysOf(appt),
       },
     );
     if (conflicts.length > 0) {
@@ -174,7 +176,8 @@ export async function updateAppointment(
   // return to the calendar). Only runs when the caller provides existing
   // appointments; skipped when the write itself grants an overlap override.
   const PLACEMENT_KEYS: (keyof Appointment)[] = [
-    "crew_id", "secondary_crew_id", "tertiary_crew_id", "scheduled_date",
+    "crew_id", "secondary_crew_id", "tertiary_crew_id",
+    "secondary_day_offsets", "tertiary_day_offsets", "scheduled_date",
     "start_time", "end_time", "time_block", "time_block_end", "duration_days",
     "is_full_day", "status",
   ];
@@ -200,6 +203,7 @@ export async function updateAppointment(
           endTime: merged.end_time,
           isFullDay: merged.is_full_day,
           extraCrewIds: [merged.secondary_crew_id, merged.tertiary_crew_id],
+          extraCrewDays: extraCrewDaysOf(merged),
         },
       );
       if (conflicts.length > 0) {
@@ -281,6 +285,10 @@ export async function unscheduleAppointment(
       time_block_end: null,
       secondary_crew_id: null,
       tertiary_crew_id: null,
+      // The day lists go with the helpers. A span left behind would land on
+      // whatever days the job occupies next time it is placed.
+      secondary_day_offsets: null,
+      tertiary_day_offsets: null,
       allow_overlap: false,
       allow_availability_conflict: false,
       reschedule_reason: reason || "Unscheduled by user",
