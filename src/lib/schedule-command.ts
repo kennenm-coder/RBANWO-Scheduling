@@ -18,6 +18,7 @@ import {
 } from "./scheduling-policy";
 import { MEASURE_TIME_BLOCKS, REMOTE_BLOCK, timeBlockStartEnd } from "./calendar-utils";
 import { checkSchedulingConflicts, formatConflictMessage } from "./scheduling-validation";
+import { extraCrewDaysOf, normalizeDayOffsets } from "./crew-days";
 import { checkAvailabilityConflict } from "./availability";
 import { getEligibleCrews } from "./crew-utils";
 import { getRForceResource } from "./normalize";
@@ -166,10 +167,20 @@ export function validateMove(
   // rows tagged allow_overlap, so the double-book is placed on purpose. Runs for
   // timed work too (block null): the window decides, as it does in the DB.
   const durationDays = target.durationDays ?? currentAppointment.duration_days ?? 1;
-  const helperCrews = [
-    target.additionalUpdates?.secondary_crew_id ?? currentAppointment.secondary_crew_id,
-    target.additionalUpdates?.tertiary_crew_id ?? currentAppointment.tertiary_crew_id,
-  ];
+  // Key presence, not nullishness: `?? current` would resurrect a helper the
+  // scheduler just cleared and judge the move against a crew that isn't on it.
+  const pending = <K extends keyof Appointment>(key: K): Appointment[K] =>
+    target.additionalUpdates && key in target.additionalUpdates
+      ? (target.additionalUpdates[key] as Appointment[K])
+      : currentAppointment[key];
+  const helperCrews = [pending("secondary_crew_id"), pending("tertiary_crew_id")];
+  // Each helper is judged on the days it actually works, not the whole span.
+  const helperDays = extraCrewDaysOf({
+    secondary_crew_id: pending("secondary_crew_id"),
+    tertiary_crew_id: pending("tertiary_crew_id"),
+    secondary_day_offsets: pending("secondary_day_offsets"),
+    tertiary_day_offsets: pending("tertiary_day_offsets"),
+  });
   if (!target.allowOverlap) {
     const conflicts = checkSchedulingConflicts(
       target.crewId,
@@ -184,6 +195,7 @@ export function validateMove(
         endTime: resolved.endTime,
         isFullDay: resolved.wantsFullDay,
         extraCrewIds: helperCrews,
+        extraCrewDays: helperDays,
       },
     );
     if (conflicts.length > 0) {
@@ -390,6 +402,12 @@ export function movesPlacement(
   const extra = target.additionalUpdates;
   const helperChanged = (key: "secondary_crew_id" | "tertiary_crew_id") =>
     !!extra && key in extra && (extra[key] ?? null) !== (current[key] ?? null);
+  // Narrowing or widening a helper's days moves WHEN that crew works, so it is
+  // a placement change — it has to be re-judged against the other bookings.
+  const helperDaysChanged = (key: "secondary_day_offsets" | "tertiary_day_offsets") =>
+    !!extra &&
+    key in extra &&
+    (extra[key] ?? []).join(",") !== (current[key] ?? []).join(",");
   return (
     current.status === "unscheduled" ||
     target.crewId !== current.crew_id ||
@@ -400,7 +418,9 @@ export function movesPlacement(
     resolved.endTime !== hhmm(current.end_time) ||
     (target.durationDays ?? current.duration_days) !== current.duration_days ||
     helperChanged("secondary_crew_id") ||
-    helperChanged("tertiary_crew_id")
+    helperChanged("tertiary_crew_id") ||
+    helperDaysChanged("secondary_day_offsets") ||
+    helperDaysChanged("tertiary_day_offsets")
   );
 }
 
@@ -529,6 +549,21 @@ export async function executeScheduleMove(
   // 2. Build updates
   const schedulingUpdates = buildMoveUpdates(target, currentAppointment, allCrews, rforceOrders);
   const updates = { ...schedulingUpdates, ...(target.additionalUpdates || {}) };
+
+  // A helper's days are positions in the span, so shortening the job can leave
+  // them pointing past the end. Clamp to what survives; a list with nothing left
+  // falls back to the whole span rather than quietly dropping the crew, and a
+  // helper that was removed takes its day list with it.
+  const finalSpan = updates.duration_days ?? currentAppointment.duration_days ?? 1;
+  for (const [crewKey, daysKey] of [
+    ["secondary_crew_id", "secondary_day_offsets"],
+    ["tertiary_crew_id", "tertiary_day_offsets"],
+  ] as const) {
+    const crew = crewKey in updates ? updates[crewKey] : currentAppointment[crewKey];
+    const days = daysKey in updates ? updates[daysKey] : currentAppointment[daysKey];
+    const next = crew ? normalizeDayOffsets(days, finalSpan) : null;
+    if ((next ?? []).join(",") !== (days ?? []).join(",")) updates[daysKey] = next;
+  }
 
   // 3. Check for no-op. Overlap / availability overrides must always persist
   // (they flip allow_overlap / allow_availability_conflict), so exclude them —

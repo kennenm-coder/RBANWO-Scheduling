@@ -13,7 +13,11 @@
 
 import { Appointment, TimeBlock } from "./types";
 import { getSpannedBlocks, timeBlockStartEnd, REMOTE_BLOCK } from "./calendar-utils";
-import { addDays, format, parseISO } from "date-fns";
+import {
+  appointmentCrewDates,
+  getSpannedDates,
+  normalizeDayOffsets,
+} from "./crew-days";
 
 export interface SchedulingConflict {
   /** The existing appointment that conflicts */
@@ -39,18 +43,12 @@ export interface ConflictCheckOptions {
   isFullDay?: boolean | null;
   /** Helper crews of the new booking — each must be free as well. */
   extraCrewIds?: (string | null | undefined)[];
-}
-
-/**
- * Get all dates an appointment spans, given its start date and duration.
- */
-function getSpannedDates(startDate: string, durationDays: number): string[] {
-  const dates: string[] = [];
-  const start = parseISO(startDate);
-  for (let d = 0; d < Math.max(1, durationDays); d++) {
-    dates.push(format(addDays(start, d), "yyyy-MM-dd"));
-  }
-  return dates;
+  /**
+   * Days a partial helper covers, keyed by crew id, as 0-based positions in the
+   * span. A helper absent from here (or mapped to null) works the whole span —
+   * the default. See crew-days.ts.
+   */
+  extraCrewDays?: Record<string, number[] | null | undefined>;
 }
 
 /**
@@ -158,13 +156,26 @@ export function checkSchedulingConflicts(
 ): SchedulingConflict[] {
   const conflicts: SchedulingConflict[] = [];
 
-  // The dates and the shape this new appointment would occupy
-  const newDates = getSpannedDates(startDate, durationDays);
+  // The shape this new appointment would occupy
   const newFoot = buildFootprint(timeBlock, timeBlockEnd, opts.startTime, opts.endTime, opts.isFullDay);
-  // Every crew on the new booking must be free — helpers included.
-  const newCrews = new Set(
-    [crewId, ...(opts.extraCrewIds ?? [])].filter((c): c is string => !!c)
-  );
+
+  // Every crew on the new booking must be free — helpers included — but each on
+  // its OWN days. The lead works the whole span; a partial helper only the days
+  // it was given, so it cannot collide on a day it isn't there.
+  const spanDates = getSpannedDates(startDate, durationDays);
+  const newCrewDates = new Map<string, Set<string>>();
+  const claimDays = (id: string | null | undefined, offsets: number[] | null | undefined) => {
+    if (!id || newCrewDates.has(id)) return;
+    const days = normalizeDayOffsets(offsets, durationDays);
+    newCrewDates.set(
+      id,
+      new Set(days ? days.map((i) => spanDates[i]).filter(Boolean) : spanDates)
+    );
+  };
+  claimDays(crewId, null);
+  for (const id of opts.extraCrewIds ?? []) {
+    claimDays(id, id ? opts.extraCrewDays?.[id] : null);
+  }
 
   // Only check active appointments that share a crew with the new booking
   const relevantAppointments = allAppointments.filter(
@@ -172,13 +183,12 @@ export function checkSchedulingConflicts(
       a.status !== "cancelled" &&
       a.status !== "unscheduled" &&
       a.id !== excludeId &&
-      [a.crew_id, a.secondary_crew_id, a.tertiary_crew_id].some((c) => !!c && newCrews.has(c))
+      [a.crew_id, a.secondary_crew_id, a.tertiary_crew_id].some((c) => !!c && newCrewDates.has(c))
   );
 
   for (const existing of relevantAppointments) {
     if (!existing.scheduled_date) continue;
 
-    const existingDates = getSpannedDates(existing.scheduled_date, existing.duration_days);
     const existingFoot = buildFootprint(
       existing.time_block,
       existing.time_block_end,
@@ -187,40 +197,51 @@ export function checkSchedulingConflicts(
       existing.is_full_day
     );
 
-    // Find overlapping dates
-    for (const date of newDates) {
-      if (!existingDates.includes(date)) continue;
-
-      // Found a date overlap — check whether the two footprints collide
-      const hit = footprintsOverlap(newFoot, existingFoot);
-      if (!hit) continue;
-
-      // Determine the conflict type
-      let reason: SchedulingConflict["reason"] = "same_block";
-      if (existing.duration_days > 1 || durationDays > 1) {
-        // Either the existing or new appointment spans multiple days
-        reason = "multi_day_overlap";
-      } else if (hit.timed) {
-        reason = "time_overlap";
-      } else if (existing.time_block_end || timeBlockEnd) {
-        reason = "multi_block_overlap";
-      } else if (newFoot.fullDay || existingFoot.fullDay) {
-        reason = "full_day_conflict";
+    // A real clash needs the SAME crew standing on the SAME date on both sides.
+    // Comparing spans alone would flag a helper on a day it doesn't work.
+    const existingCrewDates = appointmentCrewDates(existing);
+    const shared: string[] = [];
+    for (const [id, dates] of newCrewDates) {
+      const theirs = existingCrewDates.get(id);
+      if (!theirs) continue;
+      for (const date of dates) {
+        if (theirs.has(date)) shared.push(date);
       }
-
-      conflicts.push({
-        conflictingAppointmentId: existing.id,
-        customerName: existing.customer_name,
-        reason,
-        conflictDate: date,
-        conflictBlock: hit.block ?? existing.time_block ?? "full_day",
-        conflictWindow:
-          existing.start_time && existing.end_time
-            ? { start: existing.start_time.slice(0, 5), end: existing.end_time.slice(0, 5) }
-            : undefined,
-      });
-      break; // One conflict per existing appointment is enough
     }
+    if (shared.length === 0) continue;
+
+    // Found a date overlap — check whether the two footprints collide
+    const hit = footprintsOverlap(newFoot, existingFoot);
+    if (!hit) continue;
+
+    // Report the earliest clashing day, whichever crew it came from
+    const date = shared.sort()[0];
+
+    // Determine the conflict type
+    let reason: SchedulingConflict["reason"] = "same_block";
+    if (existing.duration_days > 1 || durationDays > 1) {
+      // Either the existing or new appointment spans multiple days
+      reason = "multi_day_overlap";
+    } else if (hit.timed) {
+      reason = "time_overlap";
+    } else if (existing.time_block_end || timeBlockEnd) {
+      reason = "multi_block_overlap";
+    } else if (newFoot.fullDay || existingFoot.fullDay) {
+      reason = "full_day_conflict";
+    }
+
+    // One conflict per existing appointment is enough
+    conflicts.push({
+      conflictingAppointmentId: existing.id,
+      customerName: existing.customer_name,
+      reason,
+      conflictDate: date,
+      conflictBlock: hit.block ?? existing.time_block ?? "full_day",
+      conflictWindow:
+        existing.start_time && existing.end_time
+          ? { start: existing.start_time.slice(0, 5), end: existing.end_time.slice(0, 5) }
+          : undefined,
+    });
   }
 
   return conflicts;

@@ -10,6 +10,8 @@ import {
   RForceOrder,
 } from "@/lib/types";
 import { normalizeWoType } from "@/lib/normalize";
+import { normalizeDayOffsets } from "@/lib/crew-days";
+import HelperDayPicker from "./HelperDayPicker";
 import { captureOriginalEntry } from "@/lib/sync-transitions";
 import {
   getTimeBlocksForType,
@@ -151,6 +153,13 @@ export default function ScheduleModal({
   );
   const [tertiaryCrewId, setTertiaryCrewId] = useState(
     editingAppointment?.tertiary_crew_id || ""
+  );
+  // Which days of a multi-day span each helper covers. null = the whole span.
+  const [secondaryDays, setSecondaryDays] = useState<number[] | null>(
+    editingAppointment?.secondary_day_offsets ?? null
+  );
+  const [tertiaryDays, setTertiaryDays] = useState<number[] | null>(
+    editingAppointment?.tertiary_day_offsets ?? null
   );
   const [selectedDate, setSelectedDate] = useState(
     editingAppointment?.scheduled_date || format(date, "yyyy-MM-dd")
@@ -437,6 +446,12 @@ export default function ScheduleModal({
         const nonSchedulingUpdates: Partial<Appointment> = {
           secondary_crew_id: secondaryCrewId || null,
           tertiary_crew_id: tertiaryCrewId || null,
+          secondary_day_offsets: secondaryCrewId
+            ? normalizeDayOffsets(secondaryDays, parseInt(durationDays) || 1)
+            : null,
+          tertiary_day_offsets: tertiaryCrewId
+            ? normalizeDayOffsets(tertiaryDays, parseInt(durationDays) || 1)
+            : null,
           appointment_type: type,
           customer_name: customerName,
           address,
@@ -496,6 +511,12 @@ export default function ScheduleModal({
           crew_id: selectedCrewId,
           secondary_crew_id: secondaryCrewId || null,
           tertiary_crew_id: tertiaryCrewId || null,
+          secondary_day_offsets: secondaryCrewId
+            ? normalizeDayOffsets(secondaryDays, parseInt(durationDays) || 1)
+            : null,
+          tertiary_day_offsets: tertiaryCrewId
+            ? normalizeDayOffsets(tertiaryDays, parseInt(durationDays) || 1)
+            : null,
           appointment_type: type,
           scheduled_date: selectedDate,
           start_time: start,
@@ -800,7 +821,11 @@ export default function ScheduleModal({
                   </label>
                   <select
                     value={secondaryCrewId}
-                    onChange={(e) => setSecondaryCrewId(e.target.value)}
+                    onChange={(e) => {
+                      setSecondaryCrewId(e.target.value);
+                      // The day list belongs to the crew that was picked for it.
+                      if (!e.target.value) setSecondaryDays(null);
+                    }}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
                   >
                     <option value="">— None —</option>
@@ -812,6 +837,15 @@ export default function ScheduleModal({
                         </option>
                       ))}
                   </select>
+                  {secondaryCrewId && (
+                    <HelperDayPicker
+                      label={crews.find((c) => c.id === secondaryCrewId)?.name || "This crew"}
+                      durationDays={parseInt(durationDays) || 1}
+                      scheduledDate={selectedDate}
+                      offsets={secondaryDays}
+                      onChange={setSecondaryDays}
+                    />
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs text-muted mb-1">
@@ -819,7 +853,10 @@ export default function ScheduleModal({
                   </label>
                   <select
                     value={tertiaryCrewId}
-                    onChange={(e) => setTertiaryCrewId(e.target.value)}
+                    onChange={(e) => {
+                      setTertiaryCrewId(e.target.value);
+                      if (!e.target.value) setTertiaryDays(null);
+                    }}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
                   >
                     <option value="">— None —</option>
@@ -831,6 +868,15 @@ export default function ScheduleModal({
                         </option>
                       ))}
                   </select>
+                  {tertiaryCrewId && (
+                    <HelperDayPicker
+                      label={crews.find((c) => c.id === tertiaryCrewId)?.name || "This crew"}
+                      durationDays={parseInt(durationDays) || 1}
+                      scheduledDate={selectedDate}
+                      offsets={tertiaryDays}
+                      onChange={setTertiaryDays}
+                    />
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs text-muted mb-1">

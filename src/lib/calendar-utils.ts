@@ -21,6 +21,7 @@ import {
 import { deriveRForceCalendarStatus } from "./rforce-calendar-status";
 import { missedExportCount, dropTier, MISSED_EXPORTS_FOR_AMBER } from "./rforce-staleness";
 import { timeToBlock, matchCrewByMapping, matchCrewByName } from "./crew-match";
+import { crewWorksDate } from "./crew-days";
 
 export const MEASURE_TIME_BLOCKS: TimeBlock[] = [
   "9-10",
@@ -233,11 +234,11 @@ export function getAppointmentsForCrewAndDay(
   crewId: string,
   date: Date
 ): Appointment[] {
-  return getAppointmentsForDay(appointments, date).filter(
-    (a) =>
-      a.crew_id === crewId ||
-      a.secondary_crew_id === crewId ||
-      a.tertiary_crew_id === crewId
+  // A partial helper only stands in the lane on the days it actually works, so
+  // a 3-day install with a day-2 helper fills that helper's lane once, not thrice.
+  const dateStr = format(date, "yyyy-MM-dd");
+  return getAppointmentsForDay(appointments, date).filter((a) =>
+    crewWorksDate(a, crewId, dateStr)
   );
 }
 

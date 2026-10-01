@@ -93,6 +93,15 @@ export interface Appointment {
   crew_id: string | null;           // null when status='unscheduled'
   secondary_crew_id: string | null;
   tertiary_crew_id: string | null;
+  /**
+   * Which days of a multi-day span the secondary crew actually works, as 0-based
+   * positions in the span (day 1 = 0). NULL — the default — means the whole span,
+   * which is how every helper behaved before partial days existed. Positions, not
+   * dates, so the helper's days follow the job when it moves. See crew-days.ts.
+   */
+  secondary_day_offsets?: number[] | null;
+  /** Same as `secondary_day_offsets`, for the tertiary crew. */
+  tertiary_day_offsets?: number[] | null;
   appointment_type: AppointmentType;
   order_number: string | null;
   work_order_number: string | null;

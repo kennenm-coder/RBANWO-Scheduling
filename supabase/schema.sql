@@ -61,6 +61,11 @@ CREATE TABLE sched_appointments (
   crew_id UUID REFERENCES sched_crews(id),
   secondary_crew_id UUID REFERENCES sched_crews(id),
   tertiary_crew_id UUID REFERENCES sched_crews(id),
+  -- Which days of a multi-day span each helper works, as 0-based positions in
+  -- the span. NULL = the whole span, which is how helpers always behaved.
+  -- See 20261001_001_partial_helper_days.sql and src/lib/crew-days.ts.
+  secondary_day_offsets INT[],
+  tertiary_day_offsets INT[],
 
   -- Appointment details
   appointment_type TEXT NOT NULL CHECK (appointment_type IN (

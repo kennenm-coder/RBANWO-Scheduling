@@ -1,6 +1,6 @@
 import { Crew, CrewType, AppointmentType, Appointment, TimeBlock, AvailabilityRule, AvailabilityException } from "./types";
 import { MEASURE_TIME_BLOCKS, getSpannedBlocks, timeBlockStartEnd } from "./calendar-utils";
-import { addDays, parseISO } from "date-fns";
+import { crewWorksDate } from "./crew-days";
 import { getCrewRoleForDate } from "./availability";
 
 export function crewHasType(crew: Crew, ...types: CrewType[]): boolean {
@@ -202,31 +202,12 @@ export function getBlockedTimeBlocks(
   dateStr: string
 ): Set<TimeBlock> {
   const blocked = new Set<TimeBlock>();
-  const targetDate = parseISO(dateStr);
 
-  // Find all appointments for this crew that overlap the target date,
-  // including multi-day appointments that started on an earlier date.
+  // Every appointment that puts THIS crew on THIS date — including multi-day
+  // jobs that started earlier, and excluding days a partial helper doesn't work.
   const dayAppts = appointments.filter((a) => {
     if (a.status === "cancelled" || a.status === "unscheduled") return false;
-    if (!(a.crew_id === crewId || a.secondary_crew_id === crewId || a.tertiary_crew_id === crewId)) return false;
-    if (!a.scheduled_date) return false;
-
-    // Direct date match
-    if (a.scheduled_date === dateStr) return true;
-
-    // Multi-day: check if target date falls within the appointment's span
-    if (a.duration_days > 1) {
-      const start = parseISO(a.scheduled_date);
-      for (let d = 1; d < a.duration_days; d++) {
-        const spanned = addDays(start, d);
-        if (spanned.getFullYear() === targetDate.getFullYear() &&
-            spanned.getMonth() === targetDate.getMonth() &&
-            spanned.getDate() === targetDate.getDate()) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return crewWorksDate(a, crewId, dateStr);
   });
 
   for (const appt of dayAppts) {
