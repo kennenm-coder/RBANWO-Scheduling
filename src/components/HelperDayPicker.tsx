@@ -9,7 +9,9 @@ import { addDays, format, parseISO } from "date-fns";
  * worked. Switching it on reveals one tile per day of the span to toggle;
  * non-contiguous picks are fine (day 1 and day 3, skipping day 2).
  *
- * Renders nothing on a one-day job: there is nothing to be partial about.
+ * On a one-day job it still shows, disabled, with a line saying why. There is
+ * nothing to split there, but hiding the control outright made the whole
+ * feature look missing to anyone who happened to open a one-day install first.
  */
 export default function HelperDayPicker({
   label,
@@ -27,7 +29,7 @@ export default function HelperDayPicker({
   onChange: (offsets: number[] | null) => void;
 }) {
   const span = Math.max(1, durationDays);
-  if (span < 2) return null;
+  const singleDay = span < 2;
 
   // Out-of-range entries are ignored rather than shown — a job shortened under
   // a helper booked for its old last day shouldn't render a phantom tile.
@@ -56,6 +58,28 @@ export default function HelperDayPicker({
     // normalizes once, at the end.
     onChange([...next].sort((a, b) => a - b));
   };
+
+  if (singleDay) {
+    return (
+      <div className="mt-2">
+        <label className="flex items-center gap-2 text-xs text-muted/60 cursor-not-allowed">
+          <input
+            type="checkbox"
+            checked={false}
+            disabled
+            readOnly
+            className="rounded border-border"
+          />
+          Only on certain days
+        </label>
+        <p className="text-[10px] text-muted mt-1">
+          This job is one day long, so there are no days to choose between —
+          {" "}{label} works it. Set a duration of 2 or more to split a helper
+          across part of the job.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-2">
