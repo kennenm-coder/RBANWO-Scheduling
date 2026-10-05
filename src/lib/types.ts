@@ -83,12 +83,15 @@ export interface Crew {
   manages: ManagesType[] | null;
   additional_types: CrewType[] | null;
   /**
-   * Collapse this resource to ONE row, in the section their `crew_type` names,
-   * even when `additional_types` would also place them in others. The single
-   * row still carries every work order assigned to them, with out-of-department
-   * work flagged. Shared across all accounts, like the default color.
+   * Which calendar sections this resource is DRAWN in — "measure", "install",
+   * "service", "jip". Null or empty means every section their types cover.
+   *
+   * Display only: eligibility still comes from `crew_type` / `additional_types`,
+   * so someone can be assignable to service work while appearing on the measure
+   * row alone. Whatever rows they do appear on carry all of their work, with
+   * the other departments' jobs flagged. Shared across all accounts.
    */
-  primary_section_only?: boolean;
+  visible_sections?: string[] | null;
   primary_crew_id: string | null;
   sort_order: number;
   created_at: string;

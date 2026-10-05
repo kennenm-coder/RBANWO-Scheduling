@@ -6,6 +6,7 @@ import { useAuth } from "./AuthProvider";
 import { canManage } from "@/lib/auth";
 import { upsertCrew, deactivateCrew, toggleCrewActive, updateCrewColor } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
+import { qualifiedSectionsFor } from "@/lib/crew-utils";
 import { pickNewCrewColor } from "@/lib/crew-colors";
 import { crewColorFor, getPreferences, setPreferences } from "@/lib/preferences";
 import { Crew, CrewType, ManagesType } from "@/lib/types";
@@ -33,6 +34,14 @@ const TYPE_ORDER: CrewType[] = [
   "management",
   "misc",
 ];
+
+/** Row names as the calendar titles them. */
+const SECTION_LABELS: Record<string, string> = {
+  measure: "Measure Techs",
+  install: "Install",
+  service: "Service",
+  jip: "JIP",
+};
 
 const MANAGES_OPTIONS: { value: ManagesType; label: string }[] = [
   { value: "measure", label: "Measure" },
@@ -199,8 +208,10 @@ export default function ResourceManager() {
     if (editing.id) payload.id = editing.id;
     if (editing.is_active !== undefined) payload.is_active = editing.is_active;
     if (editing.additional_types && editing.additional_types.length > 0) payload.additional_types = editing.additional_types;
-    // Always sent, so unticking it actually clears the flag.
-    payload.primary_section_only = !!editing.primary_section_only;
+    // Always sent, so clearing the selection actually sticks.
+    payload.visible_sections = editing.visible_sections?.length
+      ? editing.visible_sections
+      : null;
     if (editing.manages && editing.manages.length > 0) payload.manages = editing.manages;
     if (editing.primary_crew_id) payload.primary_crew_id = editing.primary_crew_id;
     try {
@@ -520,12 +531,12 @@ export default function ResourceManager() {
                           Also: {c.additional_types.map(crewTypeLabel).join(", ")}
                         </span>
                       )}
-                      {c.primary_section_only && (
+                      {c.visible_sections && c.visible_sections.length > 0 && (
                         <span
                           className="text-[10px] text-muted"
-                          title={`Shows only under ${crewTypeLabel(c.crew_type)}, with all of their work on that one row`}
+                          title="Drawn only on these rows; all of their work still shows there"
                         >
-                          {crewTypeLabel(c.crew_type)} row only
+                          Rows: {c.visible_sections.map((x) => SECTION_LABELS[x] || x).join(", ")}
                         </span>
                       )}
                       {c.manages && c.manages.length > 0 && (
@@ -672,26 +683,56 @@ export default function ResourceManager() {
                     );
                   })}
                 </div>
-                {(editing.additional_types?.length || 0) > 0 && (
-                  <label className="flex items-start gap-2 mt-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 shrink-0"
-                      checked={!!editing.primary_section_only}
-                      onChange={(e) =>
-                        setEditing({ ...editing, primary_section_only: e.target.checked })
-                      }
-                    />
-                    <span className="text-xs">
-                      <span className="font-medium">Show in primary section only</span>
-                      <span className="block text-muted mt-0.5">
-                        One row, under{" "}
-                        {crewTypeLabel(editing.crew_type as CrewType)} — still showing every
-                        job of every type. Applies to everyone.
-                      </span>
-                    </span>
-                  </label>
-                )}
+                {(() => {
+                  // Which rows this resource CAN appear on, from their types.
+                  // The types stay the source of eligibility; this only picks
+                  // where they're drawn.
+                  const qualified = qualifiedSectionsFor(editing as Crew);
+                  if (qualified.length < 2) return null;
+                  const picked = editing.visible_sections || [];
+                  return (
+                    <div className="mt-3">
+                      <label className="block text-xs text-muted mb-1">Show on rows</label>
+                      <div className="flex flex-wrap gap-2">
+                        {qualified.map((sec) => {
+                          // Nothing picked means every row, so every chip reads
+                          // as on until someone narrows it down.
+                          const on = picked.length === 0 || picked.includes(sec);
+                          return (
+                            <button
+                              key={sec}
+                              onClick={() => {
+                                const current = picked.length === 0 ? [...qualified] : [...picked];
+                                const next = current.includes(sec)
+                                  ? current.filter((x) => x !== sec)
+                                  : [...current, sec];
+                                // Back to every row: store nothing rather than
+                                // a list that happens to hold all of them.
+                                const all = next.length === qualified.length;
+                                setEditing({
+                                  ...editing,
+                                  visible_sections: next.length === 0 || all ? [] : next,
+                                });
+                              }}
+                              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
+                                on
+                                  ? "bg-cyan-100 dark:bg-cyan-900/30 border-cyan-300 dark:border-cyan-700 text-cyan-700 dark:text-cyan-300"
+                                  : "border-border text-muted hover:bg-surface line-through opacity-60"
+                              }`}
+                            >
+                              {SECTION_LABELS[sec] || sec}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[11px] text-muted mt-1.5">
+                        {picked.length === 0
+                          ? "Appearing on every row their types allow. Turn rows off to narrow it down."
+                          : `Only on ${picked.map((x) => SECTION_LABELS[x] || x).join(", ")} — still showing every job of every type. Applies to everyone.`}
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
