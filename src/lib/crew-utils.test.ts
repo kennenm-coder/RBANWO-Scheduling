@@ -6,8 +6,45 @@ import {
   getEligibleCrews,
   getBlockedTimeBlocks,
   getAvailableTimeBlocks,
+  getDepartmentSections,
+  getCrewRoleBlock,
+  isForeignToSection,
 } from "./crew-utils";
-import { Crew, Appointment } from "./types";
+import { Crew, Appointment, AvailabilityRule } from "./types";
+
+function makeRule(overrides: Partial<AvailabilityRule> = {}): AvailabilityRule {
+  return {
+    id: "rule-1",
+    crew_id: "josh",
+    kind: "role_assignment",
+    department: "service",
+    start_time: null,
+    end_time: null,
+    weekdays: [1, 2, 3],
+    repeat_interval: 1,
+    effective_start: "2020-01-01",
+    effective_end: null,
+    reason: null,
+    is_active: true,
+    created_by: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+// Josh: a service tech who also takes measures and JIPs.
+function dualRoleCrew(): Crew {
+  return makeCrew({
+    id: "josh",
+    name: "Josh McIntyre",
+    crew_type: "svc",
+    additional_types: ["measure_tech", "jip"],
+  });
+}
+
+const MONDAY = new Date(2026, 9, 5); // 2026-10-05
+const THURSDAY = new Date(2026, 9, 8); // 2026-10-08
 
 function makeCrew(overrides: Partial<Crew> = {}): Crew {
   return {
@@ -233,5 +270,85 @@ describe("getAvailableTimeBlocks", () => {
     expect(available).toContain("4-6");
     expect(available).not.toContain("9-10");
     expect(available).not.toContain("10-12");
+  });
+});
+
+describe("getDepartmentSections — multi-department resources", () => {
+  it("gives a tri-role resource a row in every section they cover", () => {
+    const sections = getDepartmentSections([dualRoleCrew()]);
+    const keysWithJosh = sections
+      .filter((s) => s.crews.some((c) => c.id === "josh"))
+      .map((s) => s.key);
+    expect(keysWithJosh.sort()).toEqual(["jip", "measure", "service"]);
+  });
+
+  it("leaves a single-type resource in exactly one section", () => {
+    const sections = getDepartmentSections([makeCrew({ id: "solo", crew_type: "svc" })]);
+    const keysWithSolo = sections
+      .filter((s) => s.crews.some((c) => c.id === "solo"))
+      .map((s) => s.key);
+    expect(keysWithSolo).toEqual(["service"]);
+  });
+});
+
+describe("getCrewRoleBlock", () => {
+  const rules = [
+    makeRule({ id: "r-svc", department: "service", weekdays: [1, 2, 3] }),
+    makeRule({ id: "r-mt", department: "measure", weekdays: [4, 5] }),
+  ];
+
+  it("blocks the measure row on a service day", () => {
+    const block = getCrewRoleBlock(dualRoleCrew(), "measure", MONDAY, rules, []);
+    expect(block).toEqual({ department: "service", label: "Service" });
+  });
+
+  it("leaves the service row live on a service day", () => {
+    expect(getCrewRoleBlock(dualRoleCrew(), "service", MONDAY, rules, [])).toBeNull();
+  });
+
+  it("flips on a measure day", () => {
+    expect(getCrewRoleBlock(dualRoleCrew(), "measure", THURSDAY, rules, [])).toBeNull();
+    expect(getCrewRoleBlock(dualRoleCrew(), "service", THURSDAY, rules, [])?.label).toBe("Measure");
+  });
+
+  it("blocks every other department, not just the paired one", () => {
+    expect(getCrewRoleBlock(dualRoleCrew(), "jip", MONDAY, rules, [])?.label).toBe("Service");
+  });
+
+  it("leaves every section live when no rule covers the day", () => {
+    // Saturday — neither rule applies.
+    const saturday = new Date(2026, 9, 10);
+    expect(getCrewRoleBlock(dualRoleCrew(), "measure", saturday, rules, [])).toBeNull();
+    expect(getCrewRoleBlock(dualRoleCrew(), "service", saturday, rules, [])).toBeNull();
+  });
+
+  it("never blocks seconds or management rows", () => {
+    expect(getCrewRoleBlock(dualRoleCrew(), "management", MONDAY, rules, [])).toBeNull();
+    expect(getCrewRoleBlock(dualRoleCrew(), "install-seconds", MONDAY, rules, [])).toBeNull();
+  });
+});
+
+describe("isForeignToSection", () => {
+  it("marks a service job as foreign in the measure section", () => {
+    const appt = makeAppt({ id: "a", appointment_type: "service" });
+    expect(isForeignToSection(appt, "measure")).toBe(true);
+    expect(isForeignToSection(appt, "tech_measure")).toBe(true);
+  });
+
+  it("does not mark a service job as foreign in the service section", () => {
+    const appt = makeAppt({ id: "a", appointment_type: "service" });
+    expect(isForeignToSection(appt, "service")).toBe(false);
+  });
+
+  it("treats install variants as install work", () => {
+    const appt = makeAppt({ id: "a", appointment_type: "lswp" });
+    expect(isForeignToSection(appt, "install")).toBe(false);
+    expect(isForeignToSection(appt, "measure")).toBe(true);
+  });
+
+  it("never marks a job site visit foreign — anyone can do one", () => {
+    const appt = makeAppt({ id: "a", appointment_type: "job_site_visit" });
+    expect(isForeignToSection(appt, "measure")).toBe(false);
+    expect(isForeignToSection(appt, "service")).toBe(false);
   });
 });
