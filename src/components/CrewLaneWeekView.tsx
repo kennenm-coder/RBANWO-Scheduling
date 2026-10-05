@@ -27,7 +27,8 @@ import {
   REMOTE_BLOCK,
   isRemoteMeasure,
   timeBlockStartEnd,
-  appointmentSpansBlock,
+  appointmentOccupiesBlock,
+  isAllDayWork,
   formatAppointmentTimeRange,
 } from "@/lib/calendar-utils";
 import { deriveRForceCalendarStatus, deriveAppointmentRForceState } from "@/lib/rforce-calendar-status";
@@ -36,17 +37,31 @@ import { getTimeOffForDate } from "@/lib/store";
 import { executeScheduleMove, ScheduleMoveTarget } from "@/lib/schedule-command";
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { useCurrentActor } from "./AuthProvider";
-import { getDepartmentSectionsForDate, isDualRole, getBlockedTimeBlocks, parseCity, crewHasType } from "@/lib/crew-utils";
+import {
+  getDepartmentSections,
+  getCrewRoleBlock,
+  parseCity,
+  isForeignToSection,
+  foreignTypeBadge,
+} from "@/lib/crew-utils";
 import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-utils";
 import { getPreferences, crewColorFor } from "@/lib/preferences";
 import { usePresence } from "@/lib/presence";
 import { format, isToday, parseISO, addDays } from "date-fns";
-import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle } from "lucide-react";
+import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle, ArrowRight } from "lucide-react";
+
+/** Hatch marking a cell another department has reserved (never the PTO look). */
 import { useSchedulerDrag } from "@/lib/drag-context";
 import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { getSchedulingMode } from "@/lib/scheduling-policy";
 import { useToast } from "./Toast";
 import { getAllCrewsAvailabilityForWeek, CrewDayAvailability, getCrewDayLabels, LABEL_KIND_TEXT, labelForBlockingKind } from "@/lib/availability";
+
+const EMPTY_BLOCKS: Set<TimeBlock> = new Set();
+
+/** Hatch marking a cell another department has reserved (never the PTO look). */
+const ROLE_BLOCKED_HATCH =
+  "bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(127,127,127,0.13)_4px,rgba(127,127,127,0.13)_8px)]";
 
 interface Props {
   currentDate: Date;
@@ -233,12 +248,10 @@ export default function CrewLaneWeekView({
 
   // Use date-aware sections so role_assignment rules (e.g. SVC M/W/F)
   // move crews to the correct department for the current week's start day.
-  // For week view, we use the currentDate (the focused day) to determine
-  // role placement — crews appear in their role for that day.
-  const sections = useMemo(
-    () => getDepartmentSectionsForDate(crews, currentDate, availabilityRules, availabilityExceptions),
-    [crews, currentDate, availabilityRules, availabilityExceptions]
-  );
+  // A resource appears in every section their types cover. Role assignments are
+  // resolved per crew per DAY in the cells below — a week can't be placed by one
+  // focused date, or "SVC Mon–Wed, MT Thu–Fri" collapses into a single section.
+  const sections = useMemo(() => getDepartmentSections(crews), [crews]);
 
   const filteredSections = useMemo(() => {
     if (filterType === "all") return sections;
@@ -255,7 +268,7 @@ export default function CrewLaneWeekView({
       if (collapsedSections.has(section.key)) continue;
       const isMeasure = section.filterType === "tech_measure" && !section.key.includes("mgmt");
       for (const crew of section.crews) {
-        const showTimeLanes = isMeasure || (isDualRole(crew) && crewHasType(crew, "measure_tech"));
+        const showTimeLanes = isMeasure;
         for (const day of days) {
           const dateStr = format(day, "yyyy-MM-dd");
           const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
@@ -265,7 +278,9 @@ export default function CrewLaneWeekView({
           let cellMax = 1;
           if (showTimeLanes) {
             for (const block of MEASURE_ROW_BLOCKS) {
-              const ba = cellAppts.filter((a) => appointmentSpansBlock(a, block)).length;
+              const ba = cellAppts.filter(
+                (a) => !isAllDayWork(a) && appointmentOccupiesBlock(a, block)
+              ).length;
               const br =
                 approvals.filter((r) => r.timeBlock === block).length +
                 (showRForce ? visible.filter((r) => r.timeBlock === block).length : 0);
@@ -393,7 +408,9 @@ export default function CrewLaneWeekView({
         const block = MEASURE_TIME_BLOCKS[i];
         if (block === appt.time_block) continue;
         const conflict = appointments.find(
-          (a) => a.id !== appt.id && a.status !== "cancelled" && a.crew_id === appt.crew_id && a.scheduled_date === dateStr && appointmentSpansBlock(a, block)
+          // Occupies, not spans: a timed service on this crew blocks the
+          // stretch too, and finding it here beats a DB conflict error.
+          (a) => a.id !== appt.id && a.status !== "cancelled" && a.crew_id === appt.crew_id && a.scheduled_date === dateStr && appointmentOccupiesBlock(a, block)
         );
         if (conflict) {
           showToast(`Cannot extend — ${MEASURE_TIME_BLOCKS[i]} is occupied`, "error");
@@ -476,7 +493,12 @@ export default function CrewLaneWeekView({
           for (const crew of section.crews) {
             for (const day of days) {
               const cellAppts = getAppointmentsForCrewAndDay(appointments, crew.id, day);
-              sectionJobCount += cellAppts.length;
+              // Count only this section's own work. A multi-department resource
+              // has a row in several sections, and their service job must not
+              // also inflate the Measure header count.
+              sectionJobCount += cellAppts.filter(
+                (a) => !isForeignToSection(a, section.filterType)
+              ).length;
               const dateStr = format(day, "yyyy-MM-dd");
               const dayRForce = rforceByDay.get(dateStr) || [];
               sectionJobCount += dayRForce.filter((r) => r.crewId === crew.id && (r.displayMode === "approval" || (showRForce && (r.displayMode === "regular" || r.displayMode === "synced")))).length;
@@ -510,7 +532,12 @@ export default function CrewLaneWeekView({
 
               {/* Crew rows — each crew occupies 1 grid row (name cell + 7 day cells) */}
               {!isCollapsed && section.crews.map((crew) => {
-                const showTimeLanes = isMeasure || (isDualRole(crew) && crewHasType(crew, "measure_tech"));
+                // A dual-role resource now has their OWN row in the measure section, so the
+                // measure block grid belongs there — their service/JIP row renders like every
+                // other row in that section. Previously the grid followed the person into
+                // whichever single section they landed in, which made their service row look
+                // nothing like the service rows around it.
+                const showTimeLanes = isMeasure;
 
                 return (
                   <Fragment key={crew.id}>
@@ -540,10 +567,35 @@ export default function CrewLaneWeekView({
                         ? []
                         : getCrewDayLabels(crew.id, day, availabilityRules, availabilityExceptions);
 
+                      // Reserved by another department today. The row stays so
+                      // the scheduler sees the person and where they went.
+                      const roleBlock = getCrewRoleBlock(
+                        crew,
+                        section.key,
+                        day,
+                        availabilityRules,
+                        availabilityExceptions
+                      );
+                      // Never collapse a day that has work on it — a booking has
+                      // to stay visible in every section this resource appears
+                      // in, or the grid shows a free slot that is actually taken.
+                      if (roleBlock && cellAppts.length === 0 && cellDisplayItems.length === 0) {
+                        return (
+                          <div
+                            key={day.toISOString()}
+                            className={`border-b border-r border-border px-1 py-1 flex items-center justify-center gap-0.5 text-muted/80 ${ROLE_BLOCKED_HATCH}`}
+                            title={`${crew.name} is assigned to ${roleBlock.label} on ${format(day, "EEEE")}`}
+                          >
+                            <ArrowRight size={10} />
+                            <span className="text-[10px] font-medium">{roleBlock.label}</span>
+                          </div>
+                        );
+                      }
+
                       if (showTimeLanes) {
-                        const blockedFromOtherSections = !isMeasure
-                          ? getBlockedTimeBlocks(crew.id, appointments, dateStr)
-                          : new Set<TimeBlock>();
+                        // Measure rows draw real tiles for cross-department
+                        // work now, so there is nothing left to grey out.
+                        const blockedFromOtherSections = EMPTY_BLOCKS;
 
                         return (
                           <MeasureTimeLaneCell
@@ -602,6 +654,7 @@ export default function CrewLaneWeekView({
                           rforceOrders={rforceOrders}
                           searchQuery={searchQuery}
                           crewObj={crewObj}
+                          sectionType={section.filterType}
                           timeOffColor={timeOffColor}
                           availability={dayAvail}
                           dayLabels={dayLabels}
@@ -862,7 +915,9 @@ function MeasureTimeLaneCell({
   // full-day job assigned to this measure tech. They MUST still be shown or a
   // scheduler could book over an appointment they can't see.
   const offBlockAppts = allApptsSorted.filter(
-    (a) => !isRemoteMeasure(a) && !MEASURE_TIME_BLOCKS.some((b) => appointmentSpansBlock(a, b))
+    (a) =>
+      !isRemoteMeasure(a) &&
+      (isAllDayWork(a) || !MEASURE_TIME_BLOCKS.some((b) => appointmentOccupiesBlock(a, b)))
   );
 
   const approvalItems = cellDisplayItems.filter((d) => d.displayMode === "approval");
@@ -988,7 +1043,11 @@ function MeasureTimeLaneCell({
           {MEASURE_ROW_BLOCKS.map((block) => {
             const isBlocked = blockedBlocks.has(block);
             const isUnavailable = availability ? availability.unavailableBlocks.has(block) : false;
-            const blockAppts = allApptsSorted.filter((a) => appointmentSpansBlock(a, block));
+            // Timed cross-department work (service/JIP) has no time_block, so
+            // it is placed by its clock window: a 9–11 service fills 9-10 and 10-12.
+            const blockAppts = allApptsSorted.filter(
+              (a) => !isAllDayWork(a) && appointmentOccupiesBlock(a, block)
+            );
             const blockRForce = allRForceSorted.filter((r) => r.timeBlock === block);
             const hasItems = blockAppts.length > 0 || blockRForce.length > 0;
             const isFromOtherSection = isBlocked && !hasItems;
@@ -1090,6 +1149,9 @@ function MeasureTimeLaneCell({
                         const multiDay = getMultiDayLabel(a, day);
                         const spanLen = a.time_block_end ? MEASURE_TIME_BLOCKS.indexOf(a.time_block_end) - MEASURE_TIME_BLOCKS.indexOf(a.time_block!) + 1 : 1;
                         const discItem = discrepancyByApptId.get(a.id);
+                        // A service/JIP booked on this measure tech: the slot
+                        // is taken, but the job belongs to another desk.
+                        const foreign = isForeignToSection(a, sectionType);
                         return (
                           <div key={a.id} className="relative flex-1 min-w-0">
                             <WeekCard
@@ -1100,10 +1162,16 @@ function MeasureTimeLaneCell({
                               sourceDate={dateStr}
                               sourceTimeBlock={block}
                               spanBlocks={spanLen}
+                              foreign={foreign}
                               // Nothing to stretch: the remote row has no
                               // neighbouring blocks to grow into.
                               showResizeHandle={block !== REMOTE_BLOCK}
                             >
+                              {foreign && (
+                                <span className="inline-block text-[7px] font-bold tracking-wide px-0.5 rounded bg-muted/25 text-muted">
+                                  {foreignTypeBadge(a)}
+                                </span>
+                              )}
                               <CompactAppointmentContent
                                 appointment={a}
                                 crew={crewObj}
@@ -1171,6 +1239,7 @@ function StandardCell({
   onDismissRForce,
   hasMismatch,
   pendingTier,
+  sectionType,
 }: {
   crew: Crew;
   day: Date;
@@ -1181,6 +1250,7 @@ function StandardCell({
   rforceOrders: RForceOrder[];
   searchQuery: string;
   crewObj: Crew | undefined;
+  sectionType: string;
   timeOffColor?: string;
   availability?: CrewDayAvailability;
   dayLabels?: AvailabilityKind[];
@@ -1319,6 +1389,8 @@ function StandardCell({
       const multiDay = getMultiDayLabel(a, day);
       const discItem = discrepancyByApptId.get(a.id);
       const time = a.start_time || (a.time_block ? timeBlockStartEnd(a.time_block).start : "");
+      // Work from another department on a multi-department resource's row.
+      const foreign = isForeignToSection(a, sectionType);
       push(time, (
         <div key={a.id} className="relative flex-1 min-w-0">
           <WeekCard
@@ -1328,7 +1400,13 @@ function StandardCell({
             sourceCrewId={crew.id}
             sourceDate={dateStr}
             sourceTimeBlock={a.time_block}
+            foreign={foreign}
           >
+            {foreign && (
+              <span className="inline-block text-[7px] font-bold tracking-wide px-0.5 rounded bg-muted/25 text-muted">
+                {foreignTypeBadge(a)}
+              </span>
+            )}
             <CompactAppointmentContent
               appointment={a}
               crew={crewObj}
@@ -1478,6 +1556,7 @@ function WeekCard({
   sourceTimeBlock,
   spanBlocks,
   showResizeHandle,
+  foreign,
 }: {
   children: React.ReactNode;
   dimmed?: boolean;
@@ -1488,9 +1567,14 @@ function WeekCard({
   sourceTimeBlock?: TimeBlock | null;
   spanBlocks?: number;
   showResizeHandle?: boolean;
+  /**
+   * Out-of-department work on a multi-department resource's row. Read-only —
+   * the slot is genuinely taken, but the booking belongs to another desk.
+   */
+  foreign?: boolean;
 }) {
   const { setDraggedAppointment, setResizingAppointment } = useSchedulerDrag();
-  const isDraggable = !!appointment;
+  const isDraggable = !!appointment && !foreign;
   const spanHeight = spanBlocks && spanBlocks > 1 ? { height: `${spanBlocks * 18}px`, position: "relative" as const, zIndex: 5 } : undefined;
 
   function handleDragStart(e: React.DragEvent) {
@@ -1542,11 +1626,11 @@ function WeekCard({
       }}
       className={`rounded-sm cursor-pointer hover:shadow transition-all text-[9px] leading-tight overflow-hidden group/card ${
         dimmed ? "opacity-30" : ""
-      } ${isDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}
+      } ${foreign ? `border border-dashed border-muted/50 ${ROLE_BLOCKED_HATCH}` : ""} ${isDraggable ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={spanHeight}
     >
       {children}
-      {showResizeHandle && appointment?.time_block && (
+      {showResizeHandle && !foreign && appointment?.time_block && (
         <div
           draggable
           onDragStart={handleResizeDragStart}

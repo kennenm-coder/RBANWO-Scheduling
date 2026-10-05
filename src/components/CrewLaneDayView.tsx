@@ -32,12 +32,22 @@ import type { AwaitingTier } from "@/lib/rforce-staleness";
 import { assignTimeLanes } from "@/lib/timeline-lanes";
 import { getTimeOffForDate } from "@/lib/store";
 import { useCurrentActor } from "./AuthProvider";
-import { crewHasType, sortByFirstName, getEligibleCrews, getDepartmentSectionsForDate } from "@/lib/crew-utils";
+import {
+  crewHasType,
+  sortByFirstName,
+  getEligibleCrews,
+  getDepartmentSections,
+  getCrewRoleBlock,
+} from "@/lib/crew-utils";
 import { executeScheduleMove, validateMove, ScheduleMoveTarget } from "@/lib/schedule-command";
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { calculateTimelineDrag, getDurationMinutes, DAY_VIEW_SNAP_MINUTES } from "@/lib/timeline-drag";
 import RForceDetailSheet from "./RForceDetailSheet";
-import { Palmtree, MapPinned, Ban, Sunset, Building2 } from "lucide-react";
+import { Palmtree, MapPinned, Ban, Sunset, Building2, ArrowRight } from "lucide-react";
+
+/** Hatch marking a row another department has reserved (never the PTO look). */
+const ROLE_BLOCKED_HATCH =
+  "bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(127,127,127,0.13)_4px,rgba(127,127,127,0.13)_8px)]";
 import { format } from "date-fns";
 import { getCrewAvailability, getCrewDayLabels, LABEL_KIND_TEXT, labelForBlockingKind } from "@/lib/availability";
 import { useSchedulerDrag } from "@/lib/drag-context";
@@ -211,13 +221,10 @@ export default function CrewLaneDayView({
     return false;
   }
 
-  // Build department sections using role_assignment rules for the current date.
-  // Crews with a "SVC M/W/F" or "MT T/Th" rule get moved to the correct
-  // department section based on today's day of week.
-  const sections = useMemo(
-    () => getDepartmentSectionsForDate(crews, date, availabilityRules, availabilityExceptions),
-    [crews, date, availabilityRules, availabilityExceptions]
-  );
+  // A resource appears in every section their types cover. A "SVC M/W/F" or
+  // "MT T/Th" rule no longer MOVES them between sections — it reserves them for
+  // one department and blocks the others, which each crew row resolves below.
+  const sections = useMemo(() => getDepartmentSections(crews), [crews]);
 
   // Run a move; on a slot conflict, stash it so the scheduler can confirm an
   // intentional overlap (which retries with allowOverlap). `override` is set only
@@ -310,6 +317,7 @@ export default function CrewLaneDayView({
         .map((s) => (
           <CrewSection
             key={s.key}
+            sectionKey={s.key}
             title={s.title}
             crews={s.crews}
             date={date}
@@ -602,6 +610,7 @@ function RemoteLane({
 }
 
 function CrewSection({
+  sectionKey,
   title,
   crews,
   date,
@@ -625,6 +634,7 @@ function CrewSection({
   hasMismatch,
   pendingTier,
 }: {
+  sectionKey: string;
   title: string;
   crews: Crew[];
   date: Date;
@@ -1050,6 +1060,43 @@ function CrewSection({
 
               const presenceCellKey = `${crew.id}|${presenceDateStr}`;
               const peerColor = hoverColorFor(presenceCellKey);
+
+              // Reserved by another department today. The row stays visible —
+              // deliberately NOT the time-off treatment, because the person is
+              // working, just not for this desk.
+              const roleBlock = getCrewRoleBlock(
+                crew,
+                sectionKey,
+                date,
+                availabilityRules,
+                availabilityExceptions
+              );
+              // Never collapse a row that has work on it — see the week view.
+              if (roleBlock && crewDayAppts.length === 0 && crewItems.length === 0) {
+                return (
+                  <div
+                    key={crew.id}
+                    data-crew-row={crew.id}
+                    className="flex border-b border-border"
+                    title={`${crew.name} is assigned to ${roleBlock.label} today`}
+                  >
+                    <div className="w-36 shrink-0 p-2 text-xs font-medium bg-background">
+                      <div className="flex items-center gap-1.5">
+                        <div
+                          className="w-3 h-3 rounded-full shrink-0 opacity-40"
+                          style={{ backgroundColor: crewColorFor(crew) }}
+                        />
+                        <span className="opacity-50">{crew.name}</span>
+                      </div>
+                    </div>
+                    <div className={`flex-1 flex items-center justify-center gap-1 text-muted/80 ${ROLE_BLOCKED_HATCH}`}>
+                      <ArrowRight size={11} />
+                      <span className="text-[11px] font-medium">On {roleBlock.label} today</span>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={crew.id}

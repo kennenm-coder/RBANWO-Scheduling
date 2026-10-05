@@ -18,16 +18,25 @@ import {
   MEASURE_TIME_BLOCKS,
   MEASURE_ROW_BLOCKS,
   REMOTE_BLOCK,
-  appointmentSpansBlock,
+  appointmentOccupiesBlock,
+  isAllDayWork,
   typeLabel,
   timeBlockStartEnd,
 } from "@/lib/calendar-utils";
 import { getTimeOffForDate } from "@/lib/store";
-import { crewHasType, sortByFirstName, getDepartmentSectionsForDate } from "@/lib/crew-utils";
+import {
+  crewHasType,
+  sortByFirstName,
+  getDepartmentSections,
+  getCrewRoleBlock,
+  isForeignToSection,
+  foreignTypeBadge,
+  RoleBlock,
+} from "@/lib/crew-utils";
 import { useSchedulerDrag } from "@/lib/drag-context";
 import { usePresence } from "@/lib/presence";
 import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
-import { Palmtree } from "lucide-react";
+import { Palmtree, ArrowRight } from "lucide-react";
 import { getCrewDayLabels, LABEL_KIND_TEXT } from "@/lib/availability";
 import {
   format,
@@ -67,6 +76,29 @@ const SERVICE_HOUR_LABELS: Record<number, string> = {
 type RowMode = "single" | "measure_blocks" | "hourly";
 
 /** Compact Late Day / Office badges for a block-view day cell. */
+/**
+ * Diagonal hatch marking a cell that is reserved by another department. Kept
+ * visually distinct from the PTO treatment: the person IS working that day.
+ */
+const ROLE_BLOCKED_HATCH =
+  "bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(127,127,127,0.13)_4px,rgba(127,127,127,0.13)_8px)]";
+
+/**
+ * A day a dual-role resource is assigned to a different department.
+ *
+ * Deliberately NOT the palm tree / OFF treatment used for time off — a
+ * scheduler has to be able to tell "working, just not for me today" from "not
+ * here at all" without reading the tooltip.
+ */
+function RoleBlockedCell({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center gap-0.5 text-muted/80">
+      <ArrowRight size={10} />
+      <span className="text-[10px] font-medium">{label}</span>
+    </div>
+  );
+}
+
 function BlockDayLabels({ labels }: { labels: AvailabilityKind[] }) {
   if (labels.length === 0) return null;
   return (
@@ -142,10 +174,15 @@ export default function CrewBlockView({
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const today = new Date();
 
-  // Build date-aware department sections using role_assignment rules
-  const deptSections = useMemo(
-    () => getDepartmentSectionsForDate(crews, currentDate, availabilityRules, availabilityExceptions),
-    [crews, currentDate, availabilityRules, availabilityExceptions]
+  // A resource appears in EVERY section their types cover. Role assignments no
+  // longer move the row between sections — they block the off-role days, which
+  // is resolved per crew per DAY below, not once for the focused date.
+  const deptSections = useMemo(() => getDepartmentSections(crews), [crews]);
+
+  const roleBlockFor = useCallback(
+    (crew: Crew, sectionKey: string, day: Date) =>
+      getCrewRoleBlock(crew, sectionKey, day, availabilityRules, availabilityExceptions),
+    [availabilityRules, availabilityExceptions]
   );
 
   // Map department sections to block view section configs
@@ -217,6 +254,7 @@ export default function CrewBlockView({
 
   // Filter sections by filterType
   const sections: {
+    key: string;
     title: string;
     crews: Crew[];
     rowMode: RowMode;
@@ -224,19 +262,19 @@ export default function CrewBlockView({
 
   if (filterType === "all" || filterType === "tech_measure") {
     if (measureCrews.length > 0)
-      sections.push({ title: "MEASURES", crews: measureCrews, rowMode: "measure_blocks" });
+      sections.push({ key: "measure", title: "MEASURES", crews: measureCrews, rowMode: "measure_blocks" });
   }
   if (filterType === "all" || filterType === "install") {
     if (installCrews.length > 0)
-      sections.push({ title: "INSTALLS", crews: installCrews, rowMode: "single" });
+      sections.push({ key: "install", title: "INSTALLS", crews: installCrews, rowMode: "single" });
   }
   if (filterType === "all" || filterType === "jip") {
     if (jipCrews.length > 0)
-      sections.push({ title: "JIPS/WOP", crews: jipCrews, rowMode: "hourly" });
+      sections.push({ key: "jip", title: "JIPS/WOP", crews: jipCrews, rowMode: "hourly" });
   }
   if (filterType === "all" || filterType === "service") {
     if (serviceCrews.length > 0)
-      sections.push({ title: "SERVICE", crews: serviceCrews, rowMode: "hourly" });
+      sections.push({ key: "service", title: "SERVICE", crews: serviceCrews, rowMode: "hourly" });
   }
 
   return (
@@ -275,6 +313,8 @@ export default function CrewBlockView({
           {sections.map((section) => (
             <SectionBlock
               key={section.title}
+              sectionKey={section.key}
+              roleBlockFor={roleBlockFor}
               title={section.title}
               crews={section.crews}
               weekDays={weekDays}
@@ -413,6 +453,8 @@ export default function CrewBlockView({
 // ─── Section Block (e.g. "INSTALLS") ─────────────────────────────────────────
 
 interface SectionBlockProps {
+  sectionKey: string;
+  roleBlockFor: (crew: Crew, sectionKey: string, day: Date) => RoleBlock | null;
   title: string;
   crews: Crew[];
   weekDays: Date[];
@@ -430,6 +472,8 @@ interface SectionBlockProps {
 }
 
 function SectionBlock({
+  sectionKey,
+  roleBlockFor,
   title,
   crews,
   weekDays,
@@ -461,6 +505,8 @@ function SectionBlock({
         rowMode === "measure_blocks" ? (
           <MeasureCrewRows
             key={crew.id}
+            sectionKey={sectionKey}
+            roleBlockFor={roleBlockFor}
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
@@ -476,6 +522,8 @@ function SectionBlock({
         ) : rowMode === "hourly" ? (
           <HourlyCrewRows
             key={crew.id}
+            sectionKey={sectionKey}
+            roleBlockFor={roleBlockFor}
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
@@ -491,6 +539,8 @@ function SectionBlock({
         ) : (
           <CrewRow
             key={crew.id}
+            sectionKey={sectionKey}
+            roleBlockFor={roleBlockFor}
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
@@ -513,6 +563,8 @@ function SectionBlock({
 // ─── Single Crew Row (installs, JIP, measures) ──────────────────────────────
 
 interface CrewRowProps {
+  sectionKey: string;
+  roleBlockFor: (crew: Crew, sectionKey: string, day: Date) => RoleBlock | null;
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
@@ -528,6 +580,8 @@ interface CrewRowProps {
 }
 
 function CrewRow({
+  sectionKey,
+  roleBlockFor,
   crew,
   weekDays,
   appointments,
@@ -574,13 +628,33 @@ function CrewRow({
         ).filter(a => a.status !== "cancelled" && a.status !== "unscheduled");
         // PTO takes precedence over Late/Office tags — hide them when off.
         const dayLabels = off ? [] : getDayLabels(crew.id, day);
+        const roleBlock = roleBlockFor(crew, sectionKey, day);
+
+        // Never collapse a day that has work on it — a booking must stay
+        // visible in every section this resource appears in, or the grid
+        // shows a free slot that is actually taken.
+        if (roleBlock && dayAppts.length === 0) {
+          return (
+            <td
+              key={dayKey}
+              className={`border border-border p-0.5 align-middle text-center min-w-[120px] ${ROLE_BLOCKED_HATCH} ${isToday ? "bg-primary/5" : ""}`}
+              style={peerColor ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" } : undefined}
+              title={`${crew.name} is assigned to ${roleBlock.label} on ${format(day, "EEEE")}`}
+              onMouseEnter={() => setHoveredCell(presenceKey)}
+              onMouseLeave={() => setHoveredCell(null)}
+            >
+              <BlockDayLabels labels={dayLabels} />
+              <RoleBlockedCell label={roleBlock.label} />
+            </td>
+          );
+        }
 
         return (
           <td
             key={dayKey}
             className={`border border-border p-0.5 align-top min-w-[120px] transition-colors ${
               isToday ? "bg-primary/5" : ""
-            } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+            } ${roleBlock ? ROLE_BLOCKED_HATCH : ""} ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
             style={peerColor ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" } : undefined}
             onMouseEnter={() => setHoveredCell(presenceKey)}
             onMouseLeave={() => setHoveredCell(null)}
@@ -629,6 +703,7 @@ function CrewRow({
                     sourceCrewId={crew.id}
                     sourceDate={format(day, "yyyy-MM-dd")}
                     sourceTimeBlock={appt.time_block || null}
+                    foreign={isForeignToSection(appt, sectionKey)}
                   />
                 ))}
               </div>
@@ -643,6 +718,8 @@ function CrewRow({
 // ─── Measure Crew with 2-hour Block Sub-rows ───────────────────────────────
 
 interface MeasureCrewRowsProps {
+  sectionKey: string;
+  roleBlockFor: (crew: Crew, sectionKey: string, day: Date) => RoleBlock | null;
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
@@ -657,6 +734,8 @@ interface MeasureCrewRowsProps {
 }
 
 function MeasureCrewRows({
+  sectionKey,
+  roleBlockFor,
   crew,
   weekDays,
   appointments,
@@ -698,9 +777,7 @@ function MeasureCrewRows({
     for (const day of weekDays) {
       const dateStr = format(day, "yyyy-MM-dd");
       const dayAppts = dayApptsMap.get(dateStr) || [];
-      const fullDay = dayAppts.filter(
-        (a) => a.time_block === "full_day" || !a.time_block
-      );
+      const fullDay = dayAppts.filter(isAllDayWork);
       map.set(dateStr, fullDay);
     }
     return map;
@@ -760,13 +837,41 @@ function MeasureCrewRows({
               return null;
             }
 
+            // Cross-department work (a service, a JIP) carries a start/end
+            // window and no time_block, so it has to be placed by overlap:
+            // a 9–11 service occupies both the 9-10 and 10-12 rows.
             const blockAppts = dayAppts.filter(
-              (a) => a.time_block && appointmentSpansBlock(a, block)
+              (a) => !isAllDayWork(a) && appointmentOccupiesBlock(a, block)
             );
             // Cross-type all-day work belongs on the first ON-SITE row, not in
             // the remote row above it.
             const fullDayAppts =
               block === MEASURE_TIME_BLOCKS[0] ? (fullDayByDay.get(dateStr) || []) : [];
+            // Reserved by another department today (e.g. "SVC Mon–Wed"). The
+            // row stays visible so the scheduler can see the person exists and
+            // where they went — it just can't be booked from here.
+            const roleBlock = roleBlockFor(crew, sectionKey, day);
+            // Never collapse a day that has work on it — see CrewRow above.
+            if (roleBlock && dayAppts.length === 0) {
+              if (blockIdx === 0) {
+                return (
+                  <td
+                    key={day.toISOString()}
+                    rowSpan={blocks.length}
+                    className={`border border-border p-0.5 text-center align-middle ${ROLE_BLOCKED_HATCH} ${isToday ? "bg-primary/5" : ""}`}
+                    style={ringStyle}
+                    title={`${crew.name} is assigned to ${roleBlock.label} on ${format(day, "EEEE")}`}
+                    onMouseEnter={() => setHoveredCell(presenceKey)}
+                    onMouseLeave={() => setHoveredCell(null)}
+                  >
+                    <BlockDayLabels labels={getDayLabels(crew.id, day)} />
+                    <RoleBlockedCell label={roleBlock.label} />
+                  </td>
+                );
+              }
+              return null;
+            }
+
             const cellKey = `${dateStr}-${block}`;
             const isDragOver = dragOverCell === cellKey;
 
@@ -775,7 +880,7 @@ function MeasureCrewRows({
                 key={day.toISOString()}
                 className={`border border-border/50 p-0.5 align-top text-[10px] transition-colors ${
                   isToday ? "bg-primary/5" : ""
-                } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+                } ${roleBlock ? ROLE_BLOCKED_HATCH : ""} ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
                 style={ringStyle}
                 onMouseEnter={() => setHoveredCell(presenceKey)}
                 onMouseLeave={() => setHoveredCell(null)}
@@ -820,6 +925,7 @@ function MeasureCrewRows({
                     sourceCrewId={crew.id}
                     sourceDate={dateStr}
                     sourceTimeBlock={appt.time_block || null}
+                    foreign={isForeignToSection(appt, sectionKey)}
                   />
                 ))}
                 {blockAppts.map((appt) => (
@@ -833,6 +939,7 @@ function MeasureCrewRows({
                     sourceCrewId={crew.id}
                     sourceDate={dateStr}
                     sourceTimeBlock={appt.time_block || null}
+                    foreign={isForeignToSection(appt, sectionKey)}
                   />
                 ))}
               </td>
@@ -847,6 +954,8 @@ function MeasureCrewRows({
 // ─── Hourly Crew Rows (Service / JIP — 9am–5pm individual hours) ────────────
 
 interface HourlyCrewRowsProps {
+  sectionKey: string;
+  roleBlockFor: (crew: Crew, sectionKey: string, day: Date) => RoleBlock | null;
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
@@ -876,6 +985,8 @@ function getAppointmentStartHour(appt: Appointment): number | null {
 }
 
 function HourlyCrewRows({
+  sectionKey,
+  roleBlockFor,
   crew,
   weekDays,
   appointments,
@@ -1024,6 +1135,29 @@ function HourlyCrewRows({
               return null;
             }
 
+            // Reserved by another department today — row stays, cell is closed.
+            const roleBlock = roleBlockFor(crew, sectionKey, day);
+            // Never collapse a day that has work on it — see CrewRow above.
+            if (roleBlock && (dayApptsMap.get(dateStr) || []).length === 0) {
+              if (hourIdx === 0) {
+                return (
+                  <td
+                    key={day.toISOString()}
+                    rowSpan={hours.length}
+                    className={`border border-border p-0.5 text-center align-middle ${ROLE_BLOCKED_HATCH} ${isToday ? "bg-primary/5" : ""}`}
+                    style={ringStyle}
+                    title={`${crew.name} is assigned to ${roleBlock.label} on ${format(day, "EEEE")}`}
+                    onMouseEnter={() => setHoveredCell(presenceKey)}
+                    onMouseLeave={() => setHoveredCell(null)}
+                  >
+                    <BlockDayLabels labels={getDayLabels(crew.id, day)} />
+                    <RoleBlockedCell label={roleBlock.label} />
+                  </td>
+                );
+              }
+              return null;
+            }
+
             const plan = planByDay.get(dateStr)?.[hourIdx];
             if (!plan || plan.skip) return null; // covered by a spanning chip above
 
@@ -1038,7 +1172,7 @@ function HourlyCrewRows({
                 rowSpan={plan.rowSpan}
                 className={`border border-border/50 p-0.5 align-top text-[10px] transition-colors ${
                   isToday ? "bg-primary/5" : ""
-                } ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
+                } ${roleBlock ? ROLE_BLOCKED_HATCH : ""} ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
                 style={ringStyle}
                 onMouseEnter={() => setHoveredCell(presenceKey)}
                 onMouseLeave={() => setHoveredCell(null)}
@@ -1086,6 +1220,7 @@ function HourlyCrewRows({
                         sourceCrewId={crew.id}
                         sourceDate={dateStr}
                         sourceTimeBlock={appt.time_block || null}
+                        foreign={isForeignToSection(appt, sectionKey)}
                       />
                     ))}
                   </div>
@@ -1112,6 +1247,13 @@ interface BlockCellProps {
   sourceTimeBlock?: TimeBlock | null;
   /** When set (>1), the chip is sized to span that many hour rows. */
   heightRows?: number;
+  /**
+   * Out-of-department work shown on a dual-role resource's row. Drawn in a
+   * neutral "not this department" style and read-only: the slot is genuinely
+   * taken, but it belongs to another desk, so it can't be dragged or
+   * unscheduled from here.
+   */
+  foreign?: boolean;
 }
 
 function BlockCell({
@@ -1124,6 +1266,7 @@ function BlockCell({
   sourceDate,
   sourceTimeBlock,
   heightRows,
+  foreign,
 }: BlockCellProps) {
   const { setDraggedAppointment } = useSchedulerDrag();
   const { unscheduleAppointment } = useData();
@@ -1152,12 +1295,18 @@ function BlockCell({
     }
   };
 
+  const typeName = typeLabel(appointment.appointment_type);
+
   return (
     <div
-      draggable
+      draggable={!foreign}
       onClick={onClick}
       tabIndex={0}
-      aria-label={`Open ${appointment.customer_name} appointment`}
+      aria-label={
+        foreign
+          ? `Open ${appointment.customer_name} ${typeName} appointment (other department)`
+          : `Open ${appointment.customer_name} appointment`
+      }
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -1165,6 +1314,10 @@ function BlockCell({
         }
       }}
       onDragStart={(e) => {
+        if (foreign) {
+          e.preventDefault();
+          return;
+        }
         setDraggedAppointment({
           appointment,
           sourceCrewId: sourceCrewId || "",
@@ -1178,22 +1331,34 @@ function BlockCell({
         (e.currentTarget as HTMLElement).style.opacity = "1";
         setDraggedAppointment(null);
       }}
-      className={`group/block relative rounded px-1.5 cursor-grab active:cursor-grabbing hover:shadow-sm transition-shadow text-white truncate ${
-        small ? "py-0 text-[10px] leading-snug" : "py-0.5 text-[11px] leading-tight"
-      }`}
+      className={`group/block relative rounded px-1.5 truncate transition-shadow ${
+        foreign
+          ? `cursor-pointer border border-dashed border-muted/50 text-muted ${ROLE_BLOCKED_HATCH}`
+          : "cursor-grab active:cursor-grabbing hover:shadow-sm text-white"
+      } ${small ? "py-0 text-[10px] leading-snug" : "py-0.5 text-[11px] leading-tight"}`}
       style={{
-        backgroundColor: crewColor,
+        backgroundColor: foreign ? undefined : crewColor,
         minHeight: heightRows && heightRows > 1 ? `${heightRows * 20}px` : undefined,
       }}
-      title={`${appointment.customer_name} — ${appointment.address || ""} (${typeLabel(appointment.appointment_type)})`}
+      title={
+        foreign
+          ? `${typeName} — ${appointment.customer_name}. Booked by another department; open it to make changes.`
+          : `${appointment.customer_name} — ${appointment.address || ""} (${typeName})`
+      }
     >
-      <span className="pr-3">{label}</span>
+      {foreign && (
+        <span className="text-[8px] font-bold tracking-wide mr-1 px-0.5 rounded bg-muted/25">
+          {foreignTypeBadge(appointment)}
+        </span>
+      )}
+      <span className={foreign ? "" : "pr-3"}>{label}</span>
       {appointment.duration_days > 1 && (
         <span className="text-[9px] opacity-70 ml-0.5">
           📅
         </span>
       )}
-      {/* Hover unschedule button */}
+      {/* Hover unschedule button — never on foreign work */}
+      {!foreign && (
       <button
         onClick={handleUnschedule}
         disabled={unscheduling}
@@ -1216,6 +1381,7 @@ function BlockCell({
           <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
         </svg>
       </button>
+      )}
     </div>
   );
 }

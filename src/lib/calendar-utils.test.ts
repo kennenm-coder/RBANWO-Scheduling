@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   appointmentSpansBlock,
+  appointmentOccupiesBlock,
+  isAllDayWork,
   getSpannedBlocks,
   getAppointmentsForDay,
   getAppointmentsForCrewAndDay,
@@ -262,5 +264,91 @@ describe("formatTime12", () => {
     expect(formatTime12(null)).toBe("");
     expect(formatTime12("")).toBe("");
     expect(formatTime12("garbage")).toBe("garbage");
+  });
+});
+
+describe("appointmentOccupiesBlock", () => {
+  // A dual-role resource's service work has a clock window and no time_block.
+  // It must land in every measure row its window touches, or the measure grid
+  // shows a free slot that is actually taken.
+  const service9to11 = makeAppt({
+    id: "svc",
+    appointment_type: "service",
+    time_block: null,
+    start_time: "09:00",
+    end_time: "11:00",
+  });
+
+  it("fills both rows a 9-11 service overlaps", () => {
+    expect(appointmentOccupiesBlock(service9to11, "9-10")).toBe(true);
+    expect(appointmentOccupiesBlock(service9to11, "10-12")).toBe(true);
+  });
+
+  it("leaves later rows free", () => {
+    expect(appointmentOccupiesBlock(service9to11, "12-2")).toBe(false);
+    expect(appointmentOccupiesBlock(service9to11, "2-4")).toBe(false);
+    expect(appointmentOccupiesBlock(service9to11, "4-6")).toBe(false);
+  });
+
+  it("does not touch a block it merely abuts", () => {
+    const noon = makeAppt({
+      id: "svc2",
+      appointment_type: "service",
+      time_block: null,
+      start_time: "12:00",
+      end_time: "14:00",
+    });
+    expect(appointmentOccupiesBlock(noon, "10-12")).toBe(false);
+    expect(appointmentOccupiesBlock(noon, "12-2")).toBe(true);
+  });
+
+  it("never puts timed work in the remote row", () => {
+    expect(appointmentOccupiesBlock(service9to11, "remote")).toBe(false);
+  });
+
+  it("keeps block semantics for work that carries a time_block", () => {
+    const measure = makeAppt({
+      id: "mt",
+      appointment_type: "tech_measure",
+      time_block: "10-12",
+      time_block_end: "2-4",
+    });
+    expect(appointmentOccupiesBlock(measure, "9-10")).toBe(false);
+    expect(appointmentOccupiesBlock(measure, "10-12")).toBe(true);
+    expect(appointmentOccupiesBlock(measure, "12-2")).toBe(true);
+    expect(appointmentOccupiesBlock(measure, "2-4")).toBe(true);
+  });
+
+  it("keeps a remote measure in the remote row only", () => {
+    const remote = makeAppt({ id: "r", appointment_type: "tech_measure", time_block: "remote" });
+    expect(appointmentOccupiesBlock(remote, "remote")).toBe(true);
+    expect(appointmentOccupiesBlock(remote, "9-10")).toBe(false);
+  });
+});
+
+describe("isAllDayWork", () => {
+  it("treats an explicit full-day job as all-day", () => {
+    expect(isAllDayWork(makeAppt({ id: "a", time_block: "full_day" }))).toBe(true);
+    expect(isAllDayWork(makeAppt({ id: "b", time_block: null, is_full_day: true }))).toBe(true);
+  });
+
+  it("does not treat a timed service as all-day", () => {
+    const svc = makeAppt({
+      id: "c",
+      appointment_type: "service",
+      time_block: null,
+      start_time: "09:00",
+      end_time: "11:00",
+    });
+    expect(isAllDayWork(svc)).toBe(false);
+  });
+
+  it("treats block-less, window-less work as all-day", () => {
+    const vague = makeAppt({ id: "d", time_block: null, start_time: null, end_time: null });
+    expect(isAllDayWork(vague)).toBe(true);
+  });
+
+  it("does not treat a blocked measure as all-day", () => {
+    expect(isAllDayWork(makeAppt({ id: "e", time_block: "10-12" }))).toBe(false);
   });
 });

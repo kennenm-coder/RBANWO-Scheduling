@@ -96,76 +96,111 @@ export function getDepartmentSections(crews: Crew[]): DepartmentSection[] {
   return sections;
 }
 
+/** The four departments a role assignment can name. */
+export const MAIN_DEPARTMENTS = ["measure", "install", "service", "jip"] as const;
+
+export const DEPARTMENT_LABELS: Record<string, string> = {
+  measure: "Measure",
+  install: "Install",
+  service: "Service",
+  jip: "JIP",
+};
+
+export interface RoleBlock {
+  /** The department this crew is assigned to on the date. */
+  department: string;
+  /** Short label for the blocked cell, e.g. "Service". */
+  label: string;
+}
+
 /**
- * Date-aware department sections.
+ * Is this crew's row in `sectionKey` blocked on `date` because a role
+ * assignment puts them in another department that day?
  *
- * Crews with an active `role_assignment` rule for the given date are moved
- * into the matching department section instead of their default crew_type
- * section. This handles patterns like "SVC Mon/Wed/Fri, MT Tue/Thu".
+ * A dual-role resource gets a row in EVERY section their types cover, so a
+ * measure scheduler can always see the whole person. A `role_assignment` rule
+ * ("SVC Mon–Wed, MT Thu–Fri") no longer moves that row between sections — it
+ * reserves the person for one department per day and blocks the others, so the
+ * off-role sections show where they went instead of silently dropping them.
+ *
+ * Returns null when the row is live: no rule that day, a rule naming this very
+ * section, or a section (seconds / management) that roles don't apply to.
  */
-export function getDepartmentSectionsForDate(
-  crews: Crew[],
+export function getCrewRoleBlock(
+  crew: Crew,
+  sectionKey: string,
   date: Date,
   rules: AvailabilityRule[],
   exceptions: AvailabilityException[]
-): DepartmentSection[] {
-  const active = crews.filter((c) => c.is_active);
-  const main = active.filter((c) => !crewHasType(c, "misc", "second", "management"));
-  const management = sortByFirstName(active.filter((c) => c.crew_type === "management"));
-  const seconds = active.filter((c) => c.crew_type === "second");
+): RoleBlock | null {
+  if (!(MAIN_DEPARTMENTS as readonly string[]).includes(sectionKey)) return null;
+  const role = getCrewRoleForDate(crew.id, date, rules, exceptions);
+  if (!role) return null;
+  if (role === sectionKey) return null;
+  return { department: role, label: DEPARTMENT_LABELS[role] || role };
+}
 
-  // Build buckets
-  const buckets: Record<string, Crew[]> = {
-    measure: [],
-    install: [],
-    service: [],
-    jip: [],
-  };
+/**
+ * The section a given kind of work belongs to. Job site visits are universal —
+ * anyone can do one — so they are never foreign to the section they appear in.
+ */
+const APPOINTMENT_HOME_SECTION: Record<AppointmentType, string | null> = {
+  tech_measure: "measure",
+  install: "install",
+  lswp: "install",
+  hoa: "install",
+  paint_stain: "install",
+  service: "service",
+  jip: "jip",
+  job_site_visit: null,
+};
 
-  // Sort each main crew into their date-specific department
-  for (const crew of main) {
-    const roleOverride = getCrewRoleForDate(crew.id, date, rules, exceptions);
-    if (roleOverride && buckets[roleOverride]) {
-      buckets[roleOverride].push(crew);
-    } else {
-      // Default placement by crew_type
-      if (crewHasType(crew, "measure_tech")) buckets.measure.push(crew);
-      else if (crewHasType(crew, "install_in_house", "install_sub")) buckets.install.push(crew);
-      else if (crewHasType(crew, "svc")) buckets.service.push(crew);
-      else if (crewHasType(crew, "jip")) buckets.jip.push(crew);
-    }
+const SECTION_FOR_FILTER_TYPE: Record<string, string> = {
+  tech_measure: "measure",
+  install: "install",
+  service: "service",
+  jip: "jip",
+};
+
+/**
+ * Is this appointment out-of-department for the section it is being drawn in?
+ *
+ * A dual-role resource's measure row shows their service and JIP work too, so
+ * the grid can tell the scheduler the slot is genuinely taken. Those tiles are
+ * drawn in a neutral "not this department" style rather than the crew color.
+ */
+export function isForeignToSection(
+  appointment: Appointment,
+  sectionKeyOrFilterType: string
+): boolean {
+  const home = APPOINTMENT_HOME_SECTION[appointment.appointment_type];
+  if (!home) return false;
+  const section =
+    SECTION_FOR_FILTER_TYPE[sectionKeyOrFilterType] || sectionKeyOrFilterType;
+  if (!(MAIN_DEPARTMENTS as readonly string[]).includes(section)) return false;
+  return home !== section;
+}
+
+/** Short badge text for a foreign tile, e.g. "SVC". */
+export function foreignTypeBadge(appointment: Appointment): string {
+  switch (appointment.appointment_type) {
+    case "tech_measure":
+      return "MT";
+    case "service":
+      return "SVC";
+    case "jip":
+      return "JIP";
+    case "lswp":
+      return "LSWP";
+    case "hoa":
+      return "HOA";
+    case "paint_stain":
+      return "PNT";
+    case "job_site_visit":
+      return "JSV";
+    default:
+      return "INS";
   }
-
-  // Sort each bucket by first name
-  for (const key of Object.keys(buckets)) {
-    buckets[key] = sortByFirstName(buckets[key]);
-  }
-
-  // Build install seconds
-  const installSeconds = sortByFirstName(
-    seconds.filter((c) => {
-      const primary = active.find((p) => p.id === c.primary_crew_id);
-      return primary && (primary.crew_type === "install_in_house" || primary.crew_type === "install_sub");
-    })
-  );
-  // Build JIP seconds
-  const jipSeconds = sortByFirstName(
-    seconds.filter((c) => {
-      const primary = active.find((p) => p.id === c.primary_crew_id);
-      return primary && primary.crew_type === "jip";
-    })
-  );
-
-  const sections: DepartmentSection[] = [];
-  if (buckets.measure.length) sections.push({ key: "measure", title: "Measure Techs", crews: buckets.measure, filterType: "tech_measure" });
-  if (buckets.install.length) sections.push({ key: "install", title: "Install", crews: buckets.install, filterType: "install" });
-  if (installSeconds.length) sections.push({ key: "install-seconds", title: "Install Seconds", crews: installSeconds, filterType: "install" });
-  if (buckets.service.length) sections.push({ key: "service", title: "Service", crews: buckets.service, filterType: "service" });
-  if (buckets.jip.length) sections.push({ key: "jip", title: "JIP", crews: buckets.jip, filterType: "jip" });
-  if (jipSeconds.length) sections.push({ key: "jip-seconds", title: "JIP Seconds", crews: jipSeconds, filterType: "jip" });
-  if (management.length) sections.push({ key: "management", title: "Management", crews: management, filterType: "install" });
-
-  return sections;
 }
 
 const ELIGIBLE_CREW_TYPES: Record<AppointmentType, CrewType[]> = {

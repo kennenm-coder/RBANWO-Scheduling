@@ -75,6 +75,53 @@ export function appointmentSpansBlock(appointment: Appointment, block: TimeBlock
   return blockIdx >= startIdx && blockIdx <= endIdx;
 }
 
+/**
+ * Work that takes the whole day rather than a position on the clock — an
+ * explicit full-day job, or one carrying neither a block nor a start/end
+ * window. The measure grid draws these once, on the first on-site row, instead
+ * of repeating them down every row.
+ */
+export function isAllDayWork(appointment: Appointment): boolean {
+  if (appointment.is_full_day || appointment.time_block === "full_day") return true;
+  if (appointment.time_block) return false;
+  return !(appointment.start_time && appointment.end_time);
+}
+
+/**
+ * Which measure-grid rows an appointment actually sits in.
+ *
+ * `appointmentSpansBlock` only understands work that carries a `time_block` —
+ * i.e. measures. Cross-department work (a service, a JIP) is stored as a plain
+ * start/end window with no block, so it fell through every per-block filter and
+ * got drawn once as if it were all-day. A dual-role resource's row has to show
+ * that work in the rows its clock time really covers: a 9–11 service occupies
+ * both 9-10 and 10-12.
+ *
+ * Block-carrying work keeps its exact span semantics (including the remote row
+ * being exact-match only); block-less timed work is mapped by overlap. Work
+ * with neither a block nor a window is genuinely all-day and claims every
+ * on-site row, but never the remote row.
+ */
+export function appointmentOccupiesBlock(
+  appointment: Appointment,
+  block: TimeBlock
+): boolean {
+  if (appointment.time_block) return appointmentSpansBlock(appointment, block);
+
+  // The remote row is reserved for measures explicitly placed there.
+  if (block === REMOTE_BLOCK) return false;
+
+  if (appointment.start_time && appointment.end_time) {
+    const start = appointment.start_time.slice(0, 5);
+    const end = appointment.end_time.slice(0, 5);
+    const win = timeBlockStartEnd(block);
+    return start < win.end && end > win.start;
+  }
+
+  // No block, no window — all-day work fills the on-site grid.
+  return MEASURE_TIME_BLOCKS.includes(block);
+}
+
 export function getSpannedBlocks(appointment: Appointment): TimeBlock[] {
   if (!appointment.time_block) return [];
   if (!appointment.time_block_end) return [appointment.time_block];
