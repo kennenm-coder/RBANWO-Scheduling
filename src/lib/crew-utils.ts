@@ -65,20 +65,43 @@ export function primarySectionFor(crew: Crew): string | null {
   }
 }
 
+/** Every section this resource's types make them eligible for. */
+export function qualifiedSectionsFor(crew: Crew): string[] {
+  const out: string[] = [];
+  if (crewHasType(crew, "measure_tech")) out.push("measure");
+  if (crewHasType(crew, "install_in_house", "install_sub")) out.push("install");
+  if (crewHasType(crew, "svc")) out.push("service");
+  if (crewHasType(crew, "jip")) out.push("jip");
+  return out;
+}
+
 /**
- * Should this crew be drawn in this section?
+ * The sections this resource is actually drawn in.
  *
- * Normally any section their types cover. With `primary_section_only` set they
- * are collapsed to the one section their `crew_type` names — the extra rows are
- * noise for people whose second department is occasional. The surviving row
- * still shows all of their work, so nothing is hidden by collapsing.
+ * Types decide what someone is ELIGIBLE for; `visible_sections` decides where
+ * they are DRAWN. Someone can stay assignable to service work while appearing
+ * on the measure row alone — that row still carries their service jobs, flagged
+ * as another department's.
+ *
+ * No selection means every section their types cover, so a resource nobody has
+ * configured behaves exactly as before. A selection that matches none of their
+ * types would erase them from the calendar entirely, so that falls back to all
+ * of them rather than letting someone vanish after a type change.
  */
+export function visibleSectionsFor(crew: Crew): string[] {
+  const qualified = qualifiedSectionsFor(crew);
+  const picked = crew.visible_sections;
+  if (!picked || picked.length === 0) return qualified;
+  const limited = qualified.filter((sec) => picked.includes(sec));
+  return limited.length > 0 ? limited : qualified;
+}
+
+/** Should this crew be drawn in this section? */
 function belongsInSection(crew: Crew, sectionKey: string): boolean {
-  if (!crew.primary_section_only) return true;
-  const home = primarySectionFor(crew);
-  // A type roles don't cover (second / management) keeps its usual placement.
-  if (!home) return true;
-  return home === sectionKey;
+  // Seconds and management aren't placed by department type, so a row
+  // selection doesn't apply to them.
+  if (!primarySectionFor(crew)) return true;
+  return visibleSectionsFor(crew).includes(sectionKey);
 }
 
 export function getCrewDepartments(crews: Crew[]) {
@@ -181,10 +204,10 @@ export function getCrewRoleBlock(
   exceptions: AvailabilityException[]
 ): RoleBlock | null {
   if (!(MAIN_DEPARTMENTS as readonly string[]).includes(sectionKey)) return null;
-  // A collapsed resource has only the one row, so there is nothing to block —
-  // blocking it would hide their whole day. Their role shows as a day tag
-  // instead (see getCrewRoleTag).
-  if (crew.primary_section_only) return null;
+  // With only one row on the calendar there is nothing to block — blocking it
+  // would hide the person's whole day. Their role shows as a day tag instead
+  // (see getCrewRoleTag).
+  if (visibleSectionsFor(crew).length <= 1) return null;
   const role = getCrewRoleForDate(crew.id, date, rules, exceptions);
   if (!role) return null;
   if (role === sectionKey) return null;
@@ -214,7 +237,9 @@ export function getCrewRoleTag(
   rules: AvailabilityRule[],
   exceptions: AvailabilityException[]
 ): string | null {
-  if (!crew.primary_section_only) return null;
+  // Only for a resource drawn on a single row, where a role rule has no second
+  // section to send them to and so can't show itself any other way.
+  if (visibleSectionsFor(crew).length > 1) return null;
   const role = getCrewRoleForDate(crew.id, date, rules, exceptions);
   if (!role) return null;
   return DEPARTMENT_SHORT[role] || role.toUpperCase();

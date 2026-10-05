@@ -1,8 +1,8 @@
 /**
- * "Show in primary section only" as the scheduler sees it.
+ * Choosing which rows a resource appears on, as the scheduler sees it.
  *
- * Todd runs JIPs and also covers installs. With the box ticked he reads as one
- * JIP row — but that row still carries his install work, flagged as another
+ * Todd runs JIPs and also covers installs. Narrowed to the JIP row he reads as
+ * one row — but that row still carries his install work, flagged as another
  * department's, and his Department Assignment rules show as a day tag rather
  * than blocking the row (blocking the only row would hide his whole day).
  */
@@ -16,13 +16,13 @@ const state = {
   availabilityRules: [] as AvailabilityRule[],
 };
 
-function todd(primaryOnly: boolean): Crew {
+function todd(rows: string[] | null): Crew {
   return {
     id: "todd",
     name: "Todd Williams",
     crew_type: "jip",
     additional_types: ["install_in_house"],
-    primary_section_only: primaryOnly,
+    visible_sections: rows,
     color: "#6d28d9",
     is_active: true,
     notes: null,
@@ -126,9 +126,9 @@ function renderWeek() {
   );
 }
 
-describe("show in primary section only", () => {
-  it("drops the extra section, leaving the crew_type one", () => {
-    state.crews = [todd(true)];
+describe("choosing which rows a resource appears on", () => {
+  it("drops the rows that were turned off", () => {
+    state.crews = [todd(["jip"])];
     state.appointments = [];
     state.availabilityRules = [];
     renderWeek();
@@ -137,8 +137,8 @@ describe("show in primary section only", () => {
     expect(screen.getAllByText("Todd W").length).toBe(1);
   });
 
-  it("shows both sections when the box is unticked", () => {
-    state.crews = [todd(false)];
+  it("shows every qualified row when nothing is chosen", () => {
+    state.crews = [todd(null)];
     state.appointments = [];
     state.availabilityRules = [];
     renderWeek();
@@ -147,7 +147,7 @@ describe("show in primary section only", () => {
   });
 
   it("keeps the other department's work on the surviving row", () => {
-    state.crews = [todd(true)];
+    state.crews = [todd(["jip"])];
     state.appointments = [installJob()];
     state.availabilityRules = [];
     renderWeek();
@@ -156,7 +156,7 @@ describe("show in primary section only", () => {
   });
 
   it("flags that work as another department's", () => {
-    state.crews = [todd(true)];
+    state.crews = [todd(["jip"])];
     state.appointments = [installJob()];
     state.availabilityRules = [];
     renderWeek();
@@ -164,7 +164,7 @@ describe("show in primary section only", () => {
   });
 
   it("never blocks the one row — that would hide the whole day", () => {
-    state.crews = [todd(true)];
+    state.crews = [todd(["jip"])];
     state.appointments = [];
     state.availabilityRules = [installMonWed];
     renderWeek();
@@ -173,7 +173,7 @@ describe("show in primary section only", () => {
   });
 
   it("shows the day's department as a tag instead", () => {
-    state.crews = [todd(true)];
+    state.crews = [todd(["jip"])];
     state.appointments = [];
     state.availabilityRules = [installMonWed];
     renderWeek();
