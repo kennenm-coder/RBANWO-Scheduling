@@ -49,7 +49,7 @@ import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-
 import { getPreferences, crewColorFor } from "@/lib/preferences";
 import { usePresence } from "@/lib/presence";
 import { format, isToday, parseISO, addDays } from "date-fns";
-import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle, ArrowRight } from "lucide-react";
+import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle, ArrowRight, Sunset, Building2 } from "lucide-react";
 
 /** Hatch marking a cell another department has reserved (never the PTO look). */
 import { useSchedulerDrag } from "@/lib/drag-context";
@@ -57,6 +57,12 @@ import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
 import { getSchedulingMode } from "@/lib/scheduling-policy";
 import { useToast } from "./Toast";
 import { getAllCrewsAvailabilityForWeek, CrewDayAvailability, getCrewDayLabels, LABEL_KIND_TEXT, labelForBlockingKind } from "@/lib/availability";
+import {
+  blockedVisualFor,
+  timeOffVisual,
+  blockedCellStyle,
+  BlockedVisual,
+} from "@/lib/blocked-visuals";
 
 const EMPTY_BLOCKS: Set<TimeBlock> = new Set();
 
@@ -808,6 +814,39 @@ export default function CrewLaneWeekView({
   );
 }
 
+/**
+ * One treatment for every reason a day is unbookable: full-strength tint, a
+ * solid accent bar on the left, and the reason spelled out in the accent color.
+ * Replaces a patchwork where PTO was a 40% wash of a token that in the cream
+ * theme sat a shade away from --surface, and Office/Late days used hardcoded
+ * Tailwind colors that ignored the theme entirely.
+ */
+function BlockedDayCell({
+  visual,
+  reason,
+  children,
+}: {
+  visual: BlockedVisual;
+  reason: string;
+  children?: React.ReactNode;
+}) {
+  const Icon =
+    visual.icon === "ban" ? Ban : visual.icon === "sunset" ? Sunset : visual.icon === "building" ? Building2 : Palmtree;
+  return (
+    <>
+      {children}
+      <div
+        className="w-full h-6 rounded-sm flex items-center justify-center gap-1 font-semibold"
+        style={{ color: visual.accent }}
+        title={reason}
+      >
+        <Icon size={10} className="shrink-0" />
+        <span className="text-[8px] leading-none truncate">{reason}</span>
+      </div>
+    </>
+  );
+}
+
 function DayLabelBadges({
   labels,
   roleTag,
@@ -989,21 +1028,26 @@ function MeasureTimeLaneCell({
     }
   }
 
+  // Why this tech is unbookable today, if they are — time off first, then any
+  // full-day availability block (Office, Late, Unavailable, holiday).
+  const blockedVisual: BlockedVisual | null = off
+    ? timeOffVisual(timeOffColor)
+    : availability && !availability.available
+      ? blockedVisualFor(availability.blockingKind, { timeOffColor })
+      : null;
+
   return (
     <div
-      className={`p-0 border-b border-border border-l border-l-border/30 ${
-        hasConflict
-          ? "bg-time-off-conflict/10"
-          : off
-            ? (timeOffColor ? "" : "bg-time-off-light/60")
-            : ""
-      } ${cellDragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+      className={`p-0 border-b border-border ${
+        hasConflict ? "bg-time-off-conflict/10" : ""
+      } ${!off && !blockedVisual ? "border-l border-l-border/30" : ""} ${
+        cellDragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""
+      }`}
       style={{
-        ...(off && !hasConflict && timeOffColor
-          ? offStyle
-          : hasConflict && timeOffColor
-            ? { backgroundColor: `${timeOffColor}20` }
-            : undefined),
+        // A day the tech can't work reads the same here as anywhere else: full
+        // tint plus the accent bar, rather than a pale wash.
+        ...(blockedVisual && !hasConflict ? blockedCellStyle(blockedVisual) : undefined),
+        ...(hasConflict && timeOffColor ? { backgroundColor: `${timeOffColor}20` } : undefined),
         ...ringStyle,
       }}
       onMouseEnter={() => setHoveredCell(presenceCellKey)}
@@ -1021,9 +1065,10 @@ function MeasureTimeLaneCell({
       )}
       {off && cellAppts.length === 0 && allRForceSorted.length === 0 && discrepancyItems.length === 0 && (
         <div
-          className={`w-full h-5 flex items-center justify-center rounded-sm border border-dashed ${timeOffColor ? "" : "bg-time-off-light/40 border-time-off/40"}`}
-          style={timeOffColor ? { ...offStyle, ...offBorderStyle } : undefined}
+          className="w-full h-5 flex items-center justify-center gap-1 rounded-sm font-semibold"
+          style={{ color: (blockedVisual || timeOffVisual(timeOffColor)).accent }}
         >
+          <span className="text-[8px] leading-none">Time Off</span>
           <Palmtree size={9} style={timeOffColor ? { color: `${timeOffColor}90` } : undefined} className={timeOffColor ? "" : "text-time-off/50"} />
         </div>
       )}
@@ -1452,63 +1497,39 @@ function StandardCell({
   })();
 
   if (off && !hasContent) {
+    const visual = timeOffVisual(timeOffColor);
     return (
       <div
-        className={`p-0.5 border-b border-border border-l border-l-border/30 ${timeOffColor ? "" : "bg-time-off-light/40"} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
-        style={{ ...(timeOffColor ? offStyle : undefined), ...ringStyle }}
+        className={`p-0.5 border-b border-border ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+        style={{ ...blockedCellStyle(visual), ...ringStyle }}
         {...presenceHandlers}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <DayLabelBadges labels={dayLabels} roleTag={roleTag} />
-        <div
-          className={`w-full h-6 rounded-sm flex items-center justify-center border border-dashed ${timeOffColor ? "" : "bg-time-off-light/30 border-time-off/40"}`}
-          style={timeOffColor ? { ...offStyle, ...offBorderStyle } : undefined}
-        >
-          <Palmtree size={10} style={timeOffColor ? { color: `${timeOffColor}90` } : undefined} className={timeOffColor ? "" : "text-time-off/50"} />
-        </div>
+        <BlockedDayCell visual={visual} reason="Time Off">
+          <DayLabelBadges labels={dayLabels} roleTag={roleTag} />
+        </BlockedDayCell>
       </div>
     );
   }
 
   if (crewUnavailable && !hasContent) {
     const bk = availability?.blockingKind;
-    const isLate = bk === "late_day";
-    const isOffice = bk === "office_day";
-    const isLabelBlock = isLate || isOffice;
-    // Office/Late full-day blocks get their own colored, labeled tile (teal /
-    // amber); PTO/Unavailable keep the neutral Ban tile.
-    const wrapCls = isLate
-      ? "bg-amber-50 dark:bg-amber-900/20"
-      : isOffice
-        ? "bg-teal-50 dark:bg-teal-900/20"
-        : "bg-muted/5";
-    const tileCls = isLate
-      ? "bg-amber-100/60 dark:bg-amber-900/30 border-amber-300/50 dark:border-amber-700/40 text-amber-700 dark:text-amber-300"
-      : isOffice
-        ? "bg-teal-100/60 dark:bg-teal-900/30 border-teal-300/50 dark:border-teal-700/40 text-teal-700 dark:text-teal-300"
-        : "bg-muted/5 border-muted/20 text-muted/40";
+    const visual = blockedVisualFor(bk, { timeOffColor });
+    const reason = availability?.reason || labelForBlockingKind(bk);
     return (
       <div
-        className={`p-0.5 border-b border-border border-l border-l-border/30 ${wrapCls} ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
-        style={ringStyle}
+        className={`p-0.5 border-b border-border ${dragOver ? "outline outline-2 outline-dashed outline-primary bg-primary/10" : ""}`}
+        style={{ ...blockedCellStyle(visual), ...ringStyle }}
         {...presenceHandlers}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {/* colored tile already carries the label; skip the small badge to avoid duplication */}
-        {!isLabelBlock && <DayLabelBadges labels={dayLabels} roleTag={roleTag} />}
-        <div className={`w-full h-6 rounded-sm flex items-center justify-center gap-1 border border-dashed ${tileCls}`}>
-          {isLabelBlock ? (
-            <span className="text-[8px] font-semibold leading-none">
-              {labelForBlockingKind(bk)}
-            </span>
-          ) : (
-            <Ban size={9} className="text-muted/30" />
-          )}
-        </div>
+        <BlockedDayCell visual={visual} reason={reason}>
+          <DayLabelBadges labels={dayLabels} roleTag={roleTag} />
+        </BlockedDayCell>
       </div>
     );
   }
