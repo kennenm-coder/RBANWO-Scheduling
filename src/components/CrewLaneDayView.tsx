@@ -38,6 +38,7 @@ import {
   getEligibleCrews,
   getDepartmentSections,
   getCrewRoleBlock,
+  getCrewRoleTag,
 } from "@/lib/crew-utils";
 import { executeScheduleMove, validateMove, ScheduleMoveTarget } from "@/lib/schedule-command";
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
@@ -771,6 +772,11 @@ function CrewSection({
               const dayLabels = off || crewUnavailable
                 ? []
                 : getCrewDayLabels(crew.id, date, availabilityRules, availabilityExceptions);
+              // A collapsed resource keeps one row whatever their rules say, so
+              // the rule shows up as a tag next to their name instead.
+              const roleTag = off
+                ? null
+                : getCrewRoleTag(crew, date, availabilityRules, availabilityExceptions);
 
               // Overlap-lane assignment so same-time items never draw on top of
               // each other, with per-tile heights so a card with rForce alerts
@@ -1113,6 +1119,14 @@ function CrewSection({
                         style={{ backgroundColor: crewColorFor(crew) }}
                       />
                       <span className={off ? "opacity-60 line-through" : crewUnavailable ? "opacity-50" : ""}>{crew.name}</span>
+                      {roleTag && (
+                        <span
+                          className="text-[9px] font-semibold leading-none px-1 py-px rounded bg-muted/20 text-muted shrink-0"
+                          title={`Assigned to ${roleTag} today`}
+                        >
+                          {roleTag}
+                        </span>
+                      )}
                       {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}
                       {!off && crewUnavailable && <Ban size={12} className="text-muted/40 shrink-0" />}
                     </div>

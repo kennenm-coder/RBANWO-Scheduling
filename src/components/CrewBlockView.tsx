@@ -29,6 +29,7 @@ import {
   sortByFirstName,
   getDepartmentSections,
   getCrewRoleBlock,
+  getCrewRoleTag,
   isForeignToSection,
   foreignTypeBadge,
   RoleBlock,
@@ -99,10 +100,29 @@ function RoleBlockedCell({ label }: { label: string }) {
   );
 }
 
-function BlockDayLabels({ labels }: { labels: AvailabilityKind[] }) {
-  if (labels.length === 0) return null;
+function BlockDayLabels({
+  labels,
+  roleTag,
+}: {
+  labels: AvailabilityKind[];
+  /**
+   * Which department a collapsed resource is on that day. They keep one row
+   * whatever their rules say, so this tag is all that is left of the rule —
+   * it tells the scheduler where the person is without moving or hiding them.
+   */
+  roleTag?: string | null;
+}) {
+  if (labels.length === 0 && !roleTag) return null;
   return (
     <div className="flex flex-wrap gap-0.5 mb-0.5">
+      {roleTag && (
+        <span
+          className="text-[8px] font-semibold leading-none px-0.5 py-px rounded bg-muted/20 text-muted"
+          title={`Assigned to ${roleTag} this day`}
+        >
+          {roleTag}
+        </span>
+      )}
       {labels.map((k) => (
         <span
           key={k}
@@ -207,6 +227,12 @@ export default function CrewBlockView({
   const getDayLabels = useCallback(
     (crewId: string, day: Date) =>
       getCrewDayLabels(crewId, day, availabilityRules, availabilityExceptions),
+    [availabilityRules, availabilityExceptions]
+  );
+
+  const getRoleTag = useCallback(
+    (crew: Crew, day: Date) =>
+      getCrewRoleTag(crew, day, availabilityRules, availabilityExceptions),
     [availabilityRules, availabilityExceptions]
   );
 
@@ -315,6 +341,7 @@ export default function CrewBlockView({
               key={section.title}
               sectionKey={section.key}
               roleBlockFor={roleBlockFor}
+              getRoleTag={getRoleTag}
               title={section.title}
               crews={section.crews}
               weekDays={weekDays}
@@ -357,8 +384,17 @@ export default function CrewBlockView({
                     !!candidate.end_time
                   )
                   .map((candidate) => candidate.end_time!);
-                const nextStart = getSchedulingMode(appt.appointment_type) === "timed"
-                  ? getNextAvailableStart(existingEndTimes, appt.appointment_type)
+                // A timed job (service/JIP) dropped onto a measure block row
+                // starts at that block's time — the scheduler pointed at a slot
+                // and expects it to land there. Only a drop with no block to aim
+                // at falls back to stacking after the day's existing work.
+                const isTimed = getSchedulingMode(appt.appointment_type) === "timed";
+                const blockStart =
+                  targetBlock && targetBlock !== "full_day" && targetBlock !== REMOTE_BLOCK
+                    ? timeBlockStartEnd(targetBlock).start
+                    : undefined;
+                const nextStart = isTimed
+                  ? blockStart ?? getNextAvailableStart(existingEndTimes, appt.appointment_type)
                   : undefined;
                 const duration = timeDurationMinutes(
                   appt.start_time || "08:00",
@@ -455,6 +491,7 @@ export default function CrewBlockView({
 interface SectionBlockProps {
   sectionKey: string;
   roleBlockFor: (crew: Crew, sectionKey: string, day: Date) => RoleBlock | null;
+  getRoleTag: (crew: Crew, day: Date) => string | null;
   title: string;
   crews: Crew[];
   weekDays: Date[];
@@ -474,6 +511,7 @@ interface SectionBlockProps {
 function SectionBlock({
   sectionKey,
   roleBlockFor,
+  getRoleTag,
   title,
   crews,
   weekDays,
@@ -507,6 +545,7 @@ function SectionBlock({
             key={crew.id}
             sectionKey={sectionKey}
             roleBlockFor={roleBlockFor}
+            getRoleTag={getRoleTag}
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
@@ -524,6 +563,7 @@ function SectionBlock({
             key={crew.id}
             sectionKey={sectionKey}
             roleBlockFor={roleBlockFor}
+            getRoleTag={getRoleTag}
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
@@ -541,6 +581,7 @@ function SectionBlock({
             key={crew.id}
             sectionKey={sectionKey}
             roleBlockFor={roleBlockFor}
+            getRoleTag={getRoleTag}
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
@@ -565,6 +606,7 @@ function SectionBlock({
 interface CrewRowProps {
   sectionKey: string;
   roleBlockFor: (crew: Crew, sectionKey: string, day: Date) => RoleBlock | null;
+  getRoleTag: (crew: Crew, day: Date) => string | null;
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
@@ -582,6 +624,7 @@ interface CrewRowProps {
 function CrewRow({
   sectionKey,
   roleBlockFor,
+  getRoleTag,
   crew,
   weekDays,
   appointments,
@@ -643,7 +686,7 @@ function CrewRow({
               onMouseEnter={() => setHoveredCell(presenceKey)}
               onMouseLeave={() => setHoveredCell(null)}
             >
-              <BlockDayLabels labels={dayLabels} />
+              <BlockDayLabels labels={dayLabels} roleTag={getRoleTag(crew, day)} />
               <RoleBlockedCell label={roleBlock.label} />
             </td>
           );
@@ -685,7 +728,7 @@ function CrewRow({
               }
             }}
           >
-            <BlockDayLabels labels={dayLabels} />
+            <BlockDayLabels labels={dayLabels} roleTag={getRoleTag(crew, day)} />
             {off ? (
               <div className="flex items-center justify-center h-full text-muted opacity-60 py-1">
                 <Palmtree size={12} className="mr-1" />
@@ -720,6 +763,7 @@ function CrewRow({
 interface MeasureCrewRowsProps {
   sectionKey: string;
   roleBlockFor: (crew: Crew, sectionKey: string, day: Date) => RoleBlock | null;
+  getRoleTag: (crew: Crew, day: Date) => string | null;
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
@@ -736,6 +780,7 @@ interface MeasureCrewRowsProps {
 function MeasureCrewRows({
   sectionKey,
   roleBlockFor,
+  getRoleTag,
   crew,
   weekDays,
   appointments,
@@ -826,7 +871,7 @@ function MeasureCrewRows({
                     onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
-                    <BlockDayLabels labels={getDayLabels(crew.id, day)} />
+                    <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
                     <div className="flex items-center justify-center text-muted opacity-60">
                       <Palmtree size={12} className="mr-1" />
                       <span className="text-[10px]">OFF</span>
@@ -864,7 +909,7 @@ function MeasureCrewRows({
                     onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
-                    <BlockDayLabels labels={getDayLabels(crew.id, day)} />
+                    <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
                     <RoleBlockedCell label={roleBlock.label} />
                   </td>
                 );
@@ -913,7 +958,7 @@ function MeasureCrewRows({
                   }
                 }}
               >
-                {blockIdx === 0 && <BlockDayLabels labels={getDayLabels(crew.id, day)} />}
+                {blockIdx === 0 && <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />}
                 {fullDayAppts.map((appt) => (
                   <BlockCell
                     key={appt.id}
@@ -956,6 +1001,7 @@ function MeasureCrewRows({
 interface HourlyCrewRowsProps {
   sectionKey: string;
   roleBlockFor: (crew: Crew, sectionKey: string, day: Date) => RoleBlock | null;
+  getRoleTag: (crew: Crew, day: Date) => string | null;
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
@@ -987,6 +1033,7 @@ function getAppointmentStartHour(appt: Appointment): number | null {
 function HourlyCrewRows({
   sectionKey,
   roleBlockFor,
+  getRoleTag,
   crew,
   weekDays,
   appointments,
@@ -1124,7 +1171,7 @@ function HourlyCrewRows({
                     onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
-                    <BlockDayLabels labels={getDayLabels(crew.id, day)} />
+                    <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
                     <div className="flex items-center justify-center text-muted opacity-60">
                       <Palmtree size={12} className="mr-1" />
                       <span className="text-[10px]">OFF</span>
@@ -1150,7 +1197,7 @@ function HourlyCrewRows({
                     onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
-                    <BlockDayLabels labels={getDayLabels(crew.id, day)} />
+                    <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
                     <RoleBlockedCell label={roleBlock.label} />
                   </td>
                 );
@@ -1203,7 +1250,7 @@ function HourlyCrewRows({
                   }
                 }}
               >
-                {hourIdx === 0 && <BlockDayLabels labels={getDayLabels(crew.id, day)} />}
+                {hourIdx === 0 && <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />}
                 {plan.appts.length === 0 ? (
                   <div className="min-h-[18px]" />
                 ) : (
@@ -1248,10 +1295,10 @@ interface BlockCellProps {
   /** When set (>1), the chip is sized to span that many hour rows. */
   heightRows?: number;
   /**
-   * Out-of-department work shown on a dual-role resource's row. Drawn in a
-   * neutral "not this department" style and read-only: the slot is genuinely
-   * taken, but it belongs to another desk, so it can't be dragged or
-   * unscheduled from here.
+   * Out-of-department work shown on a multi-department resource's row. Drawn in
+   * a neutral "not this department" style so the slot reads as taken by another
+   * desk — but fully editable, because for a collapsed resource this row is the
+   * ONLY place the job appears.
    */
   foreign?: boolean;
 }
@@ -1299,7 +1346,7 @@ function BlockCell({
 
   return (
     <div
-      draggable={!foreign}
+      draggable
       onClick={onClick}
       tabIndex={0}
       aria-label={
@@ -1314,10 +1361,6 @@ function BlockCell({
         }
       }}
       onDragStart={(e) => {
-        if (foreign) {
-          e.preventDefault();
-          return;
-        }
         setDraggedAppointment({
           appointment,
           sourceCrewId: sourceCrewId || "",
@@ -1331,10 +1374,10 @@ function BlockCell({
         (e.currentTarget as HTMLElement).style.opacity = "1";
         setDraggedAppointment(null);
       }}
-      className={`group/block relative rounded px-1.5 truncate transition-shadow ${
+      className={`group/block relative rounded px-1.5 truncate transition-shadow cursor-grab active:cursor-grabbing hover:shadow-sm ${
         foreign
-          ? `cursor-pointer border border-dashed border-muted/50 text-muted ${ROLE_BLOCKED_HATCH}`
-          : "cursor-grab active:cursor-grabbing hover:shadow-sm text-white"
+          ? `border border-dashed border-muted/50 text-muted ${ROLE_BLOCKED_HATCH}`
+          : "text-white"
       } ${small ? "py-0 text-[10px] leading-snug" : "py-0.5 text-[11px] leading-tight"}`}
       style={{
         backgroundColor: foreign ? undefined : crewColor,
@@ -1342,7 +1385,7 @@ function BlockCell({
       }}
       title={
         foreign
-          ? `${typeName} — ${appointment.customer_name}. Booked by another department; open it to make changes.`
+          ? `${typeName} — ${appointment.customer_name} (another department's work)`
           : `${appointment.customer_name} — ${appointment.address || ""} (${typeName})`
       }
     >
@@ -1357,8 +1400,7 @@ function BlockCell({
           📅
         </span>
       )}
-      {/* Hover unschedule button — never on foreign work */}
-      {!foreign && (
+      {/* Hover unschedule button */}
       <button
         onClick={handleUnschedule}
         disabled={unscheduling}
@@ -1381,7 +1423,6 @@ function BlockCell({
           <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
         </svg>
       </button>
-      )}
     </div>
   );
 }

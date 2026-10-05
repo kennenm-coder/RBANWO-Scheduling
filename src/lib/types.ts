@@ -82,6 +82,13 @@ export interface Crew {
   aliases: string[] | null;
   manages: ManagesType[] | null;
   additional_types: CrewType[] | null;
+  /**
+   * Collapse this resource to ONE row, in the section their `crew_type` names,
+   * even when `additional_types` would also place them in others. The single
+   * row still carries every work order assigned to them, with out-of-department
+   * work flagged. Shared across all accounts, like the default color.
+   */
+  primary_section_only?: boolean;
   primary_crew_id: string | null;
   sort_order: number;
   created_at: string;
