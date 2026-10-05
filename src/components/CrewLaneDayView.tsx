@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useData } from "./DataProvider";
-import { crewColorFor } from "@/lib/preferences";
+import { crewColorFor, getPreferences } from "@/lib/preferences";
 import AppointmentCard from "./AppointmentCard";
 import RForceCard from "./RForceCard";
 import ApprovalCard from "./ApprovalCard";
@@ -45,6 +45,11 @@ import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { calculateTimelineDrag, getDurationMinutes, DAY_VIEW_SNAP_MINUTES } from "@/lib/timeline-drag";
 import RForceDetailSheet from "./RForceDetailSheet";
 import { Palmtree, MapPinned, Ban, Sunset, Building2, ArrowRight } from "lucide-react";
+import {
+  blockedVisualFor,
+  timeOffVisual,
+  blockedCellStyle,
+} from "@/lib/blocked-visuals";
 
 /** Hatch marking a row another department has reserved (never the PTO look). */
 const ROLE_BLOCKED_HATCH =
@@ -777,6 +782,16 @@ function CrewSection({
               const roleTag = off
                 ? null
                 : getCrewRoleTag(crew, date, availabilityRules, availabilityExceptions);
+              // Every reason the row is unbookable gets the same treatment, in
+              // its own accent. This view used to hardcode Tailwind amber, so
+              // the cream theme never got its own color at all.
+              const rowBlockVisual = off
+                ? timeOffVisual(getPreferences().time_off_color || undefined)
+                : crewUnavailable
+                  ? blockedVisualFor(avail.blockingKind, {
+                      timeOffColor: getPreferences().time_off_color || undefined,
+                    })
+                  : null;
 
               // Overlap-lane assignment so same-time items never draw on top of
               // each other, with per-tile heights so a card with rForce alerts
@@ -1109,10 +1124,22 @@ function CrewSection({
                   data-crew-row={crew.id}
                   onMouseEnter={() => setHoveredCell(presenceCellKey)}
                   onMouseLeave={() => setHoveredCell(null)}
-                  style={peerColor ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" } : undefined}
-                  className={`flex border-b border-border ${off ? "bg-amber-100/60 dark:bg-amber-900/30" : crewUnavailable ? "bg-muted/5" : ""}`}
+                  className="flex border-b border-border"
+                  style={{
+                    ...(rowBlockVisual ? blockedCellStyle(rowBlockVisual) : undefined),
+                    ...(peerColor
+                      ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" as const }
+                      : undefined),
+                  }}
                 >
-                  <div className={`w-36 shrink-0 p-2 text-xs font-medium ${off ? "bg-amber-100 dark:bg-amber-900/40" : crewUnavailable ? "bg-muted/5" : "bg-background"}`}>
+                  <div
+                    className="w-36 shrink-0 p-2 text-xs font-medium"
+                    style={
+                      rowBlockVisual
+                        ? { backgroundColor: "transparent" }
+                        : { backgroundColor: "var(--background)" }
+                    }
+                  >
                     <div className="flex items-center gap-1.5">
                       <div
                         className={`w-3 h-3 rounded-full shrink-0 ${off || crewUnavailable ? "opacity-40" : ""}`}
@@ -1127,7 +1154,9 @@ function CrewSection({
                           {roleTag}
                         </span>
                       )}
-                      {off && <Palmtree size={14} className="text-amber-500 dark:text-amber-400 shrink-0" />}
+                      {off && (
+                        <Palmtree size={14} className="shrink-0" style={{ color: rowBlockVisual?.accent }} />
+                      )}
                       {!off && crewUnavailable && <Ban size={12} className="text-muted/40 shrink-0" />}
                     </div>
                     {dayLabels.length > 0 && (
@@ -1150,17 +1179,17 @@ function CrewSection({
                       <div className="text-[10px] text-muted font-normal mt-0.5 pl-[18px]">{crew.notes}</div>
                     )}
                     {off && (
-                      <div className="text-[10px] font-semibold text-amber-700 dark:text-amber-300 mt-0.5 pl-[18px]">Time Off</div>
+                      <div
+                        className="text-[10px] font-semibold mt-0.5 pl-[18px]"
+                        style={{ color: rowBlockVisual?.accent }}
+                      >
+                        Time Off
+                      </div>
                     )}
                     {!off && crewUnavailable && (
                       <div
-                        className={`text-[10px] font-semibold mt-0.5 pl-[18px] ${
-                          avail.blockingKind === "late_day"
-                            ? "text-amber-700 dark:text-amber-300"
-                            : avail.blockingKind === "office_day"
-                              ? "text-teal-700 dark:text-teal-300"
-                              : "text-muted/50 font-normal"
-                        }`}
+                        className="text-[10px] font-semibold mt-0.5 pl-[18px]"
+                        style={{ color: rowBlockVisual?.accent }}
                       >
                         {avail.reason || "Unavailable"}
                       </div>

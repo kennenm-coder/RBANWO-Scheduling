@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, useCallback } from "react";
 import { useData } from "./DataProvider";
-import { crewColorFor } from "@/lib/preferences";
+import { crewColorFor, getPreferences } from "@/lib/preferences";
 import AppointmentSheet from "./AppointmentSheet";
 import ScheduleModal from "./ScheduleModal";
 import {
@@ -37,8 +37,15 @@ import {
 import { useSchedulerDrag } from "@/lib/drag-context";
 import { usePresence } from "@/lib/presence";
 import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
-import { Palmtree, ArrowRight } from "lucide-react";
-import { getCrewDayLabels, LABEL_KIND_TEXT } from "@/lib/availability";
+import { Palmtree, ArrowRight, Ban, Sunset, Building2 } from "lucide-react";
+import { getCrewDayLabels, LABEL_KIND_TEXT, getCrewAvailability } from "@/lib/availability";
+import {
+  blockedVisualFor,
+  timeOffVisual,
+  blockedCellStyle,
+  blockedSlotStyle,
+  BlockedVisual,
+} from "@/lib/blocked-visuals";
 import {
   format,
   startOfWeek,
@@ -100,6 +107,28 @@ function RoleBlockedCell({ label }: { label: string }) {
   );
 }
 
+function BlockedMark({
+  visual,
+  reason,
+  size = "normal",
+}: {
+  visual: BlockedVisual;
+  reason: string;
+  size?: "normal" | "small";
+}) {
+  const Icon =
+    visual.icon === "ban" ? Ban : visual.icon === "sunset" ? Sunset : visual.icon === "building" ? Building2 : Palmtree;
+  return (
+    <div
+      className="flex items-center justify-center gap-1 py-0.5 font-semibold"
+      style={{ color: visual.accent }}
+    >
+      <Icon size={size === "small" ? 11 : 13} className="shrink-0" />
+      <span className={size === "small" ? "text-[9px]" : "text-[10px]"}>{reason}</span>
+    </div>
+  );
+}
+
 function BlockDayLabels({
   labels,
   roleTag,
@@ -157,6 +186,7 @@ export default function CrewBlockView({
     timeOffRequests,
     availabilityRules,
     availabilityExceptions,
+    calendarBlocks,
     updateAppointment,
   } = useData();
   useCurrentActor(); // keep hook call order stable
@@ -230,24 +260,54 @@ export default function CrewBlockView({
     [availabilityRules, availabilityExceptions]
   );
 
+  // Why this crew can't be booked on this day, or null when they're workable.
+  // The block grid never consulted availability rules at all before — it only
+  // knew about external time off — so an Office day or a company holiday looked
+  // like an ordinary open day here.
+  const timeOffColor = getPreferences().time_off_color || undefined;
+  const getDayBlock = useCallback(
+    (crew: Crew, day: Date): { visual: BlockedVisual; reason: string } | null => {
+      const dateStr = format(day, "yyyy-MM-dd");
+      const names = offByDay.get(dateStr);
+      const isOff =
+        !!names &&
+        (names.has(crew.name.toLowerCase()) ||
+          (crew.aliases || []).some((a) => names.has(a.toLowerCase())));
+      if (isOff) return { visual: timeOffVisual(timeOffColor), reason: "Time Off" };
+
+      const avail = getCrewAvailability(
+        crew.id,
+        day,
+        availabilityRules,
+        availabilityExceptions,
+        calendarBlocks || []
+      );
+      if (avail.available) return null;
+      const visual = blockedVisualFor(avail.blockingKind, { timeOffColor });
+      return { visual, reason: avail.reason || visual.label };
+    },
+    [offByDay, availabilityRules, availabilityExceptions, calendarBlocks, timeOffColor]
+  );
+
+  // Partially blocked windows (a 10-11 all-office meeting, a late start) so a
+  // single measure row can be washed out without closing the whole day.
+  const getBlockedSlots = useCallback(
+    (crewId: string, day: Date) =>
+      getCrewAvailability(
+        crewId,
+        day,
+        availabilityRules,
+        availabilityExceptions,
+        calendarBlocks || []
+      ),
+    [availabilityRules, availabilityExceptions, calendarBlocks]
+  );
+
   const getRoleTag = useCallback(
     (crew: Crew, day: Date) =>
       getCrewRoleTag(crew, day, availabilityRules, availabilityExceptions),
     [availabilityRules, availabilityExceptions]
   );
-
-  function isCrewOffOnDay(crew: Crew, day: Date): boolean {
-    const dateStr = format(day, "yyyy-MM-dd");
-    const names = offByDay.get(dateStr);
-    if (!names) return false;
-    if (names.has(crew.name.toLowerCase())) return true;
-    if (crew.aliases) {
-      for (const alias of crew.aliases) {
-        if (names.has(alias.toLowerCase())) return true;
-      }
-    }
-    return false;
-  }
 
   // Get customer last name for compact display
   function customerLastName(appt: Appointment): string {
@@ -347,7 +407,8 @@ export default function CrewBlockView({
               weekDays={weekDays}
               appointments={appointments}
               rowMode={section.rowMode}
-              isCrewOffOnDay={isCrewOffOnDay}
+              getDayBlock={getDayBlock}
+              getBlockedSlots={getBlockedSlots}
               getDayLabels={getDayLabels}
               customerLastName={customerLastName}
               multiDayLabel={multiDayLabel}
@@ -497,7 +558,8 @@ interface SectionBlockProps {
   weekDays: Date[];
   appointments: Appointment[];
   rowMode: RowMode;
-  isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string } | null;
+  getBlockedSlots: (crewId: string, day: Date) => { unavailableBlocks: Set<TimeBlock> };
   getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   customerLastName: (appt: Appointment) => string;
   multiDayLabel: (appt: Appointment, day: Date) => string;
@@ -517,7 +579,8 @@ function SectionBlock({
   weekDays,
   appointments,
   rowMode,
-  isCrewOffOnDay,
+  getDayBlock,
+  getBlockedSlots,
   getDayLabels,
   customerLastName,
   multiDayLabel,
@@ -549,7 +612,8 @@ function SectionBlock({
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
-            isCrewOffOnDay={isCrewOffOnDay}
+            getDayBlock={getDayBlock}
+            getBlockedSlots={getBlockedSlots}
             getDayLabels={getDayLabels}
             multiDayLabel={multiDayLabel}
             crewShortName={crewShortName}
@@ -567,7 +631,8 @@ function SectionBlock({
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
-            isCrewOffOnDay={isCrewOffOnDay}
+            getDayBlock={getDayBlock}
+            getBlockedSlots={getBlockedSlots}
             getDayLabels={getDayLabels}
             multiDayLabel={multiDayLabel}
             crewShortName={crewShortName}
@@ -585,7 +650,8 @@ function SectionBlock({
             crew={crew}
             weekDays={weekDays}
             appointments={appointments}
-            isCrewOffOnDay={isCrewOffOnDay}
+            getDayBlock={getDayBlock}
+            getBlockedSlots={getBlockedSlots}
             getDayLabels={getDayLabels}
             customerLastName={customerLastName}
             multiDayLabel={multiDayLabel}
@@ -610,7 +676,8 @@ interface CrewRowProps {
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
-  isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string } | null;
+  getBlockedSlots: (crewId: string, day: Date) => { unavailableBlocks: Set<TimeBlock> };
   getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   customerLastName: (appt: Appointment) => string;
   multiDayLabel: (appt: Appointment, day: Date) => string;
@@ -628,7 +695,8 @@ function CrewRow({
   crew,
   weekDays,
   appointments,
-  isCrewOffOnDay,
+  getDayBlock,
+  getBlockedSlots,
   getDayLabels,
   multiDayLabel,
   crewShortName,
@@ -659,7 +727,8 @@ function CrewRow({
       {/* Day cells */}
       {weekDays.map((day) => {
         const isToday = isSameDay(day, today);
-        const off = isCrewOffOnDay(crew, day);
+        const dayBlock = getDayBlock(crew, day);
+            const off = !!dayBlock;
         const dayKey = day.toISOString();
         const isDragOver = dragOverDay === dayKey;
         const presenceKey = `${crew.id}|${format(day, "yyyy-MM-dd")}`;
@@ -729,11 +798,8 @@ function CrewRow({
             }}
           >
             <BlockDayLabels labels={dayLabels} roleTag={getRoleTag(crew, day)} />
-            {off ? (
-              <div className="flex items-center justify-center h-full text-muted opacity-60 py-1">
-                <Palmtree size={12} className="mr-1" />
-                <span className="text-[10px]">OFF</span>
-              </div>
+            {dayBlock ? (
+              <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} />
             ) : dayAppts.length === 0 ? null : (
               <div className="flex flex-col gap-0.5">
                 {dayAppts.map((appt) => (
@@ -767,7 +833,8 @@ interface MeasureCrewRowsProps {
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
-  isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string } | null;
+  getBlockedSlots: (crewId: string, day: Date) => { unavailableBlocks: Set<TimeBlock> };
   getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
@@ -784,7 +851,8 @@ function MeasureCrewRows({
   crew,
   weekDays,
   appointments,
-  isCrewOffOnDay,
+  getDayBlock,
+  getBlockedSlots,
   getDayLabels,
   multiDayLabel,
   crewShortName,
@@ -851,7 +919,8 @@ function MeasureCrewRows({
 
           {weekDays.map((day) => {
             const isToday = isSameDay(day, today);
-            const off = isCrewOffOnDay(crew, day);
+            const dayBlock = getDayBlock(crew, day);
+            const off = !!dayBlock;
             const dateStr = format(day, "yyyy-MM-dd");
             const dayAppts = dayApptsMap.get(dateStr) || [];
             const presenceKey = `${crew.id}|${dateStr}`;
@@ -860,22 +929,20 @@ function MeasureCrewRows({
               ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" as const }
               : undefined;
 
-            if (off) {
+            if (dayBlock) {
               if (blockIdx === 0) {
                 return (
                   <td
                     key={day.toISOString()}
                     rowSpan={blocks.length}
-                    className={`border border-border p-0.5 text-center align-middle ${isToday ? "bg-primary/5" : ""}`}
-                    style={ringStyle}
+                    className="border border-border p-0.5 text-center align-middle"
+                    style={{ ...blockedCellStyle(dayBlock.visual), ...ringStyle }}
+                    title={`${crew.name} — ${dayBlock.reason}`}
                     onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
                     <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
-                    <div className="flex items-center justify-center text-muted opacity-60">
-                      <Palmtree size={12} className="mr-1" />
-                      <span className="text-[10px]">OFF</span>
-                    </div>
+                    <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} />
                   </td>
                 );
               }
@@ -917,6 +984,12 @@ function MeasureCrewRows({
               return null;
             }
 
+            // Part of the day blocked (a 10-11 all-office meeting, a late
+            // start): wash just the rows it covers rather than the column.
+            const slotBlocked = getBlockedSlots(crew.id, day).unavailableBlocks.has(block)
+              ? blockedVisualFor(undefined)
+              : null;
+
             const cellKey = `${dateStr}-${block}`;
             const isDragOver = dragOverCell === cellKey;
 
@@ -926,7 +999,8 @@ function MeasureCrewRows({
                 className={`border border-border/50 p-0.5 align-top text-[10px] transition-colors ${
                   isToday ? "bg-primary/5" : ""
                 } ${roleBlock ? ROLE_BLOCKED_HATCH : ""} ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
-                style={ringStyle}
+                style={{ ...(slotBlocked ? blockedSlotStyle(slotBlocked) : undefined), ...ringStyle }}
+                title={slotBlocked ? `${crew.name} is blocked this window` : undefined}
                 onMouseEnter={() => setHoveredCell(presenceKey)}
                 onMouseLeave={() => setHoveredCell(null)}
                 onDragOver={(e) => {
@@ -1005,7 +1079,8 @@ interface HourlyCrewRowsProps {
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
-  isCrewOffOnDay: (crew: Crew, day: Date) => boolean;
+  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string } | null;
+  getBlockedSlots: (crewId: string, day: Date) => { unavailableBlocks: Set<TimeBlock> };
   getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   multiDayLabel: (appt: Appointment, day: Date) => string;
   crewShortName: (crew: Crew) => string;
@@ -1037,7 +1112,8 @@ function HourlyCrewRows({
   crew,
   weekDays,
   appointments,
-  isCrewOffOnDay,
+  getDayBlock,
+  getBlockedSlots,
   getDayLabels,
   multiDayLabel,
   crewShortName,
@@ -1152,7 +1228,8 @@ function HourlyCrewRows({
 
           {weekDays.map((day) => {
             const isToday = isSameDay(day, today);
-            const off = isCrewOffOnDay(crew, day);
+            const dayBlock = getDayBlock(crew, day);
+            const off = !!dayBlock;
             const dateStr = format(day, "yyyy-MM-dd");
             const presenceKey = `${crew.id}|${dateStr}`;
             const peerColor = hoverColorFor(presenceKey);
@@ -1160,22 +1237,20 @@ function HourlyCrewRows({
               ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" as const }
               : undefined;
 
-            if (off) {
+            if (dayBlock) {
               if (hourIdx === 0) {
                 return (
                   <td
                     key={day.toISOString()}
                     rowSpan={hours.length}
-                    className={`border border-border p-0.5 text-center align-middle ${isToday ? "bg-primary/5" : ""}`}
-                    style={ringStyle}
+                    className="border border-border p-0.5 text-center align-middle"
+                    style={{ ...blockedCellStyle(dayBlock.visual), ...ringStyle }}
+                    title={`${crew.name} — ${dayBlock.reason}`}
                     onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
                     <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
-                    <div className="flex items-center justify-center text-muted opacity-60">
-                      <Palmtree size={12} className="mr-1" />
-                      <span className="text-[10px]">OFF</span>
-                    </div>
+                    <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} />
                   </td>
                 );
               }

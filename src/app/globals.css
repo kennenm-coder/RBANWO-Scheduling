@@ -20,6 +20,19 @@
   --time-off: #f59e0b;
   --time-off-light: #fef3c7;
   --time-off-conflict: #ef4444;
+  /* ── Blocked-day accents ──────────────────────────────────────────────
+     One accent per reason a day can't be booked. The cell tint is mixed
+     from these against the theme background at --blk-tint, so a blocked
+     day stays legible in every theme instead of washing out. Kept distinct
+     from each other so the reason reads at a glance, and from
+     --time-off-conflict, which marks a double-book rather than a block. */
+  --blk-pto: #d97706;
+  --blk-unavailable: #e11d48;
+  --blk-office: #0d9488;
+  --blk-late: #ea580c;
+  --blk-holiday: #7c3aed;
+  --blk-meeting: #2563eb;
+  --blk-tint: 20%;
 }
 
 @theme inline {
@@ -67,6 +80,13 @@ body {
     --time-off: #d97706;
     --time-off-light: #451a03;
     --time-off-conflict: #dc2626;
+    --blk-pto: #fbbf24;
+    --blk-unavailable: #fb7185;
+    --blk-office: #2dd4bf;
+    --blk-late: #fb923c;
+    --blk-holiday: #a78bfa;
+    --blk-meeting: #60a5fa;
+    --blk-tint: 30%;
   }
 }
 
@@ -83,6 +103,13 @@ body {
   --time-off: #d97706;
   --time-off-light: #451a03;
   --time-off-conflict: #dc2626;
+  --blk-pto: #fbbf24;
+  --blk-unavailable: #fb7185;
+  --blk-office: #2dd4bf;
+  --blk-late: #fb923c;
+  --blk-holiday: #a78bfa;
+  --blk-meeting: #60a5fa;
+  --blk-tint: 30%;
 }
 
 /* Cream — warm "paper" theme: ivory background, warm brown text, muted tan
@@ -102,8 +129,15 @@ body {
   --rba-green: #4a7c2e;
   --rba-green-light: #e6edd4;
   --time-off: #c77f16;
-  --time-off-light: #f0e4c6;
+  --time-off-light: #f7dfa8;
   --time-off-conflict: #d94f3d;
+  --blk-pto: #b86f0d;
+  --blk-unavailable: #c2334d;
+  --blk-office: #0f766e;
+  --blk-late: #c2410c;
+  --blk-holiday: #6d28d9;
+  --blk-meeting: #1d4ed8;
+  --blk-tint: 22%;
 }
 
 * {
