@@ -45,6 +45,42 @@ export function parseCity(address: string): string {
   return address;
 }
 
+/**
+ * The section a resource's own `crew_type` puts them in — their "home" desk.
+ * Seconds and management sit outside the four main departments and return null.
+ */
+export function primarySectionFor(crew: Crew): string | null {
+  switch (crew.crew_type) {
+    case "measure_tech":
+      return "measure";
+    case "install_in_house":
+    case "install_sub":
+      return "install";
+    case "svc":
+      return "service";
+    case "jip":
+      return "jip";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Should this crew be drawn in this section?
+ *
+ * Normally any section their types cover. With `primary_section_only` set they
+ * are collapsed to the one section their `crew_type` names — the extra rows are
+ * noise for people whose second department is occasional. The surviving row
+ * still shows all of their work, so nothing is hidden by collapsing.
+ */
+function belongsInSection(crew: Crew, sectionKey: string): boolean {
+  if (!crew.primary_section_only) return true;
+  const home = primarySectionFor(crew);
+  // A type roles don't cover (second / management) keeps its usual placement.
+  if (!home) return true;
+  return home === sectionKey;
+}
+
 export function getCrewDepartments(crews: Crew[]) {
   const active = crews.filter((c) => c.is_active);
   const main = active.filter((c) => !crewHasType(c, "misc", "second", "management"));
@@ -52,16 +88,27 @@ export function getCrewDepartments(crews: Crew[]) {
   const seconds = active.filter((c) => c.crew_type === "second");
 
   return {
-    measure: sortByFirstName(main.filter((c) => crewHasType(c, "measure_tech"))),
-    install: sortByFirstName(main.filter((c) => crewHasType(c, "install_in_house", "install_sub"))),
+    measure: sortByFirstName(
+      main.filter((c) => crewHasType(c, "measure_tech") && belongsInSection(c, "measure"))
+    ),
+    install: sortByFirstName(
+      main.filter(
+        (c) =>
+          crewHasType(c, "install_in_house", "install_sub") && belongsInSection(c, "install")
+      )
+    ),
     installSeconds: sortByFirstName(
       seconds.filter((c) => {
         const primary = active.find((p) => p.id === c.primary_crew_id);
         return primary && (primary.crew_type === "install_in_house" || primary.crew_type === "install_sub");
       })
     ),
-    service: sortByFirstName(main.filter((c) => crewHasType(c, "svc"))),
-    jip: sortByFirstName(main.filter((c) => crewHasType(c, "jip"))),
+    service: sortByFirstName(
+      main.filter((c) => crewHasType(c, "svc") && belongsInSection(c, "service"))
+    ),
+    jip: sortByFirstName(
+      main.filter((c) => crewHasType(c, "jip") && belongsInSection(c, "jip"))
+    ),
     jipSeconds: sortByFirstName(
       seconds.filter((c) => {
         const primary = active.find((p) => p.id === c.primary_crew_id);
@@ -134,10 +181,43 @@ export function getCrewRoleBlock(
   exceptions: AvailabilityException[]
 ): RoleBlock | null {
   if (!(MAIN_DEPARTMENTS as readonly string[]).includes(sectionKey)) return null;
+  // A collapsed resource has only the one row, so there is nothing to block —
+  // blocking it would hide their whole day. Their role shows as a day tag
+  // instead (see getCrewRoleTag).
+  if (crew.primary_section_only) return null;
   const role = getCrewRoleForDate(crew.id, date, rules, exceptions);
   if (!role) return null;
   if (role === sectionKey) return null;
   return { department: role, label: DEPARTMENT_LABELS[role] || role };
+}
+
+/** Compact department tags for the day-tag strip, e.g. "SVC". */
+const DEPARTMENT_SHORT: Record<string, string> = {
+  measure: "MT",
+  install: "INS",
+  service: "SVC",
+  jip: "JIP",
+};
+
+/**
+ * The short department tag for a collapsed resource on a given date.
+ *
+ * A resource with `primary_section_only` keeps one row wherever their role
+ * rules say they are, so the rules can't move or block anything. This is what
+ * is left of them: a small marker telling the scheduler which department the
+ * person is on that day. Returns null for anyone not collapsed, or on a day no
+ * rule covers.
+ */
+export function getCrewRoleTag(
+  crew: Crew,
+  date: Date,
+  rules: AvailabilityRule[],
+  exceptions: AvailabilityException[]
+): string | null {
+  if (!crew.primary_section_only) return null;
+  const role = getCrewRoleForDate(crew.id, date, rules, exceptions);
+  if (!role) return null;
+  return DEPARTMENT_SHORT[role] || role.toUpperCase();
 }
 
 /**

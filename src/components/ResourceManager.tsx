@@ -199,6 +199,8 @@ export default function ResourceManager() {
     if (editing.id) payload.id = editing.id;
     if (editing.is_active !== undefined) payload.is_active = editing.is_active;
     if (editing.additional_types && editing.additional_types.length > 0) payload.additional_types = editing.additional_types;
+    // Always sent, so unticking it actually clears the flag.
+    payload.primary_section_only = !!editing.primary_section_only;
     if (editing.manages && editing.manages.length > 0) payload.manages = editing.manages;
     if (editing.primary_crew_id) payload.primary_crew_id = editing.primary_crew_id;
     try {
@@ -518,6 +520,14 @@ export default function ResourceManager() {
                           Also: {c.additional_types.map(crewTypeLabel).join(", ")}
                         </span>
                       )}
+                      {c.primary_section_only && (
+                        <span
+                          className="text-[10px] text-muted"
+                          title={`Shows only under ${crewTypeLabel(c.crew_type)}, with all of their work on that one row`}
+                        >
+                          {crewTypeLabel(c.crew_type)} row only
+                        </span>
+                      )}
                       {c.manages && c.manages.length > 0 && (
                         <span className="text-[10px] text-purple-600 dark:text-purple-400">
                           Manages: {c.manages.join(", ")}
@@ -662,6 +672,26 @@ export default function ResourceManager() {
                     );
                   })}
                 </div>
+                {(editing.additional_types?.length || 0) > 0 && (
+                  <label className="flex items-start gap-2 mt-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 shrink-0"
+                      checked={!!editing.primary_section_only}
+                      onChange={(e) =>
+                        setEditing({ ...editing, primary_section_only: e.target.checked })
+                      }
+                    />
+                    <span className="text-xs">
+                      <span className="font-medium">Show in primary section only</span>
+                      <span className="block text-muted mt-0.5">
+                        One row, under{" "}
+                        {crewTypeLabel(editing.crew_type as CrewType)} — still showing every
+                        job of every type. Applies to everyone.
+                      </span>
+                    </span>
+                  </label>
+                )}
               </div>
             )}
 

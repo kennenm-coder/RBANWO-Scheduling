@@ -40,6 +40,7 @@ import { useCurrentActor } from "./AuthProvider";
 import {
   getDepartmentSections,
   getCrewRoleBlock,
+  getCrewRoleTag,
   parseCity,
   isForeignToSection,
   foreignTypeBadge,
@@ -566,6 +567,9 @@ export default function CrewLaneWeekView({
                       const dayLabels = off
                         ? []
                         : getCrewDayLabels(crew.id, day, availabilityRules, availabilityExceptions);
+                      const roleTag = off
+                        ? null
+                        : getCrewRoleTag(crew, day, availabilityRules, availabilityExceptions);
 
                       // Reserved by another department today. The row stays so
                       // the scheduler sees the person and where they went.
@@ -614,6 +618,7 @@ export default function CrewLaneWeekView({
                             timeOffColor={timeOffColor}
                             availability={dayAvail}
                             dayLabels={dayLabels}
+                            roleTag={roleTag}
                             showRForce={showRForce}
                             onCardClick={setSelectedAppt}
                             onRForceClick={(order, item) => setSelectedRForce({ order, crew: crewObj, displayItem: item })}
@@ -658,6 +663,7 @@ export default function CrewLaneWeekView({
                           timeOffColor={timeOffColor}
                           availability={dayAvail}
                           dayLabels={dayLabels}
+                          roleTag={roleTag}
                           showRForce={showRForce}
                           onCardClick={setSelectedAppt}
                           onRForceClick={(order, item) => setSelectedRForce({ order, crew: crewObj, displayItem: item })}
@@ -802,11 +808,26 @@ export default function CrewLaneWeekView({
   );
 }
 
-function DayLabelBadges({ labels }: { labels?: AvailabilityKind[] }) {
-  if (!labels || labels.length === 0) return null;
+function DayLabelBadges({
+  labels,
+  roleTag,
+}: {
+  labels?: AvailabilityKind[];
+  /** Which department a collapsed resource is on that day (see getCrewRoleTag). */
+  roleTag?: string | null;
+}) {
+  if ((!labels || labels.length === 0) && !roleTag) return null;
   return (
     <div className="flex flex-wrap gap-0.5 px-0.5 pt-0.5">
-      {labels.map((k) => (
+      {roleTag && (
+        <span
+          className="text-[7px] font-semibold leading-none px-0.5 py-px rounded bg-muted/20 text-muted"
+          title={`Assigned to ${roleTag} this day`}
+        >
+          {roleTag}
+        </span>
+      )}
+      {(labels || []).map((k) => (
         <span
           key={k}
           className={`text-[7px] font-semibold leading-none px-0.5 py-px rounded ${
@@ -837,6 +858,7 @@ function MeasureTimeLaneCell({
   timeOffColor,
   availability,
   dayLabels,
+  roleTag,
   showRForce,
   onCardClick,
   onRForceClick,
@@ -864,6 +886,7 @@ function MeasureTimeLaneCell({
   timeOffColor?: string;
   availability?: CrewDayAvailability;
   dayLabels?: AvailabilityKind[];
+  roleTag?: string | null;
   showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onRForceClick: (order: RForceOrder, displayItem?: RForceDisplayItem) => void;
@@ -989,7 +1012,7 @@ function MeasureTimeLaneCell({
       onDragLeave={handleCellDragLeave}
       onDrop={handleCellDrop}
     >
-      <DayLabelBadges labels={dayLabels} />
+      <DayLabelBadges labels={dayLabels} roleTag={roleTag} />
       {hasConflict && (
         <div className="text-[8px] font-semibold px-0.5 flex items-center gap-0.5" style={timeOffColor ? { color: timeOffColor } : undefined}>
           <Palmtree size={8} style={timeOffColor ? { color: timeOffColor } : undefined} className={timeOffColor ? "" : "text-time-off"} />
@@ -1228,6 +1251,7 @@ function StandardCell({
   timeOffColor,
   availability,
   dayLabels,
+  roleTag,
   showRForce,
   onCardClick,
   onSchedule,
@@ -1254,6 +1278,7 @@ function StandardCell({
   timeOffColor?: string;
   availability?: CrewDayAvailability;
   dayLabels?: AvailabilityKind[];
+  roleTag?: string | null;
   showRForce?: boolean;
   onCardClick: (a: Appointment) => void;
   onSchedule: () => void;
@@ -1436,7 +1461,7 @@ function StandardCell({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <DayLabelBadges labels={dayLabels} />
+        <DayLabelBadges labels={dayLabels} roleTag={roleTag} />
         <div
           className={`w-full h-6 rounded-sm flex items-center justify-center border border-dashed ${timeOffColor ? "" : "bg-time-off-light/30 border-time-off/40"}`}
           style={timeOffColor ? { ...offStyle, ...offBorderStyle } : undefined}
@@ -1474,7 +1499,7 @@ function StandardCell({
         onDrop={handleDrop}
       >
         {/* colored tile already carries the label; skip the small badge to avoid duplication */}
-        {!isLabelBlock && <DayLabelBadges labels={dayLabels} />}
+        {!isLabelBlock && <DayLabelBadges labels={dayLabels} roleTag={roleTag} />}
         <div className={`w-full h-6 rounded-sm flex items-center justify-center gap-1 border border-dashed ${tileCls}`}>
           {isLabelBlock ? (
             <span className="text-[8px] font-semibold leading-none">
@@ -1510,7 +1535,7 @@ function StandardCell({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <DayLabelBadges labels={dayLabels} />
+      <DayLabelBadges labels={dayLabels} roleTag={roleTag} />
       {hasConflict && (
         <div className="text-[8px] font-semibold px-0.5 flex items-center gap-0.5">
           <Palmtree size={8} style={timeOffColor ? { color: timeOffColor } : undefined} className={timeOffColor ? "" : "text-time-off"} />
@@ -1568,13 +1593,14 @@ function WeekCard({
   spanBlocks?: number;
   showResizeHandle?: boolean;
   /**
-   * Out-of-department work on a multi-department resource's row. Read-only —
-   * the slot is genuinely taken, but the booking belongs to another desk.
+   * Out-of-department work on a multi-department resource's row. Styled as
+   * another desk's work, but fully editable — for a collapsed resource this row
+   * is the only place the job appears.
    */
   foreign?: boolean;
 }) {
   const { setDraggedAppointment, setResizingAppointment } = useSchedulerDrag();
-  const isDraggable = !!appointment && !foreign;
+  const isDraggable = !!appointment;
   const spanHeight = spanBlocks && spanBlocks > 1 ? { height: `${spanBlocks * 18}px`, position: "relative" as const, zIndex: 5 } : undefined;
 
   function handleDragStart(e: React.DragEvent) {
@@ -1630,7 +1656,7 @@ function WeekCard({
       style={spanHeight}
     >
       {children}
-      {showResizeHandle && !foreign && appointment?.time_block && (
+      {showResizeHandle && appointment?.time_block && (
         <div
           draggable
           onDragStart={handleResizeDragStart}

@@ -8,7 +8,9 @@ import {
   getAvailableTimeBlocks,
   getDepartmentSections,
   getCrewRoleBlock,
+  getCrewRoleTag,
   isForeignToSection,
+  primarySectionFor,
 } from "./crew-utils";
 import { Crew, Appointment, AvailabilityRule } from "./types";
 
@@ -350,5 +352,71 @@ describe("isForeignToSection", () => {
     const appt = makeAppt({ id: "a", appointment_type: "job_site_visit" });
     expect(isForeignToSection(appt, "measure")).toBe(false);
     expect(isForeignToSection(appt, "service")).toBe(false);
+  });
+});
+
+describe("primary-section-only resources", () => {
+  // Todd runs JIPs and also covers installs, but should read as one JIP row.
+  function todd(overrides: Partial<Crew> = {}): Crew {
+    return makeCrew({
+      id: "todd",
+      name: "Todd Williams",
+      crew_type: "jip",
+      additional_types: ["install_in_house"],
+      primary_section_only: true,
+      ...overrides,
+    });
+  }
+
+  it("names the section the crew_type points at", () => {
+    expect(primarySectionFor(todd())).toBe("jip");
+    expect(primarySectionFor(makeCrew({ crew_type: "install_sub" }))).toBe("install");
+    expect(primarySectionFor(makeCrew({ crew_type: "measure_tech" }))).toBe("measure");
+    expect(primarySectionFor(makeCrew({ crew_type: "svc" }))).toBe("service");
+  });
+
+  it("collapses the resource to that one section", () => {
+    const sections = getDepartmentSections([todd()]);
+    const keys = sections.filter((s) => s.crews.some((c) => c.id === "todd")).map((s) => s.key);
+    expect(keys).toEqual(["jip"]);
+  });
+
+  it("still gives every section when the flag is off", () => {
+    const sections = getDepartmentSections([todd({ primary_section_only: false })]);
+    const keys = sections
+      .filter((s) => s.crews.some((c) => c.id === "todd"))
+      .map((s) => s.key)
+      .sort();
+    expect(keys).toEqual(["install", "jip"]);
+  });
+
+  it("never blocks a collapsed resource — that would hide their whole day", () => {
+    const rules = [
+      makeRule({ crew_id: "todd", id: "r", department: "install", weekdays: [1, 2, 3] }),
+    ];
+    // Monday says Install, but Todd's only row is JIP. Blocking it would leave
+    // him nowhere at all.
+    expect(getCrewRoleBlock(todd(), "jip", MONDAY, rules, [])).toBeNull();
+  });
+
+  it("surfaces the day's department as a tag instead", () => {
+    const rules = [
+      makeRule({ crew_id: "todd", id: "r", department: "install", weekdays: [1, 2, 3] }),
+    ];
+    expect(getCrewRoleTag(todd(), MONDAY, rules, [])).toBe("INS");
+    // Thursday has no rule, so there is nothing to say.
+    expect(getCrewRoleTag(todd(), THURSDAY, rules, [])).toBeNull();
+  });
+
+  it("gives no tag for a resource that is not collapsed", () => {
+    const rules = [
+      makeRule({ crew_id: "todd", id: "r", department: "install", weekdays: [1, 2, 3] }),
+    ];
+    expect(getCrewRoleTag(todd({ primary_section_only: false }), MONDAY, rules, [])).toBeNull();
+  });
+
+  it("leaves seconds and management placement alone", () => {
+    const second = makeCrew({ id: "s", crew_type: "second", primary_section_only: true });
+    expect(primarySectionFor(second)).toBeNull();
   });
 });
