@@ -53,7 +53,7 @@ interface Props {
 type ConflictKind = "double_book" | "availability" | "duplicate";
 
 export default function RForceDetailSheet({ order, crew, onClose, stale, onApprove, onDismiss }: Props) {
-  const { refreshData } = useData();
+  const { patchRForceOrder } = useData();
   useEscapeKey(useCallback(() => onClose(), [onClose]));
   const [scheduling, setScheduling] = useState(false);
   const [notes, setNotes] = useState(order.scheduler_notes || "");
@@ -119,7 +119,9 @@ export default function RForceDetailSheet({ order, crew, onClose, stale, onAppro
     if (ok) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-      refreshData();
+      // One-field write → patch the loaded row rather than re-sweeping every
+      // work order (see patchRForceOrder in DataProvider).
+      patchRForceOrder(order.id, { scheduler_notes: notes });
     }
   };
 

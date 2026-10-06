@@ -49,7 +49,7 @@ export default function AppointmentSheet({
   onReschedule,
   onFlag,
 }: Props) {
-  const { crews, rforceOrders, activeLinks, cancelAppointment, deleteAppointment, unscheduleAppointment, updateAppointment, refreshData } = useData();
+  const { crews, rforceOrders, activeLinks, cancelAppointment, deleteAppointment, unscheduleAppointment, updateAppointment, patchRForceOrder } = useData();
   const { actorId, actorName } = useCurrentActor();
   const { role } = useAuth();
   const isAdmin = canAdmin(role);
@@ -101,7 +101,10 @@ export default function AppointmentSheet({
     if (ok) {
       setNotesSaved(true);
       setTimeout(() => setNotesSaved(false), 2000);
-      refreshData();
+      // Patch the one row we just wrote. This used to call refreshData(), which
+      // re-downloaded every work order in the window to reflect a single notes
+      // field — and a short sweep there unpaired the whole board.
+      patchRForceOrder(linkedOrder.id, { scheduler_notes: notes });
     }
   };
 
