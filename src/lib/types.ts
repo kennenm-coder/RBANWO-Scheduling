@@ -37,7 +37,10 @@ export type SyncState =
   | "in_sync"
   | "source_missing"
   | "ambiguous_match"
-  | "conflict";
+  | "conflict"
+  // Terminal. Set when the tile is cancelled in the app; keeps the reconciler
+  // from going on treating a cancelled booking as live.
+  | "cancelled";
 
 export interface OriginalEntrySnapshot {
   customer_name: string;
@@ -147,6 +150,13 @@ export interface Appointment {
   status: AppointmentStatus;
   notes: string | null;
   reschedule_reason: string | null;
+  // ── Cancellation audit ──
+  // Written by cancelAppointment(), cleared by restoreAppointment(). NULL on any
+  // live row. cancelled_by can also be NULL on rows cancelled before the events
+  // log existed — those were backfilled without a recoverable actor.
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancellation_reason?: string | null;
   product_count: number | null;
   salesforce_url: string | null;
   scheduled_by: string | null;

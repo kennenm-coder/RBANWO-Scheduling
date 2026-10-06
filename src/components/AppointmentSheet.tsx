@@ -49,7 +49,7 @@ export default function AppointmentSheet({
   onReschedule,
   onFlag,
 }: Props) {
-  const { crews, rforceOrders, activeLinks, cancelAppointment, deleteAppointment, unscheduleAppointment, updateAppointment, refreshData } = useData();
+  const { crews, rforceOrders, activeLinks, cancelAppointment, restoreAppointment, deleteAppointment, unscheduleAppointment, updateAppointment, patchRForceOrder } = useData();
   const { actorId, actorName } = useCurrentActor();
   const { role } = useAuth();
   const isAdmin = canAdmin(role);
@@ -101,7 +101,10 @@ export default function AppointmentSheet({
     if (ok) {
       setNotesSaved(true);
       setTimeout(() => setNotesSaved(false), 2000);
-      refreshData();
+      // Patch the one row we just wrote. This used to call refreshData(), which
+      // re-downloaded every work order in the window to reflect a single notes
+      // field — and a short sweep there unpaired the whole board.
+      patchRForceOrder(linkedOrder.id, { scheduler_notes: notes });
     }
   };
 
@@ -146,10 +149,7 @@ export default function AppointmentSheet({
   const handleRestore = async () => {
     setRestoring(true);
     try {
-      await updateAppointment(appointment.id, appointment.version, {
-        status: "scheduled",
-        reschedule_reason: null,
-      });
+      await restoreAppointment(appointment.id, appointment.version);
       createAppointmentEvent({
         appointment_id: appointment.id,
         action: "restored",
@@ -422,9 +422,12 @@ export default function AppointmentSheet({
 
           {isCancelled ? (
             <div className="pt-4 border-t border-border space-y-3">
-              {appointment.reschedule_reason && (
+              {/* Prefer the real column; fall back to reschedule_reason for rows
+                  cancelled before 20261006_001 that the backfill couldn't reach. */}
+              {(appointment.cancellation_reason || appointment.reschedule_reason) && (
                 <div className="text-sm text-muted">
-                  <span className="font-medium">Cancel reason:</span> {appointment.reschedule_reason}
+                  <span className="font-medium">Cancel reason:</span>{" "}
+                  {appointment.cancellation_reason || appointment.reschedule_reason}
                 </div>
               )}
               <div className="flex gap-2">

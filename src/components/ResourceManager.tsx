@@ -6,6 +6,8 @@ import { useAuth } from "./AuthProvider";
 import { canManage } from "@/lib/auth";
 import { upsertCrew, deactivateCrew, toggleCrewActive, updateCrewColor } from "@/lib/store";
 import { crewTypeLabel } from "@/lib/calendar-utils";
+import { matchCrewByName } from "@/lib/crew-match";
+import { getRForceResource, COMPLETED_STATUSES, CANCELLED_STATUSES } from "@/lib/normalize";
 import { qualifiedSectionsFor } from "@/lib/crew-utils";
 import { pickNewCrewColor } from "@/lib/crew-colors";
 import { crewColorFor, getPreferences, setPreferences } from "@/lib/preferences";
@@ -54,6 +56,7 @@ export default function ResourceManager() {
   const {
     crews,
     rforceOrders,
+    resourceMappings,
     timeOffRequests,
     flagResolutions,
     availabilityRules,
@@ -224,8 +227,48 @@ export default function ResourceManager() {
     }
   };
 
+  /**
+   * Upcoming rForce work still assigned to a resource.
+   *
+   * Archiving removes their calendar row, and an rForce order whose resource has
+   * no row can't render its overlay card anywhere — the job silently stops being
+   * visible instead of showing up as something to reassign. Surfacing the count
+   * at archive time is the cheapest place to catch it.
+   */
+  const liveRForceFor = useCallback(
+    (crew: Crew): number => {
+      const today = new Date().toISOString().slice(0, 10);
+      return rforceOrders.filter((rf) => {
+        if (!rf.scheduled_start || rf.scheduled_start.slice(0, 10) < today) return false;
+        const woS = rf.wo_status || "";
+        const ordS = rf.order_status || "";
+        if (
+          COMPLETED_STATUSES.has(woS) ||
+          CANCELLED_STATUSES.has(woS) ||
+          CANCELLED_STATUSES.has(ordS)
+        )
+          return false;
+        const name = getRForceResource(rf);
+        if (!name) return false;
+        return matchCrewByName(name, crews, resourceMappings)?.id === crew.id;
+      }).length;
+    },
+    [rforceOrders, crews, resourceMappings]
+  );
+
   const handleArchive = async (crew: Crew) => {
-    if (!confirm(`Archive "${crew.name}"? They will be hidden from the calendar but can be reactivated later.`)) return;
+    const live = liveRForceFor(crew);
+    const warning = live
+      ? `
+
+Heads up: rForce still has ${live} upcoming ${live === 1 ? "job" : "jobs"} assigned to them. Once archived those jobs have no calendar row to appear on, so reassign them in rForce — otherwise they'll quietly stop showing up.`
+      : "";
+    if (
+      !confirm(
+        `Archive "${crew.name}"? They will be hidden from the calendar but can be reactivated later.${warning}`
+      )
+    )
+      return;
     await toggleCrewActive(crew.id, false);
     await refreshData();
   };

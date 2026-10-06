@@ -232,15 +232,64 @@ export async function updateAppointment(
   return data as Appointment;
 }
 
+/**
+ * Cancel a tile and record who/when/why.
+ *
+ * The reason belongs in `cancellation_reason`, not `reschedule_reason` — this
+ * wrote to the latter for a long time, which left every cancelled row with an
+ * empty audit trail and the reason filed under "rescheduled". Repaired by
+ * migration 20261006_001.
+ */
 export async function cancelAppointment(
   id: string,
   version: number,
-  reason?: string
+  reason?: string,
+  actorId?: string | null
 ): Promise<void> {
   await updateAppointment(id, version, {
     status: "cancelled",
-    reschedule_reason: reason || null,
+    cancellation_reason: reason || null,
+    cancelled_at: new Date().toISOString(),
+    cancelled_by: actorId ?? null,
   });
+  // sync_state is stripped by updateAppointment — the state machine owns it — so
+  // the terminal transition goes through the sanctioned path. Best-effort: the
+  // cancel itself has already landed, and a stale sync_state must not surface to
+  // the user as a cancel that failed. A missed transition is self-correcting;
+  // status='cancelled' is what every reader actually gates on.
+  try {
+    await updateSyncFields(id, { sync_state: "cancelled" });
+  } catch {
+    // Intentionally swallowed — see above.
+  }
+}
+
+/**
+ * Put a cancelled tile back on the calendar, clearing the cancellation audit so
+ * the row doesn't read as both live and cancelled.
+ *
+ * sync_state goes back to `manual_awaiting_rforce` rather than whatever it held
+ * before the cancel: that earlier value described a booking that has since been
+ * off the calendar, possibly across several imports. Letting the reconciler
+ * re-derive from the next import is honest; restoring a stale "in_sync" is not.
+ */
+export async function restoreAppointment(
+  id: string,
+  version: number
+): Promise<Appointment | null> {
+  const restored = await updateAppointment(id, version, {
+    status: "scheduled",
+    cancellation_reason: null,
+    cancelled_at: null,
+    cancelled_by: null,
+    reschedule_reason: null,
+  });
+  try {
+    await updateSyncFields(id, { sync_state: "manual_awaiting_rforce" });
+  } catch {
+    // Same reasoning as cancelAppointment(): the restore already landed.
+  }
+  return restored;
 }
 
 /**
@@ -386,13 +435,25 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
   let offset = 0;
   const BATCH = 1000;
   while (true) {
-    const { data } = await sb
+    // `.order("id")` is load-bearing, not cosmetic. Paging with .range() over an
+    // unordered query lets Postgres return rows in any order it likes, so pages
+    // could repeat rows while skipping others — and a short page would end the
+    // sweep early. A short list here is indistinguishable from "that's all the
+    // rForce data there is", so every tile whose work order fell in the dropped
+    // remainder rendered as unpaired. A stable sort on the primary key makes
+    // each page disjoint and the `data.length < BATCH` terminator honest.
+    const { data, error } = await sb
       .from("work_orders")
       .select(RFORCE_COLUMNS)
       .neq("work_order_number", "")
       .not("work_order_number", "is", null)
       .or(`scheduled_start.gte.${cutoffISO},scheduled_start.is.null`)
+      .order("id", { ascending: true })
       .range(offset, offset + BATCH - 1);
+    // Same reason fetchAppointments throws: a swallowed error on page N used to
+    // look exactly like the end of the list. Throw so the caller keeps whatever
+    // it already holds instead of accepting a truncated sweep as complete.
+    if (error) throw error;
     if (!data || data.length === 0) break;
     all.push(
       ...(data as unknown as Record<string, unknown>[]).map((row) => ({
@@ -500,6 +561,71 @@ export async function fetchScheduledWorkOrderNumbers(): Promise<string[]> {
         .map((r) => r.work_order_number || "")
         .filter(Boolean)
     );
+    if (data.length < BATCH) break;
+    offset += BATCH;
+  }
+  return all;
+}
+
+/**
+ * Fetch one appointment by id, regardless of status.
+ *
+ * Unlike fetchAppointments() this does not filter out cancelled rows, so it can
+ * back a deep link to a tile that no longer renders on the calendar.
+ */
+export async function fetchAppointmentById(
+  id: string
+): Promise<Appointment | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("sched_appointments")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return null;
+  return (data as Appointment) ?? null;
+}
+
+/** A tile that was cancelled in the app, for reconciling against live rForce orders. */
+export interface CancelledTile {
+  id: string;
+  work_order_number: string;
+  scheduled_date: string | null;
+  crew_id: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  cancellation_reason: string | null;
+  version: number;
+}
+
+/**
+ * Cancelled tiles that still carry a work-order number.
+ *
+ * fetchAppointments() deliberately excludes cancelled rows — they must not render
+ * on the calendar — but that also hid them from reconciliation, so a tile
+ * cancelled here while rForce still had the job live showed up as the generic
+ * "not on calendar", indistinguishable from a job that was never scheduled.
+ * Fetching them separately keeps them off the calendar while letting the Issues
+ * view tell the two cases apart.
+ */
+export async function fetchCancelledTiles(): Promise<CancelledTile[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const all: CancelledTile[] = [];
+  let offset = 0;
+  const BATCH = 1000;
+  while (true) {
+    const { data } = await sb
+      .from("sched_appointments")
+      .select(
+        "id, work_order_number, scheduled_date, crew_id, cancelled_at, cancelled_by, cancellation_reason, version"
+      )
+      .eq("status", "cancelled")
+      .not("work_order_number", "is", null)
+      .range(offset, offset + BATCH - 1);
+    if (!data || data.length === 0) break;
+    all.push(...(data as CancelledTile[]));
     if (data.length < BATCH) break;
     offset += BATCH;
   }

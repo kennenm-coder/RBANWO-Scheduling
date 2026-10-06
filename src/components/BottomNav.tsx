@@ -18,7 +18,7 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { crews, rforceOrders, appointments, activeLinks, resourceMappings, timeOffRequests, flagResolutions, scheduledWorkOrders, dismissals, exportDates } = useData();
+  const { crews, rforceOrders, appointments, activeLinks, resourceMappings, timeOffRequests, flagResolutions, scheduledWorkOrders, dismissals, exportDates, cancelledTiles } = useData();
 
   // Resources badge = names needing attention: hard-unmatched + close-enough
   // suggestions awaiting confirm/deny.
@@ -40,10 +40,10 @@ export default function BottomNav() {
   // merely "pending" rForce is normal and isn't a badge.
   const issueCount = useMemo(
     () =>
-      deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals).length +
+      deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, cancelledTiles).length +
       deriveDroppedTiles(appointments, rforceOrders, dismissals, exportDates).length +
       deriveAwaitingRForce(appointments, rforceOrders, dismissals, exportDates).filter((t) => t.tier === "overdue").length,
-    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, exportDates]
+    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, exportDates, cancelledTiles]
   );
 
   return (

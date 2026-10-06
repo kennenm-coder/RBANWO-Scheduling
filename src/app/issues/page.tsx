@@ -4,6 +4,9 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import { fetchScheduledWorkOrderNumbers } from "@/lib/store";
+import { useToast } from "@/components/Toast";
+import { getRForceResource } from "@/lib/normalize";
+import { useActorName } from "@/hooks/useActorName";
 import {
   deriveIssues,
   deriveDroppedTiles,
@@ -17,6 +20,8 @@ import { format, parseISO } from "date-fns";
 
 /**
  * Human-facing issue buckets (mutually exclusive, so the counts sum to All):
+ *  - cancelled_here : the tile was cancelled here, but rForce still has the job
+ *                     live — cancel it in rForce, or restore the tile.
  *  - not_scheduled  : rForce says scheduled but there's no calendar tile yet.
  *  - schedule_differs: a tile exists but its day, time, or crew disagree.
  *  - under_scheduled: a multi-day job booked for fewer days (duration only).
@@ -24,6 +29,7 @@ import { format, parseISO } from "date-fns";
  *  - pending_rforce : a tile booked here that rForce doesn't reflect yet.
  */
 type IssueCategory =
+  | "cancelled_here"
   | "not_scheduled"
   | "schedule_differs"
   | "under_scheduled"
@@ -31,6 +37,7 @@ type IssueCategory =
   | "pending_rforce";
 
 function issueCategory(i: SchedulingIssue): IssueCategory {
+  if (i.type === "cancelled_locally") return "cancelled_here";
   if (i.type === "missing") return "not_scheduled";
   const d = i.mismatchDetails;
   if (d && (d.date || d.time || d.crew)) return "schedule_differs";
@@ -39,6 +46,10 @@ function issueCategory(i: SchedulingIssue): IssueCategory {
 }
 
 const CATEGORY_META: Record<IssueCategory, { label: string; desc: string }> = {
+  cancelled_here: {
+    label: "Cancelled here, live in rForce",
+    desc: "Someone cancelled the tile in this app, but rForce still shows the job as scheduled. Cancel it in rForce too, or restore the tile if the cancel was a mistake.",
+  },
   not_scheduled: {
     label: "Not on calendar",
     desc: "rForce shows these scheduled, but no tile exists yet — approve or place them.",
@@ -98,6 +109,9 @@ function IssueRow({
 }) {
   const city = parseCity(issue.address);
   const canDismiss = issue.type === "missing" && !!onDismiss;
+  // Who cancelled the tile, for "cancelled here" rows. Null for every other type
+  // and for rows backfilled without a recoverable actor.
+  const cancelledBy = useActorName(issue.cancelledTile?.cancelled_by);
 
   return (
     <div className="relative border-b border-border hover:bg-muted/10 transition-colors">
@@ -112,6 +126,9 @@ function IssueRow({
             {(() => {
               const cat = issueCategory(issue);
               const style: Record<IssueCategory, string> = {
+                // Purple, deliberately unlike the orange/red scheduling flags:
+                // this one is a reconciliation task, not an unscheduled job.
+                cancelled_here: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
                 not_scheduled: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
                 schedule_differs: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
                 under_scheduled: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
@@ -172,6 +189,19 @@ function IssueRow({
       {issue.mismatchDetails?.duration && (
         <div className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
           Days: rForce is a {issue.mismatchDetails.duration.rforce}-day job, only {issue.mismatchDetails.duration.app} scheduled
+        </div>
+      )}
+      {issue.type === "cancelled_locally" && (
+        <div className="text-[10px] text-purple-600 dark:text-purple-400 mt-1">
+          Cancelled here
+          {cancelledBy ? ` by ${cancelledBy}` : ""}
+          {issue.cancelledTile?.cancelled_at
+            ? ` on ${formatDate(issue.cancelledTile.cancelled_at.slice(0, 10))}`
+            : ""}
+          {issue.cancelledTile?.cancellation_reason
+            ? ` — "${issue.cancelledTile.cancellation_reason.trim()}"`
+            : ""}
+          . rForce still shows it scheduled.
         </div>
       )}
       </button>
@@ -385,8 +415,10 @@ export default function IssuesPage() {
     dismissals,
     dismissRForce,
     exportDates,
+    cancelledTiles,
   } = useData();
   const router = useRouter();
+  const { showToast } = useToast();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<IssueCategory | "all">("all");
   const [bulk, setBulk] = useState<
@@ -420,8 +452,8 @@ export default function IssuesPage() {
 
   const allIssues = useMemo(
     () =>
-      deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWos, dismissals),
-    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWos, dismissals]
+      deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWos, dismissals, cancelledTiles),
+    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWos, dismissals, cancelledTiles]
   );
 
   // Tiles whose backing rForce order silently dropped from imports (cancellation
@@ -441,6 +473,7 @@ export default function IssuesPage() {
   const missingCount = allIssues.filter((i) => i.type === "missing").length;
   const categoryCounts = useMemo(() => {
     const c: Record<IssueCategory, number> = {
+      cancelled_here: 0,
       not_scheduled: 0,
       schedule_differs: 0,
       under_scheduled: 0,
@@ -631,12 +664,40 @@ export default function IssuesPage() {
   }
 
   function handleIssueClick(issue: SchedulingIssue) {
+    // A cancelled tile isn't rendered on the calendar, so sending the scheduler
+    // to its date would land them on a day with nothing to click. Open the tile
+    // itself instead — that sheet carries the cancel reason and the Restore
+    // button, which is the whole point of following the flag.
+    if (issue.type === "cancelled_locally") {
+      const tile = issue.cancelledTile;
+      if (tile) {
+        const date = tile.scheduled_date || issue.rforceDate;
+        const crew = tile.crew_id ? `&crew=${tile.crew_id}` : "";
+        router.push(`/?date=${date}&view=day&appt=${tile.id}${crew}`);
+        return;
+      }
+    }
+
     // Jump to the exact resource with the issue: the crew it would land on
     // (missing) or the crew whose tile disagrees (mismatch).
     const crewId =
       issue.type === "missing" ? issue.placement?.crewId : issue.appointment?.crew_id;
     const crewParam = crewId ? `&crew=${crewId}` : "";
     if (issue.type === "missing") {
+      // No placement means the rForce resource matched no active crew — usually
+      // a tech who has since been deactivated. The overlay card has no row to
+      // render on, so navigating would silently land on an empty day. Say so
+      // rather than appearing to do nothing.
+      if (!crewId) {
+        const who = getRForceResource(issue.rforceOrder);
+        showToast(
+          who
+            ? `No calendar row for "${who}" — that resource is inactive or unmatched, so this job has nowhere to show. Assign it from the Queue, or reactivate them in Resources.`
+            : "This rForce order has no resource assigned, so it has nowhere to show on the calendar. Assign it from the Queue.",
+          "error"
+        );
+        return;
+      }
       // Navigate to rForce date with overlay on
       localStorage.setItem("rbanwo-sched-show-rforce", "true");
       router.push(`/?date=${issue.rforceDate}&view=day${crewParam}`);
@@ -893,6 +954,7 @@ export default function IssuesPage() {
           {(
             [
               { key: "all", label: "All", count: totalCount, desc: "Every rForce work order that needs attention." },
+              { key: "cancelled_here", label: CATEGORY_META.cancelled_here.label, count: categoryCounts.cancelled_here, desc: CATEGORY_META.cancelled_here.desc },
               { key: "not_scheduled", label: CATEGORY_META.not_scheduled.label, count: categoryCounts.not_scheduled, desc: CATEGORY_META.not_scheduled.desc },
               { key: "schedule_differs", label: CATEGORY_META.schedule_differs.label, count: categoryCounts.schedule_differs, desc: CATEGORY_META.schedule_differs.desc },
               { key: "under_scheduled", label: CATEGORY_META.under_scheduled.label, count: categoryCounts.under_scheduled, desc: CATEGORY_META.under_scheduled.desc },

@@ -13,7 +13,9 @@ import CrewLaneDayView from "@/components/CrewLaneDayView";
 import CrewLaneWeekView from "@/components/CrewLaneWeekView";
 import CrewBlockView from "@/components/CrewBlockView";
 import UnscheduledQueue from "@/components/UnscheduledQueue";
-import { ViewMode, AppointmentType } from "@/lib/types";
+import AppointmentSheet from "@/components/AppointmentSheet";
+import { fetchAppointmentById } from "@/lib/store";
+import { ViewMode, AppointmentType, Appointment } from "@/lib/types";
 import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff, ExternalLink } from "lucide-react";
 import { SchedulerDragProvider } from "@/lib/drag-context";
 import PresenceProvider from "@/components/PresenceProvider";
@@ -40,6 +42,10 @@ export default function CalendarPage() {
   const [showRForce, setShowRForce] = useState(false);
   // Crew to scroll to + highlight when arriving from an Issues-page click.
   const [focusCrewId, setFocusCrewId] = useState<string | null>(null);
+  // Tile opened by `?appt=<id>` deep link. Loaded by id rather than read from
+  // `appointments` because the link exists precisely for tiles that aren't in
+  // that list — a cancelled job the Issues tab is pointing at.
+  const [deepLinkAppt, setDeepLinkAppt] = useState<Appointment | null>(null);
 
   const initializedRef = useRef(false);
 
@@ -59,8 +65,16 @@ export default function CalendarPage() {
       localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
     }
     if (crewParam) setFocusCrewId(crewParam);
+    const apptParam = searchParams.get("appt");
+    if (apptParam) {
+      // Not found (deleted since the Issues list was built) just leaves the
+      // sheet closed on the right day — no error state worth showing.
+      fetchAppointmentById(apptParam).then((a) => {
+        if (a) setDeepLinkAppt(a);
+      });
+    }
     // Clean query params from the URL after reading
-    if (dateParam || viewParam || crewParam) {
+    if (dateParam || viewParam || crewParam || apptParam) {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, [searchParams]);
@@ -297,6 +311,18 @@ export default function CalendarPage() {
             />
           )}
         </div>
+
+        {/* Deep-linked tile (?appt=…). Rendered here rather than inside a view
+            because a cancelled tile has no lane to be clicked from. Edit and
+            reschedule just close it — the sheet's cancelled branch offers
+            Restore and Delete, which is all this link is for. */}
+        {deepLinkAppt && (
+          <AppointmentSheet
+            appointment={deepLinkAppt}
+            onClose={() => setDeepLinkAppt(null)}
+            onEdit={() => setDeepLinkAppt(null)}
+          />
+        )}
       </div>
       </PresenceProvider>
     </div>

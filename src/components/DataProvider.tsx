@@ -41,6 +41,7 @@ import {
   createAppointment as createApptInDb,
   updateAppointment as updateApptInDb,
   cancelAppointment as cancelApptInDb,
+  restoreAppointment as restoreApptInDb,
   deleteAppointment as deleteApptInDb,
   unscheduleAppointment as unscheduleApptInDb,
   createTimeOffRequest as createTimeOffInDb,
@@ -54,6 +55,8 @@ import {
   rejectMatch as rejectMatchInDb,
   unrejectMatch as unrejectMatchInDb,
   fetchScheduledWorkOrderNumbers,
+  fetchCancelledTiles,
+  type CancelledTile,
   fetchImportRunDates,
   recordImportRun,
 } from "@/lib/store";
@@ -82,6 +85,9 @@ interface DataContextValue {
    *  including outside the loaded date window. Shared so the Issues page and the
    *  bottom-nav badge count issues the same way. */
   scheduledWorkOrders: Set<string>;
+  /** Cancelled tiles, which `appointments` deliberately excludes. Used by the
+   *  Issues view to tell "cancelled here" apart from "never scheduled". */
+  cancelledTiles: CancelledTile[];
   /** Observed full daily-export dates (YYYY-MM-DD, newest first) — powers the
    *  two-tier "dropped from rForce" cancellation detection. */
   exportDates: string[];
@@ -100,6 +106,11 @@ interface DataContextValue {
     version: number,
     reason?: string
   ) => Promise<void>;
+  /** Put a cancelled tile back on the calendar and clear its cancellation audit. */
+  restoreAppointment: (
+    id: string,
+    version: number
+  ) => Promise<Appointment | null>;
   /** Hard-delete an appointment (admin-only in the UI). Removes it and its links
    *  from local state; the row and its links/events are gone from the database. */
   deleteAppointment: (id: string) => Promise<void>;
@@ -132,6 +143,12 @@ interface DataContextValue {
   rejectMatch: (appointmentId: string, workOrderNumber: string, reason?: string) => Promise<void>;
   unrejectMatch: (appointmentId: string, workOrderNumber: string) => Promise<void>;
   refreshData: () => Promise<void>;
+  /** Patch one already-loaded rForce order in place. Use this after a write that
+   *  touches a single work_orders row (e.g. scheduler notes) — refreshData()
+   *  re-downloads every work order in the 90-day window, which is megabytes of
+   *  egress to record a one-field edit, and any hiccup in that sweep unpairs the
+   *  board. A no-op when the order isn't in the loaded set. */
+  patchRForceOrder: (id: string, updates: Partial<RForceOrder>) => void;
   ensureDateRange: (date: Date) => void;
   addTimeOff: (req: Omit<TimeOffRequest, "id" | "created_at">) => Promise<TimeOffRequest | null>;
   updateTimeOff: (id: string, updates: Partial<Omit<TimeOffRequest, "id" | "created_at">>) => Promise<TimeOffRequest | null>;
@@ -152,6 +169,9 @@ export function useData(): DataContextValue {
 
 export default function DataProvider({ children }: { children: ReactNode }) {
   const { user, displayName, status } = useAuth();
+  // Stamped onto cancellations so the row carries its own audit trail, not just
+  // an events-log entry. Null under the localhost dev bypass (no real session).
+  const actorId = user?.id ?? null;
   const [crews, setCrews] = useState<Crew[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [unscheduledAppointments, setUnscheduledAppointments] = useState<Appointment[]>([]);
@@ -166,6 +186,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [flagResolutions, setFlagResolutions] = useState<FlagResolution[]>([]);
   const [matchRejections, setMatchRejections] = useState<MatchRejection[]>([]);
   const [scheduledWorkOrders, setScheduledWorkOrders] = useState<Set<string>>(new Set());
+  const [cancelledTiles, setCancelledTiles] = useState<CancelledTile[]>([]);
   const [exportDates, setExportDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
@@ -184,7 +205,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const start = format(subDays(today, 30), "yyyy-MM-dd");
       const end = format(addDays(today, 180), "yyyy-MM-dd");
 
-      const [c, a, r, t, av, cb, links, rm, dism, flagRes, matchRej, unsched, schedWos, runDates] = await Promise.all([
+      const [c, a, r, t, av, cb, links, rm, dism, flagRes, matchRej, unsched, schedWos, runDates, cancelled] = await Promise.all([
         fetchCrews(),
         fetchAppointments(start, end),
         fetchRForceOrders(),
@@ -199,6 +220,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         fetchUnscheduledAppointments(),
         fetchScheduledWorkOrderNumbers(),
         fetchImportRunDates(),
+        fetchCancelledTiles(),
       ]);
 
       // Record today's daily export (if it has run and isn't logged yet) so the
@@ -236,6 +258,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setMatchRejections(matchRej);
       setUnscheduledAppointments(unsched);
       setScheduledWorkOrders(new Set(schedWos.map((w) => w.trim().toLowerCase())));
+      setCancelledTiles(cancelled);
       setExportDates(allExportDates);
       loadedRangeRef.current = { start, end };
     } catch (err) {
@@ -418,12 +441,35 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   const handleCancel = useCallback(
     async (id: string, version: number, reason?: string) => {
-      await cancelApptInDb(id, version, reason);
+      await cancelApptInDb(id, version, reason, actorId);
       setAppointments((prev) =>
         prev.map((a) =>
-          a.id === id ? { ...a, status: "cancelled" as const } : a
+          a.id === id
+            ? {
+                ...a,
+                status: "cancelled" as const,
+                sync_state: "cancelled" as const,
+                cancellation_reason: reason || null,
+                cancelled_at: new Date().toISOString(),
+                cancelled_by: actorId,
+                version: a.version + 1,
+              }
+            : a
         )
       );
+    },
+    [actorId]
+  );
+
+  const handleRestore = useCallback(
+    async (id: string, version: number) => {
+      const result = await restoreApptInDb(id, version);
+      if (result) {
+        setAppointments((prev) =>
+          prev.map((a) => (a.id === result.id ? result : a))
+        );
+      }
+      return result;
     },
     []
   );
@@ -644,6 +690,15 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handlePatchRForceOrder = useCallback(
+    (id: string, updates: Partial<RForceOrder>) => {
+      setRforceOrders((prev) =>
+        prev.map((o) => (o.id === id ? { ...o, ...updates } : o))
+      );
+    },
+    []
+  );
+
   return (
     <DataContext.Provider
       value={{
@@ -661,12 +716,14 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         flagResolutions,
         matchRejections,
         scheduledWorkOrders,
+        cancelledTiles,
         exportDates,
         loading,
         connected,
         createAppointment: handleCreate,
         updateAppointment: handleUpdate,
         cancelAppointment: handleCancel,
+        restoreAppointment: handleRestore,
         deleteAppointment: handleDelete,
         unscheduleAppointment: handleUnschedule,
         mergeRForce: handleMerge,
@@ -677,6 +734,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         rejectMatch: handleRejectMatch,
         unrejectMatch: handleUnrejectMatch,
         refreshData: loadData,
+        patchRForceOrder: handlePatchRForceOrder,
         ensureDateRange,
         addTimeOff: handleAddTimeOff,
         updateTimeOff: handleUpdateTimeOff,

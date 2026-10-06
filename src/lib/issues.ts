@@ -1,9 +1,11 @@
-import { getRForceResource } from "./normalize";
 /**
- * Simplified issue detection — exactly two issue types:
+ * Simplified issue detection — three issue types:
  *
- *   1. missing  — rForce WO is scheduled but has no non-cancelled calendar tile
- *   2. mismatch — rForce record and linked calendar tile disagree on date/time
+ *   1. cancelled_locally — the tile was cancelled here, rForce still has the job
+ *                          live. Split out of "missing" because the fix is to
+ *                          cancel it in rForce, not to go schedule it.
+ *   2. missing  — rForce WO is scheduled but has no calendar tile at all
+ *   3. mismatch — rForce record and linked calendar tile disagree on date/time
  *
  * Plus two tile-side reviews that live alongside them on the Issues tab:
  *   • dropped  — a tile whose rForce order stopped appearing in imports
@@ -22,6 +24,7 @@ import type {
   RForceOrder,
   TimeBlock,
 } from "./types";
+import type { CancelledTile } from "./store";
 import {
   deriveRForceCalendarStatus,
   deriveAppointmentRForceState,
@@ -29,6 +32,7 @@ import {
   type AwaitingRForceReason,
 } from "./rforce-calendar-status";
 import {
+  getRForceResource,
   isNotSchedulable,
   isNonFieldWork,
   COMPLETED_STATUSES,
@@ -41,7 +45,7 @@ import {
   type AwaitingTier,
 } from "./rforce-staleness";
 
-export type IssueType = "missing" | "mismatch";
+export type IssueType = "missing" | "mismatch" | "cancelled_locally";
 
 /**
  * For a "missing" issue, where the job would land on the calendar if approved.
@@ -68,6 +72,11 @@ export interface SchedulingIssue {
   appTime?: string;
   /** Only set on "missing" issues whose resource maps to a crew (approvable). */
   placement?: ApprovalPlacement;
+  /**
+   * Only set on "cancelled_locally" issues: the cancelled tile behind the flag,
+   * so the UI can jump straight to it and offer to restore it.
+   */
+  cancelledTile?: CancelledTile;
 }
 
 /**
@@ -92,7 +101,13 @@ export function deriveIssues(
    * cancelled after dropping out of imports). A dismissed WO+date is no longer
    * an actionable issue — mirrors the same skip the calendar overlay applies.
    */
-  dismissals: RForceDismissal[] = []
+  dismissals: RForceDismissal[] = [],
+  /**
+   * Tiles cancelled in the app (from fetchCancelledTiles). These are absent from
+   * `appointments` by design, so without them a job cancelled here while rForce
+   * still shows it live is indistinguishable from one that was never scheduled.
+   */
+  cancelledTiles: CancelledTile[] = []
 ): SchedulingIssue[] {
   const normalizeWo = (value: string | null | undefined) =>
     (value || "").trim().toLowerCase();
@@ -101,6 +116,18 @@ export function deriveIssues(
   const dismissedKeys = new Set(
     dismissals.map((d) => `${d.work_order_number}|${d.rforce_date}`)
   );
+
+  // Most recently cancelled tile per WO — a job cancelled, restored and cancelled
+  // again should surface the latest cancellation, not the first.
+  const cancelledByWo = new Map<string, CancelledTile>();
+  for (const tile of cancelledTiles) {
+    const key = normalizeWo(tile.work_order_number);
+    if (!key) continue;
+    const existing = cancelledByWo.get(key);
+    if (!existing || (tile.cancelled_at || "") > (existing.cancelled_at || "")) {
+      cancelledByWo.set(key, tile);
+    }
+  }
 
   const items = deriveRForceCalendarStatus(
     rforceOrders,
@@ -144,6 +171,25 @@ export function deriveIssues(
     if (item.status === "needs_confirmation") {
       // Missing: rForce says scheduled, no local tile
       if (!rf.scheduled_start) continue; // safety — no date means nothing to show
+
+      // Someone cancelled the tile here while rForce still has the job live.
+      // Reported separately from "missing": the action is to cancel it in rForce
+      // (or restore the tile), not to go place a job that was never scheduled.
+      const cancelled = cancelledByWo.get(normalizeWo(rf.work_order_number));
+      if (cancelled) {
+        issues.push({
+          type: "cancelled_locally",
+          rforceOrder: rf,
+          woNumber: rf.work_order_number,
+          customerName: rf.customer_name || "Unknown",
+          address: rf.address || "",
+          rforceDate: rf.scheduled_start.slice(0, 10),
+          rforceTime: rf.scheduled_start.slice(11, 16) || undefined,
+          appDate: cancelled.scheduled_date || undefined,
+          cancelledTile: cancelled,
+        });
+        continue;
+      }
 
       // Already placed on the calendar, just outside the loaded date window
       // (its tile is older/further out than the calendar loads). It isn't
@@ -196,11 +242,14 @@ export function deriveIssues(
     // synced / reference → not issues
   }
 
-  // Sort: missing first, then mismatches
-  issues.sort((a, b) => {
-    if (a.type !== b.type) return a.type === "missing" ? -1 : 1;
-    return 0;
-  });
+  // Sort: cancelled-here first (rForce still thinks these are happening, so they
+  // are the most urgent to reconcile), then missing, then mismatches.
+  const rank: Record<IssueType, number> = {
+    cancelled_locally: 0,
+    missing: 1,
+    mismatch: 2,
+  };
+  issues.sort((a, b) => rank[a.type] - rank[b.type]);
 
   return issues;
 }

@@ -109,6 +109,102 @@ describe("deriveIssues", () => {
     expect(issues[0].rforceTime).toBe("10:00");
   });
 
+  describe("cancelled_locally", () => {
+    const cancelledTile = (overrides: Record<string, unknown> = {}) => ({
+      id: "appt-cancelled",
+      work_order_number: "WO-100",
+      scheduled_date: "2026-08-14",
+      crew_id: "crew-1",
+      cancelled_at: "2026-08-10T12:00:00Z",
+      cancelled_by: "user-1",
+      cancellation_reason: "customer rescheduled",
+      version: 2,
+      ...overrides,
+    });
+
+    it("reports a cancelled tile separately from a job that was never scheduled", () => {
+      const issues = deriveIssues(
+        [makeRForceOrder()],
+        [], // cancelled tiles are excluded from `appointments` by fetchAppointments
+        [],
+        [crew],
+        [],
+        new Set(),
+        [],
+        [cancelledTile()] as never
+      );
+      expect(issues).toHaveLength(1);
+      expect(issues[0].type).toBe("cancelled_locally");
+      expect(issues[0].woNumber).toBe("WO-100");
+      // Carries the tile so the UI can deep-link to it and offer Restore.
+      expect(issues[0].cancelledTile?.id).toBe("appt-cancelled");
+      expect(issues[0].appDate).toBe("2026-08-14");
+    });
+
+    it("still reports plain missing when no cancelled tile exists", () => {
+      const issues = deriveIssues(
+        [makeRForceOrder()],
+        [],
+        [],
+        [crew],
+        [],
+        new Set(),
+        [],
+        []
+      );
+      expect(issues).toHaveLength(1);
+      expect(issues[0].type).toBe("missing");
+    });
+
+    it("ignores a cancelled tile for an unrelated work order", () => {
+      const issues = deriveIssues(
+        [makeRForceOrder()],
+        [],
+        [],
+        [crew],
+        [],
+        new Set(),
+        [],
+        [cancelledTile({ work_order_number: "WO-999" })] as never
+      );
+      expect(issues[0].type).toBe("missing");
+    });
+
+    it("surfaces the most recent cancellation when a WO was cancelled twice", () => {
+      const issues = deriveIssues(
+        [makeRForceOrder()],
+        [],
+        [],
+        [crew],
+        [],
+        new Set(),
+        [],
+        [
+          cancelledTile({ id: "older", cancelled_at: "2026-08-01T12:00:00Z" }),
+          cancelledTile({ id: "newer", cancelled_at: "2026-08-12T12:00:00Z" }),
+        ] as never
+      );
+      expect(issues[0].cancelledTile?.id).toBe("newer");
+    });
+
+    it("sorts cancelled-here ahead of missing", () => {
+      const issues = deriveIssues(
+        [
+          makeRForceOrder(),
+          makeRForceOrder({ id: "rf-2", work_order_number: "WO-200" }),
+        ],
+        [],
+        [],
+        [crew],
+        [],
+        new Set(),
+        [],
+        [cancelledTile({ work_order_number: "WO-200" })] as never
+      );
+      expect(issues.map((i) => i.type)).toEqual(["cancelled_locally", "missing"]);
+    });
+  });
+
   it("detects mismatch: linked appointment has different date", () => {
     const rf = makeRForceOrder({ scheduled_start: "2026-08-14T10:00:00" });
     const appt = makeAppointment({ scheduled_date: "2026-08-15" });
