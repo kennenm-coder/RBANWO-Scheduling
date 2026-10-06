@@ -132,6 +132,12 @@ interface DataContextValue {
   rejectMatch: (appointmentId: string, workOrderNumber: string, reason?: string) => Promise<void>;
   unrejectMatch: (appointmentId: string, workOrderNumber: string) => Promise<void>;
   refreshData: () => Promise<void>;
+  /** Patch one already-loaded rForce order in place. Use this after a write that
+   *  touches a single work_orders row (e.g. scheduler notes) — refreshData()
+   *  re-downloads every work order in the 90-day window, which is megabytes of
+   *  egress to record a one-field edit, and any hiccup in that sweep unpairs the
+   *  board. A no-op when the order isn't in the loaded set. */
+  patchRForceOrder: (id: string, updates: Partial<RForceOrder>) => void;
   ensureDateRange: (date: Date) => void;
   addTimeOff: (req: Omit<TimeOffRequest, "id" | "created_at">) => Promise<TimeOffRequest | null>;
   updateTimeOff: (id: string, updates: Partial<Omit<TimeOffRequest, "id" | "created_at">>) => Promise<TimeOffRequest | null>;
@@ -644,6 +650,15 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handlePatchRForceOrder = useCallback(
+    (id: string, updates: Partial<RForceOrder>) => {
+      setRforceOrders((prev) =>
+        prev.map((o) => (o.id === id ? { ...o, ...updates } : o))
+      );
+    },
+    []
+  );
+
   return (
     <DataContext.Provider
       value={{
@@ -677,6 +692,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         rejectMatch: handleRejectMatch,
         unrejectMatch: handleUnrejectMatch,
         refreshData: loadData,
+        patchRForceOrder: handlePatchRForceOrder,
         ensureDateRange,
         addTimeOff: handleAddTimeOff,
         updateTimeOff: handleUpdateTimeOff,

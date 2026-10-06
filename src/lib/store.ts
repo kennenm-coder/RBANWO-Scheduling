@@ -386,13 +386,25 @@ export async function fetchRForceOrders(): Promise<RForceOrder[]> {
   let offset = 0;
   const BATCH = 1000;
   while (true) {
-    const { data } = await sb
+    // `.order("id")` is load-bearing, not cosmetic. Paging with .range() over an
+    // unordered query lets Postgres return rows in any order it likes, so pages
+    // could repeat rows while skipping others — and a short page would end the
+    // sweep early. A short list here is indistinguishable from "that's all the
+    // rForce data there is", so every tile whose work order fell in the dropped
+    // remainder rendered as unpaired. A stable sort on the primary key makes
+    // each page disjoint and the `data.length < BATCH` terminator honest.
+    const { data, error } = await sb
       .from("work_orders")
       .select(RFORCE_COLUMNS)
       .neq("work_order_number", "")
       .not("work_order_number", "is", null)
       .or(`scheduled_start.gte.${cutoffISO},scheduled_start.is.null`)
+      .order("id", { ascending: true })
       .range(offset, offset + BATCH - 1);
+    // Same reason fetchAppointments throws: a swallowed error on page N used to
+    // look exactly like the end of the list. Throw so the caller keeps whatever
+    // it already holds instead of accepting a truncated sweep as complete.
+    if (error) throw error;
     if (!data || data.length === 0) break;
     all.push(
       ...(data as unknown as Record<string, unknown>[]).map((row) => ({
