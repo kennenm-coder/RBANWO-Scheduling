@@ -100,15 +100,26 @@ function IssueRow({
   issue,
   onClick,
   onDismiss,
+  onRestore,
   dismissing,
+  restoring,
 }: {
   issue: SchedulingIssue;
   onClick: () => void;
   onDismiss?: () => void;
+  onRestore?: () => void;
   dismissing?: boolean;
+  restoring?: boolean;
 }) {
   const city = parseCity(issue.address);
-  const canDismiss = issue.type === "missing" && !!onDismiss;
+  // Both resolutions for a cancelled-here row: put the tile back, or confirm the
+  // cancel is real and stop flagging it. Dismissing is the common one — once
+  // rForce is updated the order drops from the export and the flag would clear
+  // itself a day later, but nobody wants to look at it until then.
+  const isCancelledHere = issue.type === "cancelled_locally";
+  const canDismiss = (issue.type === "missing" || isCancelledHere) && !!onDismiss;
+  const canRestore = isCancelledHere && !!onRestore && !!issue.cancelledTile;
+  const hasActions = canDismiss || canRestore;
   // Who cancelled the tile, for "cancelled here" rows. Null for every other type
   // and for rows backfilled without a recoverable actor.
   const cancelledBy = useActorName(issue.cancelledTile?.cancelled_by);
@@ -117,7 +128,7 @@ function IssueRow({
     <div className="relative border-b border-border hover:bg-muted/10 transition-colors">
       <button
         onClick={onClick}
-        className={`w-full text-left px-4 py-3 ${canDismiss ? "pb-10" : ""}`}
+        className={`w-full text-left px-4 py-3 ${hasActions ? "pb-10" : ""}`}
       >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
@@ -205,16 +216,54 @@ function IssueRow({
         </div>
       )}
       </button>
-      {canDismiss && (
-        <button
-          onClick={onDismiss}
-          disabled={dismissing}
-          title="Not really scheduled (cancelled in rForce) — clear this issue"
-          className="absolute bottom-2 right-3 flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-muted/20 hover:text-foreground disabled:opacity-50"
-        >
-          <X size={11} />
-          {dismissing ? "Dismissing…" : "Dismiss"}
-        </button>
+      {hasActions && (
+        <div className="absolute bottom-2 right-3 flex items-center gap-1.5">
+          {isCancelledHere && issue.cancelledTile?.salesforce_url && (
+            <a
+              href={issue.cancelledTile.salesforce_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title="Open this work order in rForce to cancel it there too"
+              className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-muted/20 hover:text-foreground"
+            >
+              <ExternalLink size={11} />
+              Open rForce
+            </a>
+          )}
+          {canRestore && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRestore!();
+              }}
+              disabled={restoring || dismissing}
+              title="The cancel was a mistake — put this tile back on the calendar"
+              className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-muted/20 hover:text-foreground disabled:opacity-50"
+            >
+              <Check size={11} />
+              {restoring ? "Restoring…" : "Restore tile"}
+            </button>
+          )}
+          {canDismiss && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDismiss!();
+              }}
+              disabled={dismissing || restoring}
+              title={
+                isCancelledHere
+                  ? "Cancelled in rForce too — stop flagging it"
+                  : "Not really scheduled (cancelled in rForce) — clear this issue"
+              }
+              className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-muted/20 hover:text-foreground disabled:opacity-50"
+            >
+              <X size={11} />
+              {dismissing ? "Dismissing…" : isCancelledHere ? "Cancelled in rForce" : "Dismiss"}
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -416,6 +465,8 @@ export default function IssuesPage() {
     dismissRForce,
     exportDates,
     cancelledTiles,
+    restoreAppointment,
+    refreshData,
   } = useData();
   const router = useRouter();
   const { showToast } = useToast();
@@ -719,10 +770,42 @@ export default function IssuesPage() {
         issue.woNumber,
         issue.rforceDate,
         issue.rforceTime,
-        "Dismissed from Issues — not on calendar"
+        issue.type === "cancelled_locally"
+          ? "Cancelled in rForce too — confirmed from Issues"
+          : "Dismissed from Issues — not on calendar"
       );
     } finally {
       setDismissingKey(null);
+    }
+  }
+
+  /**
+   * Undo a cancellation straight from the Issues list.
+   *
+   * Restoring re-fires the DB conflict guard — the slot may have been filled
+   * while the job was off the calendar — so a failure here is expected and gets
+   * a real message rather than a silent no-op.
+   */
+  const [restoringKey, setRestoringKey] = useState<string | null>(null);
+  async function handleRestoreIssue(issue: SchedulingIssue) {
+    const tile = issue.cancelledTile;
+    if (!tile) return;
+    const key = `${issue.woNumber}|${issue.rforceDate}`;
+    setRestoringKey(key);
+    try {
+      await restoreAppointment(tile.id, tile.version);
+      showToast(`Restored ${issue.customerName} to the calendar.`, "success");
+      await refreshData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      showToast(
+        msg.includes("SCHEDULING_CONFLICT") || msg === "DOUBLE_BOOK"
+          ? "Can't restore — that crew slot is booked now. Free it up, or reschedule this job from the Queue."
+          : "Couldn't restore that tile. It may have been changed since this list loaded.",
+        "error"
+      );
+    } finally {
+      setRestoringKey(null);
     }
   }
 
@@ -1012,7 +1095,9 @@ export default function IssuesPage() {
                 issue={issue}
                 onClick={() => handleIssueClick(issue)}
                 onDismiss={() => handleDismissIssue(issue)}
+                onRestore={() => handleRestoreIssue(issue)}
                 dismissing={dismissingKey === `${issue.woNumber}|${issue.rforceDate}`}
+                restoring={restoringKey === `${issue.woNumber}|${issue.rforceDate}`}
               />
             ))}
             {/* Lowest urgency, so last: overdue rows sort first within the group. */}

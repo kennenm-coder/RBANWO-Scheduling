@@ -187,6 +187,20 @@ describe("deriveIssues", () => {
       expect(issues[0].cancelledTile?.id).toBe("newer");
     });
 
+    it("clears once the WO+date is dismissed (the 'cancelled in rForce too' action)", () => {
+      const issues = deriveIssues(
+        [makeRForceOrder()],
+        [],
+        [],
+        [crew],
+        [],
+        new Set(),
+        [{ work_order_number: "WO-100", rforce_date: "2026-08-14" }] as never,
+        [cancelledTile()] as never
+      );
+      expect(issues).toHaveLength(0);
+    });
+
     it("sorts cancelled-here ahead of missing", () => {
       const issues = deriveIssues(
         [

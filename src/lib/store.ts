@@ -596,6 +596,8 @@ export interface CancelledTile {
   cancelled_at: string | null;
   cancelled_by: string | null;
   cancellation_reason: string | null;
+  /** Deep link so the Issues row can offer "Open rForce" to cancel it there too. */
+  salesforce_url: string | null;
   version: number;
 }
 
@@ -619,7 +621,7 @@ export async function fetchCancelledTiles(): Promise<CancelledTile[]> {
     const { data } = await sb
       .from("sched_appointments")
       .select(
-        "id, work_order_number, scheduled_date, crew_id, cancelled_at, cancelled_by, cancellation_reason, version"
+        "id, work_order_number, scheduled_date, crew_id, cancelled_at, cancelled_by, cancellation_reason, salesforce_url, version"
       )
       .eq("status", "cancelled")
       .not("work_order_number", "is", null)
