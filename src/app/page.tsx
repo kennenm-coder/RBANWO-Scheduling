@@ -18,23 +18,31 @@ import { fetchAppointmentById } from "@/lib/store";
 import { ViewMode, AppointmentType, Appointment } from "@/lib/types";
 import { Loader2, PanelLeftOpen, PanelLeftClose, CalendarOff, ExternalLink } from "lucide-react";
 import { SchedulerDragProvider } from "@/lib/drag-context";
+import { useAuth } from "@/components/AuthProvider";
+import {
+  calendarStateKey,
+  readCalendarViewState,
+  restoredDate,
+  restoredView,
+  writeCalendarViewState,
+} from "@/lib/calendar-view-state";
 import PresenceProvider from "@/components/PresenceProvider";
 
 const DUCK_FORCE_PTO_URL = "https://betterthengooglecal-5taw.vercel.app/time-off?from=scheduler";
 
-const VIEW_STORAGE_KEY = "rbanwo-sched-view";
 const RFORCE_STORAGE_KEY = "rbanwo-sched-show-rforce";
-
-function getSavedView(): ViewMode {
-  if (typeof window === "undefined") return "week";
-  return (localStorage.getItem(VIEW_STORAGE_KEY) as ViewMode) || "week";
-}
 
 export default function CalendarPage() {
   const { loading, ensureDateRange, appointments, crews, rforceOrders, timeOffRequests, activeLinks, availabilityRules, availabilityExceptions } = useData();
   const searchParams = useSearchParams();
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<ViewMode>("week");
+  const { user } = useAuth();
+  // Per-account, per-device slot holding "where I left the calendar". Read once
+  // into the initial state so the first paint is already on the saved day/view
+  // rather than flashing today-in-week-view and then jumping.
+  const stateKey = calendarStateKey(user?.id);
+  const [savedState] = useState(() => readCalendarViewState(stateKey));
+  const [currentDate, setCurrentDate] = useState(() => restoredDate(savedState));
+  const [viewMode, setViewMode] = useState<ViewMode>(() => restoredView(savedState));
   const [filterType, setFilterType] = useState<AppointmentType | "all">("all");
   const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
@@ -62,7 +70,6 @@ export default function CalendarPage() {
     }
     if (viewParam === "day" || viewParam === "week" || viewParam === "block") {
       setViewMode(viewParam);
-      localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
     }
     if (crewParam) setFocusCrewId(crewParam);
     const apptParam = searchParams.get("appt");
@@ -93,20 +100,31 @@ export default function CalendarPage() {
     }
     if (viewParam === "day" || viewParam === "week" || viewParam === "block") {
       setViewMode(viewParam);
-      localStorage.setItem(VIEW_STORAGE_KEY, viewParam);
-    } else if (!searchParams.get("view")) {
-      setViewMode(getSavedView());
     }
     const savedRForce = localStorage.getItem(RFORCE_STORAGE_KEY);
     if (savedRForce === "true") setShowRForce(true);
     initializedRef.current = true;
   }, []);
 
+  // A different account signed in on this device: adopt that account's saved
+  // position instead of leaving the previous user's day on screen.
+  const appliedKeyRef = useRef(stateKey);
+  useEffect(() => {
+    if (appliedKeyRef.current === stateKey) return;
+    appliedKeyRef.current = stateKey;
+    const saved = readCalendarViewState(stateKey);
+    setViewMode(restoredView(saved));
+    setCurrentDate(restoredDate(saved));
+  }, [stateKey]);
+
   useEffect(() => {
     if (!initializedRef.current) return;
-    const hash = `date=${format(currentDate, "yyyy-MM-dd")}&view=${viewMode}`;
-    window.history.replaceState(null, "", `#${hash}`);
-  }, [currentDate, viewMode]);
+    const day = format(currentDate, "yyyy-MM-dd");
+    window.history.replaceState(null, "", `#date=${day}&view=${viewMode}`);
+    // Survives leaving the tab: BottomNav routes away and unmounts this page,
+    // so the hash alone can't bring the position back.
+    writeCalendarViewState(stateKey, { view: viewMode, date: day });
+  }, [currentDate, viewMode, stateKey]);
 
   useEffect(() => {
     ensureDateRange(currentDate);
@@ -114,7 +132,6 @@ export default function CalendarPage() {
 
   const handleViewChange = useCallback((mode: ViewMode) => {
     setViewMode(mode);
-    localStorage.setItem(VIEW_STORAGE_KEY, mode);
   }, []);
 
   const handleToggleRForce = useCallback(() => {
