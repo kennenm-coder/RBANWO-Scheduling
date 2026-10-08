@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
-import { CalendarDays, ListTodo, Users, AlertTriangle } from "lucide-react";
+import { CalendarDays, ListTodo, Users, AlertTriangle, Gauge } from "lucide-react";
 import { useData } from "./DataProvider";
+import { useAuth } from "./AuthProvider";
+import { canManage } from "@/lib/auth";
 import { categorizeResourceNames, deniedNamesFromFlagKeys } from "@/lib/unmatched-resources";
 import { deriveIssues, deriveDroppedTiles, deriveAwaitingRForce } from "@/lib/issues";
 
@@ -15,9 +17,21 @@ const NAV_ITEMS = [
   { href: "/resources", label: "Resources", icon: Users },
 ];
 
+/**
+ * Installer utilization, for Admin and Scheduling Manager only. The page gates
+ * itself as well — hiding a nav link is not a gate.
+ */
+const MANAGER_NAV_ITEMS = [{ href: "/metrics", label: "Utilization", icon: Gauge }];
+
 export default function BottomNav() {
   const pathname = usePathname();
+  const { role } = useAuth();
   const { crews, rforceOrders, appointments, activeLinks, resourceMappings, timeOffRequests, flagResolutions, scheduledWorkOrders, dismissals, exportDates, cancelledTiles } = useData();
+
+  const navItems = useMemo(
+    () => (canManage(role) ? [...NAV_ITEMS, ...MANAGER_NAV_ITEMS] : NAV_ITEMS),
+    [role]
+  );
 
   // Resources badge = names needing attention: hard-unmatched + close-enough
   // suggestions awaiting confirm/deny.
@@ -48,7 +62,7 @@ export default function BottomNav() {
   return (
     <nav className="sticky bottom-0 z-40 bg-background border-t border-border safe-area-bottom">
       <div className="flex">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, label, icon: Icon }) => {
           const active = pathname === href;
           const badge =
             href === "/resources" && unmatchedCount > 0
