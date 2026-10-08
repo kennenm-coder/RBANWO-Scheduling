@@ -66,6 +66,7 @@ import { humanizeConflictMessage } from "@/lib/calendar-utils";
 import { subscribeToAppointments } from "@/lib/realtime";
 import { useAuth } from "./AuthProvider";
 import { addDays, subDays, format } from "date-fns";
+import { planWindowExtension } from "@/lib/date-window";
 
 interface DataContextValue {
   crews: Crew[];
@@ -270,32 +271,38 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   const ensureDateRange = useCallback(
     (date: Date) => {
-      if (!loadedRangeRef.current) return;
-      const margin = format(addDays(date, 14), "yyyy-MM-dd");
-      const marginBefore = format(subDays(date, 14), "yyyy-MM-dd");
-      const { start, end } = loadedRangeRef.current;
-      if (margin > end || marginBefore < start) {
-        const newStart = format(subDays(date, 60), "yyyy-MM-dd");
-        const newEnd = format(addDays(date, 180), "yyyy-MM-dd");
-        loadedRangeRef.current = { start: newStart, end: newEnd };
-        fetchAppointments(newStart, newEnd)
-          .then((a) => {
-            // A 0-row result here is almost always a transient auth/RLS blip
-            // (e.g. a token refresh in flight), not a genuinely empty window —
-            // and an empty result would blank the board, flipping every tile to
-            // "unconfirmed". Never let an empty refetch overwrite tiles we
-            // already hold; real deletes still arrive via the realtime channel.
-            // (The view is date-filtered, so keeping the prior range's tiles in
-            // state is harmless when the new range really is empty.)
-            setAppointments((prev) => (a.length === 0 && prev.length > 0 ? prev : a));
-          })
-          .catch((err) => {
-            // Never wipe the calendar on a failed refetch. Keep the tiles we
-            // have and roll the loaded range back so a later navigation retries.
-            console.error("Failed to extend loaded date range:", err);
-            loadedRangeRef.current = { start, end };
+      const current = loadedRangeRef.current;
+      if (!current) return;
+      // Grows the window; never slides it. See planWindowExtension for why
+      // re-centring unpaired the board.
+      const plan = planWindowExtension(current, date);
+      if (!plan) return;
+
+      // Only the slice we don't already hold goes over the wire. The old code
+      // refetched the entire window on every jump, so bouncing between the
+      // Issues page and the calendar re-downloaded months of appointments each
+      // time; once the window covers where someone works, fetches stop.
+      loadedRangeRef.current = plan.window;
+      Promise.all(plan.gaps.map(([s, e]) => fetchAppointments(s, e)))
+        .then((results) => {
+          const fetched = results.flat();
+          if (fetched.length === 0) return; // nothing scheduled in that slice
+          // Merge rather than replace. An extension can't drop anything we
+          // already hold, so an empty or short result is harmless by
+          // construction — no "don't let empty overwrite" guard needed here.
+          // Extra out-of-view tiles are inert: every view filters by date.
+          setAppointments((prev) => {
+            const byId = new Map(prev.map((a) => [a.id, a]));
+            for (const a of fetched) byId.set(a.id, a);
+            return Array.from(byId.values());
           });
-      }
+        })
+        .catch((err) => {
+          // Never wipe the calendar on a failed refetch. Keep the tiles we
+          // have and roll the loaded range back so a later navigation retries.
+          console.error("Failed to extend loaded date range:", err);
+          loadedRangeRef.current = current;
+        });
     },
     []
   );
