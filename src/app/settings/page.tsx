@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Sun, Moon, Monitor, Coffee, Check, Palmtree, RotateCcw } from "lucide-react";
+import { Sun, Moon, Monitor, Coffee, Check, Palmtree, RotateCcw, ShieldCheck, Download, ArrowRightLeft } from "lucide-react";
 import { Theme, THEME_OPTIONS, applyTheme } from "@/lib/theme";
 import { getPreferences, setPreferences, UserPreferences } from "@/lib/preferences";
 import { useData } from "@/components/DataProvider";
+import { useAuth } from "@/components/AuthProvider";
+import { canAdmin } from "@/lib/auth";
+import { exportAppointments, exportComparison } from "@/lib/csv-export";
 import { crewTypeLabel } from "@/lib/calendar-utils";
 import { CrewType } from "@/lib/types";
 
@@ -22,7 +25,9 @@ const RESOURCE_TYPE_ORDER: CrewType[] = [
 ];
 
 export default function SettingsPage() {
-  const { crews } = useData();
+  const { crews, appointments, unscheduledAppointments, rforceOrders, activeLinks } = useData();
+  const { role } = useAuth();
+  const isAdmin = canAdmin(role);
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
 
   useEffect(() => {
@@ -41,6 +46,17 @@ export default function SettingsPage() {
       .map((type) => ({ type, list: active.filter((c) => c.crew_type === type) }))
       .filter((g) => g.list.length > 0);
   }, [crews]);
+
+  // Admin exports cover scheduled and unscheduled tiles alike; cancelled ones
+  // only skew the counts shown on the buttons.
+  const allAppointments = useMemo(
+    () => [...appointments, ...unscheduledAppointments],
+    [appointments, unscheduledAppointments]
+  );
+  const activeApptCount = useMemo(
+    () => allAppointments.filter((a) => a.status !== "cancelled").length,
+    [allAppointments]
+  );
 
   function setCrewColor(crewId: string, color: string) {
     update({ color_overrides: { ...prefs!.color_overrides, [crewId]: color } });
@@ -172,6 +188,51 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
+
+        {/* ── Admin · data exports (admin role only) ────────────── */}
+        {isAdmin && (
+          <section className="border-t border-border pt-6">
+            <h2 className="text-sm font-semibold mb-1 flex items-center gap-1.5">
+              <ShieldCheck size={14} className="text-muted" /> Admin · data exports
+            </h2>
+            <p className="text-xs text-muted mb-3">
+              Export app data as CSV to compare against rForce imports and track data
+              cleanup. Only admins see this section.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={() => exportAppointments(allAppointments, crews, activeLinks)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-surface hover:bg-muted/20 transition-colors text-sm font-medium"
+              >
+                <Download size={16} className="text-primary" />
+                <div className="text-left">
+                  <div>App Appointments</div>
+                  <div className="text-[10px] text-muted font-normal">{activeApptCount} records</div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => exportComparison(allAppointments, rforceOrders, crews, activeLinks)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-surface hover:bg-muted/20 transition-colors text-sm font-medium"
+              >
+                <ArrowRightLeft size={16} className="text-orange-500" />
+                <div className="text-left">
+                  <div>App vs rForce</div>
+                  <div className="text-[10px] text-muted font-normal">
+                    {activeApptCount} app · {rforceOrders.length} rForce
+                  </div>
+                </div>
+              </button>
+            </div>
+            <p className="text-xs text-muted mt-3">
+              <strong>App Appointments</strong> — all active appointments in the scheduling app
+              with crew, date, WO#, and link status.
+              <br />
+              <strong>App vs rForce</strong> — side-by-side comparison matched by work order
+              number. Columns flag date/crew mismatches and items that exist in only one system.
+            </p>
+          </section>
+        )}
       </div>
     </div>
   );

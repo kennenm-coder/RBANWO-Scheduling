@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
-import { CalendarDays, ListTodo, Users, Settings, AlertTriangle } from "lucide-react";
+import { CalendarDays, ListTodo, Users, AlertTriangle } from "lucide-react";
 import { useData } from "./DataProvider";
 import { categorizeResourceNames, deniedNamesFromFlagKeys } from "@/lib/unmatched-resources";
 import { deriveIssues, deriveDroppedTiles, deriveAwaitingRForce } from "@/lib/issues";
@@ -13,7 +13,6 @@ const NAV_ITEMS = [
   { href: "/issues", label: "Issues", icon: AlertTriangle },
   { href: "/queue", label: "Queue", icon: ListTodo },
   { href: "/resources", label: "Resources", icon: Users },
-  { href: "/admin", label: "Admin", icon: Settings },
 ];
 
 export default function BottomNav() {
