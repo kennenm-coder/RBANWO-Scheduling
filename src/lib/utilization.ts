@@ -229,11 +229,16 @@ export interface DayJob {
   loadBearing: boolean;
   /** False for an install with no material list — the flagged case. */
   hasTally: boolean;
-  /** Days the job spans. */
+  /** Calendar days the job spans, including any the crew does not work. */
   spanDays: number;
+  /**
+   * Days of the span the crew actually works — the span minus weekends, PTO,
+   * holidays. This, not `spanDays`, is what the load divides by.
+   */
+  workedDays: number;
   /** The whole job's points. */
   jobPoints: number;
-  /** This day's share — `jobPoints / spanDays`. */
+  /** This day's share — `jobPoints / workedDays`. */
   dayPoints: number;
   breakdown: BucketCount[];
 }
@@ -301,25 +306,46 @@ function targetFor(
  * leads, and crediting a helper with the lead's product count would
  * double-count the job.
  */
+interface ScheduledJob {
+  appt: UtilizationAppointment;
+  /** How many days the job's load is divided across. */
+  workedDays: number;
+}
+
 function indexLeadDays(
-  appointments: UtilizationAppointment[]
-): Map<string, UtilizationAppointment[]> {
-  const byCrewDay = new Map<string, UtilizationAppointment[]>();
+  appointments: UtilizationAppointment[],
+  isOff: (crewId: string, date: string) => string | null
+): Map<string, ScheduledJob[]> {
+  const byCrewDay = new Map<string, ScheduledJob[]>();
   for (const appt of appointments) {
     if (!appt.crew_id || !appt.scheduled_date) continue;
     if (!COUNTED_STATUSES.includes(appt.status)) continue;
-    for (const date of getSpannedDates(appt.scheduled_date, appt.duration_days)) {
+
+    const spanned = getSpannedDates(appt.scheduled_date, appt.duration_days);
+    // A span is CALENDAR days, so a Friday-start 3-day job covers Sat and Sun.
+    // Dividing by the raw span and then zeroing the off days threw that work
+    // away: 36 points over Fri/Sat/Sun scored 12, and the installer read as a
+    // third as busy as they were. Divide by the days actually worked instead,
+    // so the job's full load always lands somewhere.
+    const worked = spanned.filter((d) => !isOff(appt.crew_id!, d));
+    // Every day blocked and the job booked anyway (the scheduler can override
+    // availability) — the work still happened, so spread it over the span and
+    // let classifyDay count those days as worked.
+    const effective = worked.length > 0 ? worked : spanned;
+
+    for (const date of effective) {
       const key = `${appt.crew_id}|${date}`;
+      const entry: ScheduledJob = { appt, workedDays: effective.length };
       const list = byCrewDay.get(key);
-      if (list) list.push(appt);
-      else byCrewDay.set(key, [appt]);
+      if (list) list.push(entry);
+      else byCrewDay.set(key, [entry]);
     }
   }
   return byCrewDay;
 }
 
 function buildDayJob(
-  appt: UtilizationAppointment,
+  { appt, workedDays }: ScheduledJob,
   tallyByOrder: Map<string, InstallTally>,
   weights: WeightMap
 ): DayJob {
@@ -327,6 +353,7 @@ function buildDayJob(
   const order = appt.order_number?.trim() || "";
   const tally = order ? tallyByOrder.get(order) : undefined;
   const spanDays = Math.max(1, appt.duration_days || 1);
+  const divisor = Math.max(1, workedDays);
   const breakdown = tally ? tallyBreakdown(tally, weights) : [];
   const jobPoints = tally ? tallyPoints(tally, weights) : 0;
   return {
@@ -339,8 +366,9 @@ function buildDayJob(
     // Only load-bearing work NEEDS a tally; a service call is not "missing" one.
     hasTally: loadBearing ? !!tally : true,
     spanDays,
+    workedDays: divisor,
     jobPoints,
-    dayPoints: jobPoints / spanDays,
+    dayPoints: jobPoints / divisor,
     breakdown,
   };
 }
@@ -352,11 +380,15 @@ function classifyDay(
   target: number,
   offReason: string | null
 ): CrewDay {
-  if (offReason) {
+  const installJobs = jobs.filter((j) => j.loadBearing);
+
+  // An off day with install work on it is not an off day. The scheduler can
+  // deliberately book over a blocked window (allow_availability_conflict), and
+  // when they have, the work is real and has to be counted — otherwise its
+  // points vanish and the installer looks idle on a day they were on site.
+  if (offReason && installJobs.length === 0) {
     return { crewId, date, dayClass: "off", points: 0, capacity: 0, jobs, offReason };
   }
-
-  const installJobs = jobs.filter((j) => j.loadBearing);
 
   // An install with no material list takes the whole day out of the ratio.
   if (installJobs.some((j) => !j.hasTally)) {
@@ -378,7 +410,7 @@ function classifyDay(
 /** Build one row per installer: the day grid plus its range rollup. */
 export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
   const { crews, dates, appointments, tallyByOrder, weights, settings, targets, isOff } = input;
-  const byCrewDay = indexLeadDays(appointments);
+  const byCrewDay = indexLeadDays(appointments, isOff);
   const goalFraction = settings.goal_utilization_pct / 100;
 
   const rows: CrewUtilization[] = [];
@@ -388,8 +420,8 @@ export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
     const days: CrewDay[] = [];
 
     for (const date of dates) {
-      const appts = byCrewDay.get(`${crew.id}|${date}`) || [];
-      const jobs = appts.map((a) => buildDayJob(a, tallyByOrder, weights));
+      const scheduled = byCrewDay.get(`${crew.id}|${date}`) || [];
+      const jobs = scheduled.map((s) => buildDayJob(s, tallyByOrder, weights));
       days.push(classifyDay(crew.id, date, jobs, target, isOff(crew.id, date)));
     }
 

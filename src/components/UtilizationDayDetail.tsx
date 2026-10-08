@@ -152,8 +152,18 @@ export default function UtilizationDayDetail({ row, day, onClose }: Props) {
                         </div>
                         {job.spanDays > 1 && (
                           <p className="text-[11px] text-muted mt-1.5">
-                            {formatPoints(job.jobPoints)} pts over {job.spanDays} days ={" "}
+                            {formatPoints(job.jobPoints)} pts over {job.workedDays} worked{" "}
+                            {job.workedDays === 1 ? "day" : "days"} ={" "}
                             {formatPoints(job.dayPoints)}/day
+                            {job.workedDays < job.spanDays && (
+                              <>
+                                {" "}
+                                <span title="The span crosses days this crew does not work, so the load divides over the worked days only.">
+                                  ({job.spanDays}-day span, {job.spanDays - job.workedDays} not
+                                  worked)
+                                </span>
+                              </>
+                            )}
                           </p>
                         )}
                       </>

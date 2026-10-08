@@ -509,3 +509,62 @@ describe("isInstallerCrew", () => {
     ).toBe(true);
   });
 });
+
+describe("multi-day jobs that span a non-working day", () => {
+  const crew = makeCrew({ id: "lead", name: "Sam" });
+  // Fri Oct 9 2026 start, 3 days -> Fri, Sat, Sun. 18 inserts = 36 points.
+  const appointments = [
+    makeAppt({ id: "a", scheduled_date: "2026-10-09", duration_days: 3 }),
+  ];
+  const tallyByOrder = new Map([["PO-1", makeTally({ windows_if: 18 })]]);
+  const dates = ["2026-10-09", "2026-10-10", "2026-10-11"];
+  const weekendOff = (_c: string, d: string): string | null =>
+    d === "2026-10-10" || d === "2026-10-11" ? "Weekend" : null;
+
+  function run(isOff: (c: string, d: string) => string | null) {
+    return computeUtilization({
+      crews: [crew], dates, appointments, tallyByOrder,
+      weights, settings: SETTINGS, isOff,
+    })[0];
+  }
+
+  it("does not silently discard the weekend share of the job", () => {
+    // Regression: the span is CALENDAR days, so dividing by 3 and then zeroing
+    // Sat/Sun scored this 3-day job as 12 of 36 points. The installer read as a
+    // third as busy as they actually were.
+    expect(run(weekendOff).totalPoints).toBe(36);
+  });
+
+  it("divides the load over the days actually worked, not the raw span", () => {
+    const row = run(weekendOff);
+    // Only Friday is workable, so the whole job lands there — and reads as
+    // overloaded, which is the honest signal that the span crosses a weekend.
+    expect(row.days.map((d) => d.points)).toEqual([36, 0, 0]);
+    expect(row.days.map((d) => d.dayClass)).toEqual(["measurable", "off", "off"]);
+    expect(row.days[0].jobs[0].workedDays).toBe(1);
+  });
+
+  it("still spreads evenly when every day of the span is workable", () => {
+    const row = run(() => null);
+    expect(row.days.map((d) => d.points)).toEqual([12, 12, 12]);
+    expect(row.days[0].jobs[0].workedDays).toBe(3);
+  });
+
+  it("counts the work when the job is booked over a fully blocked span", () => {
+    // The scheduler can deliberately book across blocked days
+    // (allow_availability_conflict). The work is real either way.
+    const row = run(() => "PTO");
+    expect(row.totalPoints).toBe(36);
+    expect(row.days.map((d) => d.points)).toEqual([12, 12, 12]);
+    expect(row.days.every((d) => d.dayClass === "measurable")).toBe(true);
+  });
+
+  it("leaves a genuinely empty off day alone", () => {
+    const row = computeUtilization({
+      crews: [crew], dates: ["2026-10-10"], appointments: [], tallyByOrder,
+      weights, settings: SETTINGS, isOff: weekendOff,
+    })[0];
+    expect(row.days[0].dayClass).toBe("off");
+    expect(row.capacity).toBe(0);
+  });
+});
