@@ -303,11 +303,12 @@ week-at-a-time pager. Desktop shows the full range.
 
 ## Phasing
 
-**Phase 1 — view only — BUILT, migration not yet applied**
+**Phase 1 — view only — SHIPPED AND LIVE (2026-10-09)**
 
 | | |
 |---|---|
-| `supabase/migrations/20261008_001_installer_utilization.sql` | **not applied** — see below |
+| `supabase/migrations/20261008_001_installer_utilization.sql` | applied — tables, tally trigger, backfill |
+| `supabase/migrations/20261008_003_legacy_deal_points.sql` | applied — `legacy_points_per_day` (6) |
 | `src/lib/utilization.ts` | the math, leaf module |
 | `src/lib/utilization.test.ts` | 36 tests, including the three anchors |
 | `src/lib/utilization-store.ts` | the three reads + the off-day lookup |
@@ -320,16 +321,29 @@ Verified: 621 tests pass, clean typecheck, clean production build, and the page
 was rendered against fixtures through the real `computeUtilization` →
 `UtilizationGrid` pipeline on desktop and at phone width.
 
-**The app is safe to deploy before the migration is applied.** The page reads
-tables that do not exist yet, catches the error and says so, naming the
-migration. No other route touches any of this. The nav item only appears for
-manager and admin.
+**Validated against production, 2026-10-08.** 385 documents tallied, 1816
+units: 1007 insert windows, 551 full frame, 0 EJ, 29 specialty, 98 patio, 130
+entry, 1 storm, 0 screens. Zero unclassified, so the abbreviation list covers
+the whole catalog, and the columns sum to `total_units` exactly.
 
-Still unverified, and only verifiable after the migration is applied: the real
-join rate between `sched_appointments.order_number` and
-`install_docs.order_number`. The join is the one Duck Force already uses, but
-how many install tiles actually hit a material list in practice is a question
-only live data answers. The coverage line at the top of the page reports it.
+That works out to roughly **13.3 points per job ≈ 1.1 days**, which is an
+independent confirmation that the 12-point day is calibrated right — most
+installs are one-day jobs.
+
+Two things the real data changed:
+
+- **The TOAST argument for the trigger was overstated.** Average document is
+  3.2 KB, max 9.3 KB, whole table 1.9 MB. A query-time rollup would have been
+  fine at this size. The trigger is still cheaper and still correct, but if it
+  ever causes trouble, dropping it for an on-demand function is a viable
+  fallback — which was not true under the original (wrong) premise.
+- **Both documented divergences from the material-list classifier are inert.**
+  EJ frames and screens are zero in practice and storm doors are one, out of
+  1816 units.
+
+Still unknown: the real join rate between `sched_appointments.order_number` and
+`install_docs.order_number` for SCHEDULED work. The coverage line at the top of
+the page reports it every time the tab is opened.
 
 **Phase 2 — tuning UI**
 Admin editors in Settings for the weight table, the company target, and per-installer
