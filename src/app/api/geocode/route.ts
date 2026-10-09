@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireSchedulingUser } from "@/lib/server-auth";
 
 // Server-side geocoding proxy — avoids CORS issues with Nominatim/Census
 // These APIs don't allow browser-origin requests, so we proxy through our own server.
+//
+// Signed-in schedulers only. Left open, this is a free address-lookup proxy for
+// anyone who finds the URL, and every upstream request carries our User-Agent
+// and contact email — so abuse gets OUR identity rate-limited or banned by
+// Nominatim, whose terms we are using it under.
 
 async function censusGeocode(address: string) {
   const cleaned = address.replace(/\s+United States$/i, "").replace(/\s+US$/i, "").trim();
@@ -114,6 +120,9 @@ function extractZip(address: string): string | null {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireSchedulingUser(request);
+  if (auth.error) return auth.error;
+
   try {
     const { address, mode } = await request.json();
 

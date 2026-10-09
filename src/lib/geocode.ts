@@ -164,12 +164,27 @@ function isResultInState(geo: GeoResult, state: string): boolean {
 
 // All external geocoding goes through /api/geocode to avoid CORS issues.
 // The API route calls Nominatim/Census server-side.
+//
+// That route verifies the caller, and this app's session lives in localStorage
+// rather than a cookie, so the access token has to be sent explicitly.
+async function authHeaders(): Promise<Record<string, string>> {
+  try {
+    const sb = getSupabase();
+    if (!sb) return {};
+    const { data: { session } } = await sb.auth.getSession();
+    return session?.access_token
+      ? { Authorization: `Bearer ${session.access_token}` }
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 async function proxyGeocode(address: string, mode?: "zip"): Promise<GeoResult | null> {
   try {
     const res = await fetch("/api/geocode", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify({ address, mode }),
     });
     if (!res.ok) return null;
@@ -277,7 +292,7 @@ export async function geocodeForComparison(address: string): Promise<GeoResult |
   try {
     const res = await fetch("/api/geocode", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify({ address }),
     });
     if (!res.ok) return null;
