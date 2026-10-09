@@ -414,7 +414,10 @@ describe("computeUtilization — multi-day jobs", () => {
 });
 
 describe("computeUtilization — attribution", () => {
-  it("credits the lead, not the helper", () => {
+  it("credits the lead AND the helper, without splitting the day", () => {
+    // Both people spend the day on the job, so both are fully occupied. This
+    // double-counts points across the company on purpose: the number is per
+    // person occupancy, not company throughput.
     const lead = makeCrew({ id: "lead", name: "Sam" });
     const helper = makeCrew({ id: "helper", name: "Pat", crew_type: "second" });
     const rows = computeUtilization({
@@ -427,8 +430,8 @@ describe("computeUtilization — attribution", () => {
       isOff: neverOff,
     });
     expect(rows[0].totalPoints).toBe(12);
-    expect(rows[1].totalPoints).toBe(0);
-    expect(rows[1].days[0].dayClass).toBe("idle");
+    expect(rows[1].totalPoints).toBe(12);
+    expect(rows[1].days[0].dayClass).toBe("measurable");
   });
 
   it("honors a per-installer target override", () => {
@@ -645,5 +648,62 @@ describe("a material list with nothing countable on it", () => {
     expect(row.days[0].dayClass).toBe("measurable");
     expect(row.days[0].points).toBe(12);
     expect(row.legacyJobs).toHaveLength(0);
+  });
+});
+
+describe("helper crews", () => {
+  const lead = makeCrew({ id: "lead", name: "Sam" });
+  const helper = makeCrew({ id: "helper", name: "Morgan" });
+
+  // Seen in production: a 5-day job led by Sam with Morgan as the second crew.
+  // Morgan's whole week read 0 and went red while he was on site all week.
+  const fiveDay = makeAppt({
+    id: "a",
+    crew_id: "lead",
+    secondary_crew_id: "helper",
+    scheduled_date: "2026-10-05",
+    duration_days: 5,
+  });
+  const dates = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"];
+
+  function run(appt = fiveDay) {
+    return computeUtilization({
+      crews: [lead, helper],
+      dates,
+      appointments: [appt],
+      // 30 inserts = 60 points over 5 days = 12/day.
+      tallyByOrder: new Map([["PO-1", makeTally({ windows_if: 30 })]]),
+      weights,
+      settings: SETTINGS,
+      isOff: neverOff,
+    });
+  }
+
+  it("credits the helper for the days they are on the job", () => {
+    const [sam, morgan] = run();
+    expect(morgan.days.map((d) => d.points)).toEqual([12, 12, 12, 12, 12]);
+    expect(morgan.utilizationPct).toBe(100);
+    expect(morgan.idleDays).toBe(0);
+    // The lead is unaffected — the day is not split between them, because both
+    // people are fully occupied by it.
+    expect(sam.utilizationPct).toBe(100);
+  });
+
+  it("marks who is leading and who is helping", () => {
+    const [sam, morgan] = run();
+    expect(sam.days[0].jobs[0].role).toBe("lead");
+    expect(morgan.days[0].jobs[0].role).toBe("helper");
+  });
+
+  it("honours partial helper days", () => {
+    const [, morgan] = run({ ...fiveDay, secondary_day_offsets: [1, 2] });
+    // On site days 2 and 3 only, at the job's normal daily intensity.
+    expect(morgan.days.map((d) => d.points)).toEqual([0, 12, 12, 0, 0]);
+    expect(morgan.idleDays).toBe(3);
+  });
+
+  it("does not double-credit a crew listed twice on one job", () => {
+    const [sam] = run({ ...fiveDay, secondary_crew_id: "lead" });
+    expect(sam.days[0].points).toBe(12);
   });
 });

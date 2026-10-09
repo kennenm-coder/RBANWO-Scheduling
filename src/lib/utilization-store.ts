@@ -37,7 +37,7 @@ import {
 
 /** Exactly the columns `computeUtilization` reads. */
 const APPOINTMENT_COLUMNS =
-  "id, crew_id, appointment_type, order_number, work_order_number, customer_name, scheduled_date, duration_days, status";
+  "id, crew_id, secondary_crew_id, tertiary_crew_id, secondary_day_offsets, tertiary_day_offsets, appointment_type, order_number, work_order_number, customer_name, scheduled_date, duration_days, status";
 
 const TALLY_COLUMNS =
   "job_id, order_number, windows_if, windows_ff, windows_ej, specialty_if, specialty_ff, specialty_ej, patio_doors, entry_doors, storm_doors, screens, other_units, total_units, doc_version, built_at";
@@ -85,12 +85,18 @@ export async function fetchUtilizationAppointments(
     .gte("scheduled_date", widenedStart)
     .lte("scheduled_date", endDate)
     .in("status", COUNTED_STATUSES as string[])
-    // Installers only. Without this the query drags back every measure tech,
-    // service rep and JIP crew for a six-week window just to discard them
-    // client-side — the single biggest avoidable read on this page. All of an
-    // installer's appointment TYPES are still needed, since service and JIP
+    // Installers only -- but across all three crew slots, not just the lead.
+    // Filtering on crew_id alone hid every job where an installer was the
+    // SECOND crew, so their week read as idle while they were on site. All of
+    // an installer's appointment TYPES are still needed, since service and JIP
     // days are what make a day `non_install` rather than `idle`.
-    .in("crew_id", installerCrewIds)
+    .or(
+      [
+        `crew_id.in.(${installerCrewIds.join(",")})`,
+        `secondary_crew_id.in.(${installerCrewIds.join(",")})`,
+        `tertiary_crew_id.in.(${installerCrewIds.join(",")})`,
+      ].join(",")
+    )
     .order("scheduled_date", { ascending: true });
 
   // Throw rather than returning [] — a swallowed error here would render as

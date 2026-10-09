@@ -42,6 +42,10 @@ function tint(accent: string): string {
 /** A day's own band, measured against its capacity rather than the range. */
 function dayBand(day: CrewDay, goalPct: number): UtilBand {
   if (day.capacity <= 0) return "none";
+  // Service / JIP / LSWP days scored zero product and so came out blood red,
+  // which reads as "this person did nothing" when they were out working. They
+  // get a neutral cell: still zero product load, but not an accusation.
+  if (day.dayClass === "non_install") return "none";
   return utilizationBand((day.points / day.capacity) * 100, goalPct);
 }
 

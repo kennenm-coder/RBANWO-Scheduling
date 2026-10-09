@@ -19,7 +19,16 @@
  */
 
 import type { Appointment, AppointmentType, Crew } from "./types";
-import { getSpannedDates } from "./crew-days";
+import { crewDayOffsets, getSpannedDates } from "./crew-days";
+
+/**
+ * Saturday or Sunday. Parsed at noon so a timezone offset can never roll the
+ * date onto the previous or next day.
+ */
+function isWeekend(date: string): boolean {
+  const day = new Date(`${date}T12:00:00`).getDay();
+  return day === 0 || day === 6;
+}
 
 /**
  * The only appointment columns this module reads. Narrower than `Appointment`
@@ -39,6 +48,12 @@ export type UtilizationAppointment = Pick<
   | "scheduled_date"
   | "duration_days"
   | "status"
+  // Helper slots. A second or third crew on a job is standing on that job all
+  // day, so their utilization has to count it.
+  | "secondary_crew_id"
+  | "tertiary_crew_id"
+  | "secondary_day_offsets"
+  | "tertiary_day_offsets"
 >;
 
 // ─── Shape of the precomputed tally ─────────────────────────────────────────
@@ -238,6 +253,8 @@ export interface DayJob {
   workOrderNumber: string | null;
   customerName: string;
   appointmentType: AppointmentType;
+  /** Lead on the job, or a helper standing on it. */
+  role: CrewRole;
   /** Carries product load (an install), as opposed to service/JIP/etc. */
   loadBearing: boolean;
   /** False for an install with no material list — a "legacy deal". */
@@ -335,42 +352,83 @@ interface ScheduledJob {
   appt: UtilizationAppointment;
   /** How many days the job's load is divided across. */
   workedDays: number;
+  /** Whether this crew owns the job or is helping on it. */
+  role: CrewRole;
 }
 
-function indexLeadDays(
+export type CrewRole = "lead" | "helper";
+
+/**
+ * Every (crew, date) a job occupies — for the LEAD and for any helper crews.
+ *
+ * Helpers were left out of v1, and on real data that was plainly wrong: a
+ * second installer on a 5-day job is on that site all week, but their grid
+ * read zero and went red while they were working. Utilization here is per
+ * person occupancy, so the job's per-day load is credited to EVERYONE standing
+ * on it rather than split between them — two people on a full day are both
+ * fully occupied, not half each.
+ *
+ * The job's per-day rate is set by the LEAD's worked days, so a helper covering
+ * 2 days of a 5-day job gets that job's normal daily intensity on their 2 days,
+ * not the whole job compressed into them.
+ */
+function indexCrewDays(
   appointments: UtilizationAppointment[],
   isOff: (crewId: string, date: string) => string | null
 ): Map<string, ScheduledJob[]> {
   const byCrewDay = new Map<string, ScheduledJob[]>();
+
   for (const appt of appointments) {
-    if (!appt.crew_id || !appt.scheduled_date) continue;
+    if (!appt.scheduled_date) continue;
     if (!COUNTED_STATUSES.includes(appt.status)) continue;
 
     const spanned = getSpannedDates(appt.scheduled_date, appt.duration_days);
+
     // A span is CALENDAR days, so a Friday-start 3-day job covers Sat and Sun.
     // Dividing by the raw span and then zeroing the off days threw that work
     // away: 36 points over Fri/Sat/Sun scored 12, and the installer read as a
-    // third as busy as they were. Divide by the days actually worked instead,
-    // so the job's full load always lands somewhere.
-    const worked = spanned.filter((d) => !isOff(appt.crew_id!, d));
-    // Every day blocked and the job booked anyway (the scheduler can override
-    // availability) — the work still happened, so spread it over the span and
-    // let classifyDay count those days as worked.
-    const effective = worked.length > 0 ? worked : spanned;
+    // third as busy as they were. Divide by the days actually worked.
+    const leadId = appt.crew_id;
+    const leadWorked = leadId ? spanned.filter((d) => !isOff(leadId, d)) : spanned;
+    const divisor = Math.max(1, leadWorked.length || spanned.length);
 
-    for (const date of effective) {
-      const key = `${appt.crew_id}|${date}`;
-      const entry: ScheduledJob = { appt, workedDays: effective.length };
-      const list = byCrewDay.get(key);
-      if (list) list.push(entry);
-      else byCrewDay.set(key, [entry]);
+    const slots: Array<{ id: string | null; role: CrewRole }> = [
+      { id: appt.crew_id, role: "lead" },
+      { id: appt.secondary_crew_id ?? null, role: "helper" },
+      { id: appt.tertiary_crew_id ?? null, role: "helper" },
+    ];
+
+    const seen = new Set<string>();
+    for (const slot of slots) {
+      if (!slot.id || seen.has(slot.id)) continue;
+      seen.add(slot.id);
+
+      // Honour partial helper days: a helper marked for days 2-3 of a span is
+      // only on site for those.
+      const offsets = crewDayOffsets(appt, slot.id);
+      const crewDates = offsets
+        ? offsets.map((i) => spanned[i]).filter(Boolean)
+        : spanned;
+
+      const worked = crewDates.filter((d) => !isOff(slot.id!, d));
+      // Every day blocked and the job booked anyway (the scheduler can override
+      // availability) — the work still happened, so keep the crew's own dates.
+      const effective = worked.length > 0 ? worked : crewDates;
+
+      for (const date of effective) {
+        const key = `${slot.id}|${date}`;
+        const entry: ScheduledJob = { appt, workedDays: divisor, role: slot.role };
+        const list = byCrewDay.get(key);
+        if (list) list.push(entry);
+        else byCrewDay.set(key, [entry]);
+      }
     }
   }
   return byCrewDay;
 }
 
 function buildDayJob(
-  { appt, workedDays }: ScheduledJob,
+  { appt, workedDays, role }: ScheduledJob,
   tallyByOrder: Map<string, InstallTally>,
   weights: WeightMap,
   legacyPointsPerDay: number
@@ -402,6 +460,7 @@ function buildDayJob(
     customerName: appt.customer_name,
     appointmentType: appt.appointment_type,
     loadBearing,
+    role,
     // Only load-bearing work NEEDS a tally; a service call is not "missing" one.
     hasTally: loadBearing ? !!tally : true,
     emptyTally: loadBearing && !!found && !tally,
@@ -422,6 +481,26 @@ function classifyDay(
   offReason: string | null
 ): CrewDay {
   const installJobs = jobs.filter((j) => j.loadBearing);
+
+  // An EMPTY weekend is not idle capacity, it is a day nobody was expected to
+  // work. Only some crews carry an availability rule covering weekends, so
+  // without this the ones that don't were charged a full 12-point Saturday and
+  // Sunday every week -- about 96 phantom points per four-week range. That is
+  // what put most of the grid in the red and kept anyone from reaching goal.
+  //
+  // A weekend day WITH work booked still counts: they worked it, so it belongs
+  // in both halves of the ratio.
+  if (jobs.length === 0 && isWeekend(date)) {
+    return {
+      crewId,
+      date,
+      dayClass: "off",
+      points: 0,
+      capacity: 0,
+      jobs,
+      offReason: offReason || "Weekend",
+    };
+  }
 
   // An off day with install work on it is not an off day. The scheduler can
   // deliberately book over a blocked window (allow_availability_conflict), and
@@ -451,7 +530,7 @@ function classifyDay(
 /** Build one row per installer: the day grid plus its range rollup. */
 export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
   const { crews, dates, appointments, tallyByOrder, weights, settings, targets, isOff } = input;
-  const byCrewDay = indexLeadDays(appointments, isOff);
+  const byCrewDay = indexCrewDays(appointments, isOff);
   const goalFraction = settings.goal_utilization_pct / 100;
   const legacyRate = Number.isFinite(settings.legacy_points_per_day)
     ? Math.max(0, settings.legacy_points_per_day)
