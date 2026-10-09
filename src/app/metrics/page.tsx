@@ -28,6 +28,7 @@ import {
   buildOffLookup,
   datesInRange,
   fetchInstallTallies,
+  fetchRForceUnits,
   fetchUtilizationAppointments,
   fetchUtilizationConfig,
   type UtilizationConfig,
@@ -67,6 +68,7 @@ export default function MetricsPage() {
   const [weeks, setWeeks] = useState(DEFAULT_WEEKS);
   const [appointments, setAppointments] = useState<UtilizationAppointment[]>([]);
   const [tallyByOrder, setTallyByOrder] = useState<Map<string, InstallTally>>(new Map());
+  const [rforceUnitsByWo, setRforceUnitsByWo] = useState<Map<string, number>>(new Map());
   const [config, setConfig] = useState<UtilizationConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,9 +143,21 @@ export default function MetricsPage() {
           .map((a) => a.order_number?.trim())
           .filter((o): o is string => !!o);
         const tallies = await fetchInstallTallies(orders);
+        // Only legacy deals need an rForce unit count, so ask about those
+        // work orders alone rather than the whole window.
+        const legacyWos = appts
+          .filter(
+            (a) =>
+              LOAD_BEARING_TYPES.includes(a.appointment_type) &&
+              !(a.order_number?.trim() && tallies.has(a.order_number.trim()))
+          )
+          .map((a) => a.work_order_number?.trim())
+          .filter((w): w is string => !!w);
+        const units = await fetchRForceUnits(legacyWos);
         if (cancelled) return;
         setAppointments(appts);
         setTallyByOrder(tallies);
+        setRforceUnitsByWo(units);
       } catch (e) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : "Could not load utilization data.");
@@ -177,13 +191,14 @@ export default function MetricsPage() {
         dates,
         appointments,
         tallyByOrder,
+        rforceUnitsByWo,
         weights: buildWeightMap(config.weights),
         settings: config.settings,
         targets: config.targets,
         isOff,
       })
     );
-  }, [config, installers, dates, appointments, tallyByOrder, isOff]);
+  }, [config, installers, dates, appointments, tallyByOrder, rforceUnitsByWo, isOff]);
 
   const coverage = useMemo(() => summarizeCoverage(rows), [rows]);
 

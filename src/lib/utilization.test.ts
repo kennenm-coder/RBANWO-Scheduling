@@ -712,11 +712,16 @@ describe("helper crews", () => {
   });
 });
 
-describe("legacy deals estimated from the unit count", () => {
+describe("legacy deals estimated from the rForce unit count", () => {
   const crew = makeCrew({ id: "lead", name: "Sam" });
   const withUnits = { ...SETTINGS, legacy_points_per_unit: 2.8 };
 
-  function run(appt: Partial<Appointment>, settings = withUnits, days = 1) {
+  function run(
+    appt: Partial<Appointment>,
+    units: Map<string, number>,
+    settings = withUnits,
+    days = 1
+  ) {
     const dates = Array.from({ length: days }, (_, i) =>
       `2026-10-${String(5 + i).padStart(2, "0")}`
     );
@@ -725,37 +730,55 @@ describe("legacy deals estimated from the unit count", () => {
       dates,
       appointments: [makeAppt({ id: "a", order_number: "PO-NOPE", ...appt })],
       tallyByOrder: new Map(),
+      rforceUnitsByWo: units,
       weights,
       settings,
       isOff: neverOff,
     })[0];
   }
 
-  it("uses the unit count when the job has one", () => {
-    // Production case: order 04761892, 92 units over 5 days with no material
-    // list. At the flat 6/day it counted as 30 points for the whole job --
-    // roughly an eighth of its real weight.
-    const row = run({ product_count: 92, duration_days: 5 }, withUnits, 5);
-    expect(row.days[0].jobs[0].jobPoints).toBeCloseTo(257.6, 1);
+  it("uses work_orders.total_units, NOT appointments.product_count", () => {
+    // Order 04761892 in production: product_count 92 against total_units 23
+    // (14 windows + 9 doors). product_count counts line items, so estimating
+    // from it inflated the job fourfold and read 430% of a 5-day week.
+    const row = run(
+      { work_order_number: "WO-1", product_count: 92, duration_days: 5 },
+      new Map([["WO-1", 23]]),
+      withUnits,
+      5
+    );
+    expect(row.days[0].jobs[0].units).toBe(23);
+    expect(row.days[0].jobs[0].jobPoints).toBeCloseTo(64.4, 1);
     expect(row.days[0].jobs[0].estimateBasis).toBe("units");
-    expect(row.days[0].points).toBeCloseTo(51.52, 1);
+    // ~107% of a full day, not 430%.
+    expect(row.days[0].points).toBeCloseTo(12.88, 1);
   });
 
-  it("falls back to the per-day rate when there is no unit count", () => {
-    const row = run({ product_count: null, duration_days: 3 }, withUnits, 3);
-    expect(row.days[0].jobs[0].jobPoints).toBe(18);
+  it("falls back to the per-day rate when rForce has no unit count", () => {
+    const row = run(
+      { work_order_number: "WO-1", product_count: 92, duration_days: 3 },
+      new Map(),
+      withUnits,
+      3
+    );
     expect(row.days[0].jobs[0].estimateBasis).toBe("days");
+    expect(row.days[0].jobs[0].jobPoints).toBe(18);
     expect(row.days[0].points).toBe(6);
   });
 
-  it("falls back when the unit count is zero", () => {
-    const row = run({ product_count: 0 });
+  it("ignores product_count entirely", () => {
+    const row = run({ work_order_number: null, product_count: 999 }, new Map());
+    expect(row.days[0].jobs[0].units).toBe(0);
     expect(row.days[0].jobs[0].estimateBasis).toBe("days");
     expect(row.days[0].points).toBe(6);
   });
 
   it("a per-unit rate of zero disables unit estimates entirely", () => {
-    const row = run({ product_count: 92 }, { ...SETTINGS, legacy_points_per_unit: 0 });
+    const row = run(
+      { work_order_number: "WO-1" },
+      new Map([["WO-1", 23]]),
+      { ...SETTINGS, legacy_points_per_unit: 0 }
+    );
     expect(row.days[0].jobs[0].estimateBasis).toBe("days");
     expect(row.days[0].points).toBe(6);
   });
@@ -764,8 +787,11 @@ describe("legacy deals estimated from the unit count", () => {
     const row = computeUtilization({
       crews: [crew],
       dates: ["2026-10-05"],
-      appointments: [makeAppt({ id: "a", order_number: "PO-1", product_count: 92 })],
+      appointments: [
+        makeAppt({ id: "a", order_number: "PO-1", work_order_number: "WO-1" }),
+      ],
       tallyByOrder: new Map([["PO-1", makeTally({ order_number: "PO-1", windows_if: 6 })]]),
+      rforceUnitsByWo: new Map([["WO-1", 23]]),
       weights,
       settings: withUnits,
       isOff: neverOff,

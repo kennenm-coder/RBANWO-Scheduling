@@ -143,6 +143,45 @@ export async function fetchInstallTallies(
   return byOrder;
 }
 
+/**
+ * rForce `total_units` for the given work orders — the real installable unit
+ * count behind a legacy deal.
+ *
+ * Only called for jobs with NO material list, so it stays small. Deliberately
+ * not `sched_appointments.product_count`: that counts line items, not units
+ * (order 04761892 is product_count 92 against total_units 23), and estimating
+ * from it inflated big jobs fourfold.
+ */
+export async function fetchRForceUnits(
+  workOrderNumbers: string[]
+): Promise<Map<string, number>> {
+  const byWo = new Map<string, number>();
+  const sb = getSupabase();
+  if (!sb) return byWo;
+
+  const unique = [...new Set(workOrderNumbers.map((w) => w.trim()).filter(Boolean))];
+  if (unique.length === 0) return byWo;
+
+  for (let i = 0; i < unique.length; i += IN_CHUNK) {
+    const chunk = unique.slice(i, i + IN_CHUNK);
+    const { data, error } = await sb
+      .from("work_orders")
+      .select("work_order_number, total_units")
+      .in("work_order_number", chunk);
+    if (error) throw error;
+
+    for (const row of (data as { work_order_number: string; total_units: number | null }[]) ?? []) {
+      const key = row.work_order_number?.trim();
+      const units = Number(row.total_units) || 0;
+      if (!key || units <= 0) continue;
+      // One row per WO across phases; keep the largest count seen.
+      byWo.set(key, Math.max(byWo.get(key) ?? 0, units));
+    }
+  }
+
+  return byWo;
+}
+
 export interface UtilizationConfig {
   weights: LoadWeight[];
   settings: UtilizationSettings;

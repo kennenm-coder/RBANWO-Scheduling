@@ -48,7 +48,10 @@ export type UtilizationAppointment = Pick<
   | "scheduled_date"
   | "duration_days"
   | "status"
-  /** rForce unit count. The only load signal a legacy deal has. */
+  /**
+   * NOT a unit count — see `rforceUnitsByWo`. Kept only so nothing silently
+   * reaches for it again.
+   */
   | "product_count"
   // Helper slots. A second or third crew on a job is standing on that job all
   // day, so their utilization has to count it.
@@ -294,7 +297,7 @@ export interface DayJob {
   jobPoints: number;
   /** This day's share — `jobPoints / workedDays`. */
   dayPoints: number;
-  /** rForce unit count on the appointment, 0 when it has none. */
+  /** rForce `total_units` for this job, 0 when rForce has no count. */
   units: number;
   breakdown: BucketCount[];
 }
@@ -342,6 +345,16 @@ export interface UtilizationInput {
   settings: UtilizationSettings;
   /** Per-crew target override; falls back to the company number. */
   targets?: Map<string, number>;
+  /**
+   * rForce `work_orders.total_units` by work order number — the real
+   * installable unit count for a legacy deal.
+   *
+   * Deliberately NOT `sched_appointments.product_count`. That field counts
+   * line items, not units: order 04761892 carries product_count 92 against
+   * total_units 23 (14 windows + 9 doors). Estimating from it inflated that
+   * job fourfold and put a plausible week at 430% of capacity.
+   */
+  rforceUnitsByWo?: Map<string, number>;
   /** Reason this crew is off that day, or null when workable. */
   isOff: (crewId: string, date: string) => string | null;
 }
@@ -447,7 +460,8 @@ function buildDayJob(
   tallyByOrder: Map<string, InstallTally>,
   weights: WeightMap,
   legacyPointsPerDay: number,
-  legacyPointsPerUnit: number
+  legacyPointsPerUnit: number,
+  rforceUnitsByWo: Map<string, number>
 ): DayJob {
   const loadBearing = LOAD_BEARING_TYPES.includes(appt.appointment_type);
   const order = appt.order_number?.trim() || "";
@@ -467,7 +481,8 @@ function buildDayJob(
   // Prefer the unit count when the job has one. A flat per-day rate counted a
   // real 92-unit job as roughly an eighth of its weight; rForce's own unit
   // count gets far closer, even without knowing the frame mix.
-  const units = Number(appt.product_count) || 0;
+  const wo = appt.work_order_number?.trim() || "";
+  const units = wo ? Number(rforceUnitsByWo.get(wo)) || 0 : 0;
   const useUnits = estimated && units > 0 && legacyPointsPerUnit > 0;
   const estimateBasis: DayJob["estimateBasis"] = !estimated
     ? null
@@ -559,7 +574,10 @@ function classifyDay(
 
 /** Build one row per installer: the day grid plus its range rollup. */
 export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
-  const { crews, dates, appointments, tallyByOrder, weights, settings, targets, isOff } = input;
+  const {
+    crews, dates, appointments, tallyByOrder, weights, settings, targets, isOff,
+  } = input;
+  const rforceUnitsByWo = input.rforceUnitsByWo ?? new Map<string, number>();
   const byCrewDay = indexCrewDays(appointments, isOff);
   const goalFraction = settings.goal_utilization_pct / 100;
   const legacyRate = Number.isFinite(settings.legacy_points_per_day)
@@ -578,7 +596,7 @@ export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
     for (const date of dates) {
       const scheduled = byCrewDay.get(`${crew.id}|${date}`) || [];
       const jobs = scheduled.map((s) =>
-        buildDayJob(s, tallyByOrder, weights, legacyRate, legacyUnitRate)
+        buildDayJob(s, tallyByOrder, weights, legacyRate, legacyUnitRate, rforceUnitsByWo)
       );
       days.push(classifyDay(crew.id, date, jobs, target, isOff(crew.id, date)));
     }
