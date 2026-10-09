@@ -48,6 +48,8 @@ export type UtilizationAppointment = Pick<
   | "scheduled_date"
   | "duration_days"
   | "status"
+  /** rForce unit count. The only load signal a legacy deal has. */
+  | "product_count"
   // Helper slots. A second or third crew on a job is standing on that job all
   // day, so their utilization has to count it.
   | "secondary_crew_id"
@@ -105,6 +107,12 @@ export interface UtilizationSettings {
    * than hidden. See migration 20261008_002.
    */
   legacy_points_per_day: number;
+  /**
+   * Points per unit when a legacy deal carries a `product_count`. 2.8 is this
+   * company's measured average. Zero falls back to the per-day rate always.
+   * See migration 20261009_001.
+   */
+  legacy_points_per_unit: number;
 }
 
 /** Points per (product, frame), keyed `product|frame`. */
@@ -266,10 +274,15 @@ export interface DayJob {
    */
   emptyTally: boolean;
   /**
-   * True when `jobPoints` came from the legacy per-day rate rather than a real
-   * product count. The UI must never let an estimate read as a product tally.
+   * True when `jobPoints` is an estimate rather than a real product tally. The
+   * UI must never let an estimate read as a counted one.
    */
   estimated: boolean;
+  /**
+   * How the estimate was reached: from the job's rForce unit count, or from a
+   * flat rate per day it runs. Null when nothing was estimated.
+   */
+  estimateBasis: "units" | "days" | null;
   /** Calendar days the job spans, including any the crew does not work. */
   spanDays: number;
   /**
@@ -281,6 +294,8 @@ export interface DayJob {
   jobPoints: number;
   /** This day's share — `jobPoints / workedDays`. */
   dayPoints: number;
+  /** rForce unit count on the appointment, 0 when it has none. */
+  units: number;
   breakdown: BucketCount[];
 }
 
@@ -431,7 +446,8 @@ function buildDayJob(
   { appt, workedDays, role }: ScheduledJob,
   tallyByOrder: Map<string, InstallTally>,
   weights: WeightMap,
-  legacyPointsPerDay: number
+  legacyPointsPerDay: number,
+  legacyPointsPerUnit: number
 ): DayJob {
   const loadBearing = LOAD_BEARING_TYPES.includes(appt.appointment_type);
   const order = appt.order_number?.trim() || "";
@@ -448,11 +464,23 @@ function buildDayJob(
   // legacy rate for every day it RUNS (so a 3-day job is worth 3x a 1-day one),
   // then divided over the days actually worked like any other job.
   const estimated = loadBearing && !tally;
+  // Prefer the unit count when the job has one. A flat per-day rate counted a
+  // real 92-unit job as roughly an eighth of its weight; rForce's own unit
+  // count gets far closer, even without knowing the frame mix.
+  const units = Number(appt.product_count) || 0;
+  const useUnits = estimated && units > 0 && legacyPointsPerUnit > 0;
+  const estimateBasis: DayJob["estimateBasis"] = !estimated
+    ? null
+    : useUnits
+      ? "units"
+      : "days";
   const jobPoints = tally
     ? tallyPoints(tally, weights)
-    : estimated
-      ? legacyPointsPerDay * spanDays
-      : 0;
+    : useUnits
+      ? units * legacyPointsPerUnit
+      : estimated
+        ? legacyPointsPerDay * spanDays
+        : 0;
   return {
     appointmentId: appt.id,
     orderNumber: appt.order_number,
@@ -465,6 +493,8 @@ function buildDayJob(
     hasTally: loadBearing ? !!tally : true,
     emptyTally: loadBearing && !!found && !tally,
     estimated,
+    estimateBasis,
+    units,
     spanDays,
     workedDays: divisor,
     jobPoints,
@@ -535,6 +565,9 @@ export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
   const legacyRate = Number.isFinite(settings.legacy_points_per_day)
     ? Math.max(0, settings.legacy_points_per_day)
     : 6;
+  const legacyUnitRate = Number.isFinite(settings.legacy_points_per_unit)
+    ? Math.max(0, settings.legacy_points_per_unit)
+    : 2.8;
 
   const rows: CrewUtilization[] = [];
 
@@ -545,7 +578,7 @@ export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
     for (const date of dates) {
       const scheduled = byCrewDay.get(`${crew.id}|${date}`) || [];
       const jobs = scheduled.map((s) =>
-        buildDayJob(s, tallyByOrder, weights, legacyRate)
+        buildDayJob(s, tallyByOrder, weights, legacyRate, legacyUnitRate)
       );
       days.push(classifyDay(crew.id, date, jobs, target, isOff(crew.id, date)));
     }
@@ -703,7 +736,11 @@ export function describeDayPoints(day: CrewDay): string {
       lines.push(
         `${job.customerName} — ${job.emptyTally ? "LIST HAS NO COUNTABLE UNITS" : "LEGACY DEAL, no material list"}` +
           INDENT +
-          `estimated ${formatPoints(job.dayPoints)} pts${span}`
+          `estimated ${formatPoints(job.dayPoints)} pts${span}` +
+          INDENT +
+          (job.estimateBasis === "units"
+            ? `from ${job.units} rForce units (no frame mix known)`
+            : "from days scheduled — no unit count on this job")
       );
     } else {
       const mix = job.breakdown

@@ -139,12 +139,24 @@ export default function UtilizationDayDetail({ row, day, onClose }: Props) {
                             : "Legacy deal — no material list"}
                         </p>
                         <p className="text-[11px] text-muted mt-1">
-                          Estimated at {formatPoints(job.jobPoints / Math.max(1, job.spanDays))}{" "}
-                          pts per day it runs
-                          {job.spanDays > 1
-                            ? ` × ${job.spanDays} days = ${formatPoints(job.jobPoints)} pts`
-                            : ""}
-                          . Not a product count.
+                          {job.estimateBasis === "units" ? (
+                            <>
+                              Estimated from {job.units} rForce units ={" "}
+                              {formatPoints(job.jobPoints)} pts
+                              {job.spanDays > 1 ? ` over ${job.workedDays}d` : ""}. The frame
+                              mix is unknown, so this is an average, not a product count.
+                            </>
+                          ) : (
+                            <>
+                              Estimated at{" "}
+                              {formatPoints(job.jobPoints / Math.max(1, job.spanDays))} pts per
+                              day it runs
+                              {job.spanDays > 1
+                                ? ` × ${job.spanDays} days = ${formatPoints(job.jobPoints)} pts`
+                                : ""}
+                              . No unit count on this job, so not a product count either.
+                            </>
+                          )}
                         </p>
                       </div>
                     ) : (

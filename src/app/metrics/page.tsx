@@ -324,8 +324,9 @@ export default function MetricsPage() {
                     {" · "}
                     <span style={{ color: "var(--warning)" }}>
                       {coverage.legacyJobs} legacy deal
-                      {coverage.legacyJobs === 1 ? "" : "s"} estimated at{" "}
-                      {formatPoints(legacyRate)} pts/day across {coverage.estimatedDays} day
+                      {coverage.legacyJobs === 1 ? "" : "s"} estimated from unit counts (or{" "}
+                      {formatPoints(legacyRate)} pts/day without one) across{" "}
+                      {coverage.estimatedDays} day
                       {coverage.estimatedDays === 1 ? "" : "s"}
                     </span>
                   </>
@@ -351,8 +352,9 @@ export default function MetricsPage() {
                   Legacy deals — no material list ({coverage.legacyJobs})
                 </h2>
                 <p className="text-[11px] text-muted mb-2">
-                  Estimated at {formatPoints(legacyRate)} points per day they run, not counted
-                  from products. Building a material list for any of these replaces the estimate
+                  Estimated from the rForce unit count where there is one, otherwise{" "}
+                  {formatPoints(legacyRate)} points per day they run. Either way the frame mix
+                  is unknown. Building a material list for any of these replaces the estimate
                   with a real number.
                 </p>
                 <ul className="space-y-1.5">

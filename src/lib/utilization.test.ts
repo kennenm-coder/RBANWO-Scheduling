@@ -37,6 +37,9 @@ const SETTINGS: UtilizationSettings = {
   target_points_per_day: 12,
   goal_utilization_pct: 85,
   legacy_points_per_day: 6,
+  // Off by default in the fixtures so existing per-day expectations hold; the
+  // unit-based tests opt in explicitly.
+  legacy_points_per_unit: 0,
 };
 
 function makeTally(overrides: Partial<InstallTally> = {}): InstallTally {
@@ -705,5 +708,69 @@ describe("helper crews", () => {
   it("does not double-credit a crew listed twice on one job", () => {
     const [sam] = run({ ...fiveDay, secondary_crew_id: "lead" });
     expect(sam.days[0].points).toBe(12);
+  });
+});
+
+describe("legacy deals estimated from the unit count", () => {
+  const crew = makeCrew({ id: "lead", name: "Sam" });
+  const withUnits = { ...SETTINGS, legacy_points_per_unit: 2.8 };
+
+  function run(appt: Partial<Appointment>, settings = withUnits, days = 1) {
+    const dates = Array.from({ length: days }, (_, i) =>
+      `2026-10-${String(5 + i).padStart(2, "0")}`
+    );
+    return computeUtilization({
+      crews: [crew],
+      dates,
+      appointments: [makeAppt({ id: "a", order_number: "PO-NOPE", ...appt })],
+      tallyByOrder: new Map(),
+      weights,
+      settings,
+      isOff: neverOff,
+    })[0];
+  }
+
+  it("uses the unit count when the job has one", () => {
+    // Production case: order 04761892, 92 units over 5 days with no material
+    // list. At the flat 6/day it counted as 30 points for the whole job --
+    // roughly an eighth of its real weight.
+    const row = run({ product_count: 92, duration_days: 5 }, withUnits, 5);
+    expect(row.days[0].jobs[0].jobPoints).toBeCloseTo(257.6, 1);
+    expect(row.days[0].jobs[0].estimateBasis).toBe("units");
+    expect(row.days[0].points).toBeCloseTo(51.52, 1);
+  });
+
+  it("falls back to the per-day rate when there is no unit count", () => {
+    const row = run({ product_count: null, duration_days: 3 }, withUnits, 3);
+    expect(row.days[0].jobs[0].jobPoints).toBe(18);
+    expect(row.days[0].jobs[0].estimateBasis).toBe("days");
+    expect(row.days[0].points).toBe(6);
+  });
+
+  it("falls back when the unit count is zero", () => {
+    const row = run({ product_count: 0 });
+    expect(row.days[0].jobs[0].estimateBasis).toBe("days");
+    expect(row.days[0].points).toBe(6);
+  });
+
+  it("a per-unit rate of zero disables unit estimates entirely", () => {
+    const row = run({ product_count: 92 }, { ...SETTINGS, legacy_points_per_unit: 0 });
+    expect(row.days[0].jobs[0].estimateBasis).toBe("days");
+    expect(row.days[0].points).toBe(6);
+  });
+
+  it("never applies to a job that HAS a material list", () => {
+    const row = computeUtilization({
+      crews: [crew],
+      dates: ["2026-10-05"],
+      appointments: [makeAppt({ id: "a", order_number: "PO-1", product_count: 92 })],
+      tallyByOrder: new Map([["PO-1", makeTally({ order_number: "PO-1", windows_if: 6 })]]),
+      weights,
+      settings: withUnits,
+      isOff: neverOff,
+    })[0];
+    expect(row.days[0].points).toBe(12);
+    expect(row.days[0].jobs[0].estimated).toBe(false);
+    expect(row.days[0].jobs[0].estimateBasis).toBeNull();
   });
 });

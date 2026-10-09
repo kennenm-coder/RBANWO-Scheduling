@@ -37,7 +37,7 @@ import {
 
 /** Exactly the columns `computeUtilization` reads. */
 const APPOINTMENT_COLUMNS =
-  "id, crew_id, secondary_crew_id, tertiary_crew_id, secondary_day_offsets, tertiary_day_offsets, appointment_type, order_number, work_order_number, customer_name, scheduled_date, duration_days, status";
+  "id, crew_id, secondary_crew_id, tertiary_crew_id, secondary_day_offsets, tertiary_day_offsets, appointment_type, order_number, work_order_number, customer_name, scheduled_date, duration_days, status, product_count";
 
 const TALLY_COLUMNS =
   "job_id, order_number, windows_if, windows_ff, windows_ej, specialty_if, specialty_ff, specialty_ej, patio_doors, entry_doors, storm_doors, screens, other_units, total_units, doc_version, built_at";
@@ -52,6 +52,7 @@ const DEFAULT_SETTINGS: UtilizationSettings = {
   target_points_per_day: 12,
   goal_utilization_pct: 85,
   legacy_points_per_day: 6,
+  legacy_points_per_unit: 2.8,
 };
 
 /**
@@ -164,7 +165,9 @@ export async function fetchUtilizationConfig(): Promise<UtilizationConfig> {
     sb.from("sched_load_weights").select("product_key, frame_key, points"),
     sb
       .from("sched_utilization_settings")
-      .select("target_points_per_day, goal_utilization_pct, legacy_points_per_day")
+      .select(
+        "target_points_per_day, goal_utilization_pct, legacy_points_per_day, legacy_points_per_unit"
+      )
       .maybeSingle(),
     sb.from("sched_crew_targets").select("crew_id, target_points_per_day"),
   ]);
@@ -191,6 +194,9 @@ export async function fetchUtilizationConfig(): Promise<UtilizationConfig> {
     legacy_points_per_day: Number.isFinite(Number(raw?.legacy_points_per_day))
       ? Math.max(0, Number(raw!.legacy_points_per_day))
       : DEFAULT_SETTINGS.legacy_points_per_day,
+    legacy_points_per_unit: Number.isFinite(Number(raw?.legacy_points_per_unit))
+      ? Math.max(0, Number(raw!.legacy_points_per_unit))
+      : DEFAULT_SETTINGS.legacy_points_per_unit,
   };
 
   const targets = new Map<string, number>();
