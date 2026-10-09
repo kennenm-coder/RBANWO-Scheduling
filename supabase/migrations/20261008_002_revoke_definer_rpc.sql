@@ -27,6 +27,21 @@
 --
 -- Idempotent. Safe to re-run.
 
+-- ── Project guard: this file belongs to the SHARED RbA project ──────────────
+-- (xusqjotoyntnfysquvlv — the calendar / scheduling / cut-list / TrimGauge
+-- database). task-os has its own separate project. Fail loudly rather than
+-- half-apply somewhere else.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'allowed_emails'
+  ) then
+    raise exception
+      'WRONG DATABASE: public.allowed_emails is missing, so this is not the shared RbA project. Nothing was applied.';
+  end if;
+end $$;
+
 REVOKE ALL ON FUNCTION public.sched_publish_day_crews(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.sched_publish_day_crews(text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.sched_publish_day_crews(text) TO authenticated;
