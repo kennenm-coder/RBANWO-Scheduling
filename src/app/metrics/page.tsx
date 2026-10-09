@@ -18,6 +18,7 @@ import {
   summarizeCoverage,
   type CrewDay,
   type CrewUtilization,
+  type DayJob,
   type InstallTally,
   type UtilizationAppointment,
 } from "@/lib/utilization";
@@ -215,6 +216,7 @@ export default function MetricsPage() {
 
   const goalPct = config?.settings.goal_utilization_pct ?? 85;
   const target = config?.settings.target_points_per_day ?? 12;
+  const legacyRate = config?.settings.legacy_points_per_day ?? 6;
   const noWeights = !!config && config.weights.length === 0;
 
   return (
@@ -313,17 +315,18 @@ export default function MetricsPage() {
             )}
 
             {/* The honesty line. Without it the numbers under-report quietly. */}
-            {(coverage.missingJobs > 0 || coverage.measuredJobs > 0) && (
+            {(coverage.legacyJobs > 0 || coverage.measuredJobs > 0) && (
               <p className="px-4 pt-3 text-xs text-muted">
                 {coverage.measuredJobs} install
-                {coverage.measuredJobs === 1 ? "" : "s"} counted
-                {coverage.missingJobs > 0 && (
+                {coverage.measuredJobs === 1 ? "" : "s"} counted from material lists
+                {coverage.legacyJobs > 0 && (
                   <>
                     {" · "}
                     <span style={{ color: "var(--warning)" }}>
-                      {coverage.missingJobs} excluded with no material list, across{" "}
-                      {coverage.unmeasuredDays} day
-                      {coverage.unmeasuredDays === 1 ? "" : "s"}
+                      {coverage.legacyJobs} legacy deal
+                      {coverage.legacyJobs === 1 ? "" : "s"} estimated at{" "}
+                      {formatPoints(legacyRate)} pts/day across {coverage.estimatedDays} day
+                      {coverage.estimatedDays === 1 ? "" : "s"}
                     </span>
                   </>
                 )}
@@ -342,14 +345,19 @@ export default function MetricsPage() {
             <UtilizationLegend goalPct={goalPct} />
 
             {/* The nag list — turns a flagged cell into an action. */}
-            {coverage.missingJobs > 0 && (
+            {coverage.legacyJobs > 0 && (
               <section className="px-4 pb-6">
                 <h2 className="text-xs uppercase tracking-wide text-muted mb-2">
-                  Missing material lists
+                  Legacy deals — no material list ({coverage.legacyJobs})
                 </h2>
+                <p className="text-[11px] text-muted mb-2">
+                  Estimated at {formatPoints(legacyRate)} points per day they run, not counted
+                  from products. Building a material list for any of these replaces the estimate
+                  with a real number.
+                </p>
                 <ul className="space-y-1.5">
                   {rows.flatMap((row) =>
-                    row.missingTallyJobs.map((job) => (
+                    row.legacyJobs.map((job: DayJob) => (
                       <li
                         key={job.appointmentId}
                         className="text-sm flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 border-b border-border pb-1.5"

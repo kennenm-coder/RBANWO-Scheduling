@@ -83,6 +83,13 @@ export interface LoadWeight {
 export interface UtilizationSettings {
   target_points_per_day: number;
   goal_utilization_pct: number;
+  /**
+   * Points credited per day to an install with no material list. Default 6
+   * against a 12-point day — a legacy deal reads as half a day, deliberately
+   * conservative so legacy-heavy installers lean toward being flagged rather
+   * than hidden. See migration 20261008_002.
+   */
+  legacy_points_per_day: number;
 }
 
 /** Points per (product, frame), keyed `product|frame`. */
@@ -202,22 +209,28 @@ export function isInstallerCrew(crew: Crew): boolean {
 // ─── Day classification ─────────────────────────────────────────────────────
 
 /**
- * - `measurable`  install work, every job has a material list → counted
+ * - `measurable`  install work, every job has a material list → real counts
+ * - `estimated`   install work where at least one job is a legacy deal with no
+ *                 material list → counted at the legacy per-day rate, flagged
  * - `idle`        available, nothing booked → the under-utilization signal
  * - `non_install` service / JIP / LSWP etc. → consumes the day, carries no load
- * - `unmeasured`  an install job with NO material list → excluded from BOTH
- *                 sides of the ratio, and flagged
  * - `off`         PTO, holiday, company meeting, unavailable → no capacity
  *
- * `unmeasured` excludes the whole day on purpose. Dropping just the job's load
- * while keeping its day in the denominator would make that installer read
- * artificially under-utilized — the exact wrong signal on a tab whose job is
- * spotting under-utilization.
+ * Legacy deals used to make the day `unmeasured` and drop it from both sides of
+ * the ratio. That kept the number honest but made an installer carrying mostly
+ * older work show blank instead of busy — useless on a tab for spotting who is
+ * light. They are estimated now, and every estimated day is marked so an
+ * estimate is never mistaken for a product count.
  */
-export type DayClass = "measurable" | "idle" | "non_install" | "unmeasured" | "off";
+export type DayClass = "measurable" | "estimated" | "idle" | "non_install" | "off";
 
 /** Day classes that contribute to the utilization ratio. */
-const COUNTED_CLASSES: ReadonlyArray<DayClass> = ["measurable", "idle", "non_install"];
+const COUNTED_CLASSES: ReadonlyArray<DayClass> = [
+  "measurable",
+  "estimated",
+  "idle",
+  "non_install",
+];
 
 export interface DayJob {
   appointmentId: string;
@@ -227,8 +240,13 @@ export interface DayJob {
   appointmentType: AppointmentType;
   /** Carries product load (an install), as opposed to service/JIP/etc. */
   loadBearing: boolean;
-  /** False for an install with no material list — the flagged case. */
+  /** False for an install with no material list — a "legacy deal". */
   hasTally: boolean;
+  /**
+   * True when `jobPoints` came from the legacy per-day rate rather than a real
+   * product count. The UI must never let an estimate read as a product tally.
+   */
+  estimated: boolean;
   /** Calendar days the job spans, including any the crew does not work. */
   spanDays: number;
   /**
@@ -264,14 +282,15 @@ export interface CrewUtilization {
   /** Null when capacity is zero — no measurable days, so no honest answer. */
   utilizationPct: number | null;
   measurableDays: number;
+  /** Days whose number is part estimate because a legacy deal landed on them. */
+  estimatedDays: number;
   idleDays: number;
   nonInstallDays: number;
-  unmeasuredDays: number;
   offDays: number;
   /** Counted days that came in under the goal. */
   underGoalDays: number;
-  /** Install jobs with no material list, so somebody can go build one. */
-  missingTallyJobs: DayJob[];
+  /** Legacy deals — installs with no material list, so one can be built. */
+  legacyJobs: DayJob[];
 }
 
 export interface UtilizationInput {
@@ -347,7 +366,8 @@ function indexLeadDays(
 function buildDayJob(
   { appt, workedDays }: ScheduledJob,
   tallyByOrder: Map<string, InstallTally>,
-  weights: WeightMap
+  weights: WeightMap,
+  legacyPointsPerDay: number
 ): DayJob {
   const loadBearing = LOAD_BEARING_TYPES.includes(appt.appointment_type);
   const order = appt.order_number?.trim() || "";
@@ -355,7 +375,15 @@ function buildDayJob(
   const spanDays = Math.max(1, appt.duration_days || 1);
   const divisor = Math.max(1, workedDays);
   const breakdown = tally ? tallyBreakdown(tally, weights) : [];
-  const jobPoints = tally ? tallyPoints(tally, weights) : 0;
+  // A load-bearing job with no material list is a legacy deal: estimated at the
+  // legacy rate for every day it RUNS (so a 3-day job is worth 3x a 1-day one),
+  // then divided over the days actually worked like any other job.
+  const estimated = loadBearing && !tally;
+  const jobPoints = tally
+    ? tallyPoints(tally, weights)
+    : estimated
+      ? legacyPointsPerDay * spanDays
+      : 0;
   return {
     appointmentId: appt.id,
     orderNumber: appt.order_number,
@@ -365,6 +393,7 @@ function buildDayJob(
     loadBearing,
     // Only load-bearing work NEEDS a tally; a service call is not "missing" one.
     hasTally: loadBearing ? !!tally : true,
+    estimated,
     spanDays,
     workedDays: divisor,
     jobPoints,
@@ -390,14 +419,14 @@ function classifyDay(
     return { crewId, date, dayClass: "off", points: 0, capacity: 0, jobs, offReason };
   }
 
-  // An install with no material list takes the whole day out of the ratio.
-  if (installJobs.some((j) => !j.hasTally)) {
-    return { crewId, date, dayClass: "unmeasured", points: 0, capacity: 0, jobs };
-  }
-
   if (installJobs.length > 0) {
     const points = installJobs.reduce((sum, j) => sum + j.dayPoints, 0);
-    return { crewId, date, dayClass: "measurable", points, capacity: target, jobs };
+    // One legacy deal is enough to mark the whole day estimated — the number
+    // shown is then part guess, and the UI has to say so.
+    const dayClass: DayClass = installJobs.some((j) => j.estimated)
+      ? "estimated"
+      : "measurable";
+    return { crewId, date, dayClass, points, capacity: target, jobs };
   }
 
   if (jobs.length > 0) {
@@ -412,6 +441,9 @@ export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
   const { crews, dates, appointments, tallyByOrder, weights, settings, targets, isOff } = input;
   const byCrewDay = indexLeadDays(appointments, isOff);
   const goalFraction = settings.goal_utilization_pct / 100;
+  const legacyRate = Number.isFinite(settings.legacy_points_per_day)
+    ? Math.max(0, settings.legacy_points_per_day)
+    : 6;
 
   const rows: CrewUtilization[] = [];
 
@@ -421,29 +453,31 @@ export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
 
     for (const date of dates) {
       const scheduled = byCrewDay.get(`${crew.id}|${date}`) || [];
-      const jobs = scheduled.map((s) => buildDayJob(s, tallyByOrder, weights));
+      const jobs = scheduled.map((s) =>
+        buildDayJob(s, tallyByOrder, weights, legacyRate)
+      );
       days.push(classifyDay(crew.id, date, jobs, target, isOff(crew.id, date)));
     }
 
     let totalPoints = 0;
     let capacity = 0;
     let measurableDays = 0;
+    let estimatedDays = 0;
     let idleDays = 0;
     let nonInstallDays = 0;
-    let unmeasuredDays = 0;
     let offDays = 0;
     let underGoalDays = 0;
-    const missingTallyJobs: DayJob[] = [];
-    const seenMissing = new Set<string>();
+    const legacyJobs: DayJob[] = [];
+    const seenLegacy = new Set<string>();
 
     for (const day of days) {
       totalPoints += day.points;
       capacity += day.capacity;
 
       if (day.dayClass === "measurable") measurableDays++;
+      else if (day.dayClass === "estimated") estimatedDays++;
       else if (day.dayClass === "idle") idleDays++;
       else if (day.dayClass === "non_install") nonInstallDays++;
-      else if (day.dayClass === "unmeasured") unmeasuredDays++;
       else if (day.dayClass === "off") offDays++;
 
       if (COUNTED_CLASSES.includes(day.dayClass) && day.capacity > 0) {
@@ -452,9 +486,9 @@ export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
 
       for (const job of day.jobs) {
         // One entry per job, not per day it spans.
-        if (!job.hasTally && !seenMissing.has(job.appointmentId)) {
-          seenMissing.add(job.appointmentId);
-          missingTallyJobs.push(job);
+        if (!job.hasTally && !seenLegacy.has(job.appointmentId)) {
+          seenLegacy.add(job.appointmentId);
+          legacyJobs.push(job);
         }
       }
     }
@@ -466,12 +500,12 @@ export function computeUtilization(input: UtilizationInput): CrewUtilization[] {
       capacity,
       utilizationPct: capacity > 0 ? (totalPoints / capacity) * 100 : null,
       measurableDays,
+      estimatedDays,
       idleDays,
       nonInstallDays,
-      unmeasuredDays,
       offDays,
       underGoalDays,
-      missingTallyJobs,
+      legacyJobs,
     });
   }
 
@@ -518,33 +552,86 @@ export function formatPoints(points: number): string {
 }
 
 export interface CoverageSummary {
-  /** Distinct install jobs in range with a material list. */
+  /** Distinct install jobs in range scored from a real material list. */
   measuredJobs: number;
-  /** Distinct install jobs in range with none — excluded and flagged. */
-  missingJobs: number;
-  unmeasuredDays: number;
+  /** Distinct legacy deals in range — scored at the legacy rate, not counted. */
+  legacyJobs: number;
+  /** Days whose number is part estimate. */
+  estimatedDays: number;
 }
 
 /** The honesty line for the top of the page. */
 export function summarizeCoverage(rows: CrewUtilization[]): CoverageSummary {
   const measured = new Set<string>();
-  const missing = new Set<string>();
-  let unmeasuredDays = 0;
+  const legacy = new Set<string>();
+  let estimatedDays = 0;
 
   for (const row of rows) {
-    unmeasuredDays += row.unmeasuredDays;
+    estimatedDays += row.estimatedDays;
     for (const day of row.days) {
       for (const job of day.jobs) {
         if (!job.loadBearing) continue;
         if (job.hasTally) measured.add(job.appointmentId);
-        else missing.add(job.appointmentId);
+        else legacy.add(job.appointmentId);
       }
     }
   }
 
   return {
     measuredJobs: measured.size,
-    missingJobs: missing.size,
-    unmeasuredDays,
+    legacyJobs: legacy.size,
+    estimatedDays,
   };
+}
+
+/**
+ * The hover text for one day cell: every job, its product mix and what it
+ * contributed. Built here rather than in the grid so the arithmetic shown to
+ * the user comes from the same place that computed it.
+ */
+export function describeDayPoints(day: CrewDay): string {
+  if (day.dayClass === "off") return day.offReason || "Off";
+
+  const NL = "\n";
+  const INDENT = NL + "    ";
+  const lines: string[] = [];
+
+  for (const job of day.jobs) {
+    const span =
+      job.spanDays > 1
+        ? ` (${formatPoints(job.jobPoints)} over ${job.workedDays}d)`
+        : "";
+
+    if (!job.loadBearing) {
+      lines.push(
+        `${job.customerName} — ${job.appointmentType.replace(/_/g, " ")}, no product load`
+      );
+    } else if (job.estimated) {
+      // Never show a product mix here — there isn't one, and an estimate must
+      // not be able to read as a count of real units.
+      lines.push(
+        `${job.customerName} — LEGACY DEAL, no material list` +
+          INDENT +
+          `estimated ${formatPoints(job.dayPoints)} pts${span}`
+      );
+    } else {
+      const mix = job.breakdown
+        .map((b) => `${b.count} ${b.short} = ${formatPoints(b.points)}`)
+        .join(", ");
+      lines.push(
+        `${job.customerName} — ${formatPoints(job.dayPoints)} pts${span}` +
+          (mix ? INDENT + mix : "")
+      );
+    }
+  }
+
+  if (lines.length === 0) return "Nothing booked";
+
+  const pct =
+    day.capacity > 0 ? ` (${Math.round((day.points / day.capacity) * 100)}%)` : "";
+  const total = `Total ${formatPoints(day.points)} of ${formatPoints(day.capacity)} pts${pct}`;
+  const caveat =
+    day.dayClass === "estimated" ? NL + "Includes estimated legacy deals" : "";
+
+  return lines.join(NL) + NL + total + caveat;
 }

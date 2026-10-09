@@ -51,6 +51,7 @@ const IN_CHUNK = 150;
 const DEFAULT_SETTINGS: UtilizationSettings = {
   target_points_per_day: 12,
   goal_utilization_pct: 85,
+  legacy_points_per_day: 6,
 };
 
 /**
@@ -157,7 +158,7 @@ export async function fetchUtilizationConfig(): Promise<UtilizationConfig> {
     sb.from("sched_load_weights").select("product_key, frame_key, points"),
     sb
       .from("sched_utilization_settings")
-      .select("target_points_per_day, goal_utilization_pct")
+      .select("target_points_per_day, goal_utilization_pct, legacy_points_per_day")
       .maybeSingle(),
     sb.from("sched_crew_targets").select("crew_id, target_points_per_day"),
   ]);
@@ -179,6 +180,11 @@ export async function fetchUtilizationConfig(): Promise<UtilizationConfig> {
       Number(raw?.goal_utilization_pct) > 0
         ? Number(raw!.goal_utilization_pct)
         : DEFAULT_SETTINGS.goal_utilization_pct,
+    // Zero is a legitimate setting here ("legacy deals are worth nothing"), so
+    // this checks for a finite number rather than a truthy one.
+    legacy_points_per_day: Number.isFinite(Number(raw?.legacy_points_per_day))
+      ? Math.max(0, Number(raw!.legacy_points_per_day))
+      : DEFAULT_SETTINGS.legacy_points_per_day,
   };
 
   const targets = new Map<string, number>();

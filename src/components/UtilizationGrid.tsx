@@ -2,9 +2,10 @@
 
 import { useMemo } from "react";
 import { format, parseISO } from "date-fns";
-import { AlertTriangle, Wrench } from "lucide-react";
+import { Wrench } from "lucide-react";
 import { crewColorFor } from "@/lib/preferences";
 import {
+  describeDayPoints,
   formatPoints,
   utilizationBand,
   type CrewDay,
@@ -46,9 +47,9 @@ function dayBand(day: CrewDay, goalPct: number): UtilBand {
 
 const CLASS_NOTE: Record<DayClass, string> = {
   measurable: "",
+  estimated: "Includes a legacy deal — estimated",
   idle: "Nothing booked",
   non_install: "Service / JIP — no product",
-  unmeasured: "No material list — excluded",
   off: "Off",
 };
 
@@ -140,11 +141,16 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
                 {row.days.map((day, i) => {
                   const band = dayBand(day, goalPct);
                   const accent = BAND_ACCENT[band];
-                  const isCounted = day.capacity > 0;
-                  const note = CLASS_NOTE[day.dayClass];
-                  const label = `${row.crew.name}, ${format(parseISO(day.date), "EEE MMM d")} — ${
-                    isCounted ? `${formatPoints(day.points)} of ${formatPoints(day.capacity)} points` : note
-                  }`;
+                  const jobCount = day.jobs.length;
+                  const header = `${row.crew.name} — ${format(parseISO(day.date), "EEE MMM d")}`;
+                  // Hover gives the full arithmetic: every job, its product mix
+                  // and what it contributed. Built in utilization.ts so the
+                  // numbers shown come from the code that computed them.
+                  const hover = `${header}\n${"—".repeat(header.length)}\n${describeDayPoints(day)}`;
+                  const aria =
+                    day.capacity > 0
+                      ? `${header}, ${formatPoints(day.points)} of ${formatPoints(day.capacity)} points from ${jobCount} job${jobCount === 1 ? "" : "s"}${day.dayClass === "estimated" ? ", partly estimated" : ""}`
+                      : `${header}, ${CLASS_NOTE[day.dayClass]}`;
 
                   return (
                     <td
@@ -156,32 +162,37 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
                       <button
                         type="button"
                         onClick={() => onSelectDay(row, day)}
-                        title={label}
-                        aria-label={label}
-                        className="w-full h-9 flex items-center justify-center text-xs tabular-nums transition-opacity hover:opacity-75 focus:outline-2 focus:outline-offset-[-2px] focus:outline-primary"
+                        title={hover}
+                        aria-label={aria}
+                        className="w-full h-9 flex items-center justify-center gap-1 text-xs tabular-nums transition-opacity hover:opacity-75 focus:outline-2 focus:outline-offset-[-2px] focus:outline-primary"
                         style={
                           day.dayClass === "off"
                             ? { backgroundColor: "var(--surface)", color: "var(--muted)" }
-                            : day.dayClass === "unmeasured"
-                              ? {
-                                  // Hatched rather than tinted: this day is not a
-                                  // low score, it is no score. Reading it as "red"
-                                  // would be a lie about the installer.
-                                  backgroundImage:
-                                    "repeating-linear-gradient(45deg, var(--border) 0 2px, transparent 2px 6px)",
-                                  color: "var(--foreground)",
-                                }
-                              : { backgroundColor: tint(accent), color: "var(--foreground)" }
+                            : {
+                                backgroundColor: tint(accent),
+                                color: "var(--foreground)",
+                                // A dashed underline marks a number that is part
+                                // estimate, so an estimated day can never be
+                                // mistaken for a counted one at a glance.
+                                ...(day.dayClass === "estimated"
+                                  ? { boxShadow: "inset 0 -3px 0 0 var(--warning)" }
+                                  : null),
+                              }
                         }
                       >
                         {day.dayClass === "off" ? (
                           <span className="text-[10px]">—</span>
-                        ) : day.dayClass === "unmeasured" ? (
-                          <AlertTriangle size={12} style={{ color: "var(--warning)" }} />
                         ) : day.dayClass === "non_install" ? (
                           <Wrench size={12} style={{ color: "var(--muted)" }} />
                         ) : (
-                          <span className="font-medium">{formatPoints(day.points)}</span>
+                          <>
+                            <span className="font-medium">{formatPoints(day.points)}</span>
+                            {jobCount > 0 && (
+                              <span className="text-[9px] text-muted leading-none">
+                                ·{jobCount}
+                              </span>
+                            )}
+                          </>
                         )}
                       </button>
                     </td>
@@ -204,11 +215,13 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
                       </span>
                     </span>
                   )}
-                  {(row.unmeasuredDays > 0 || row.idleDays > 0) && (
+                  {(row.estimatedDays > 0 || row.idleDays > 0) && (
                     <span className="mt-0.5 flex flex-wrap justify-end gap-1 text-[10px] text-muted">
                       {row.idleDays > 0 && <span>{row.idleDays} idle</span>}
-                      {row.unmeasuredDays > 0 && (
-                        <span style={{ color: "var(--warning)" }}>{row.unmeasuredDays} unmeasured</span>
+                      {row.estimatedDays > 0 && (
+                        <span style={{ color: "var(--warning)" }}>
+                          {row.estimatedDays} est.
+                        </span>
                       )}
                     </span>
                   )}
@@ -245,13 +258,14 @@ export function UtilizationLegend({ goalPct }: { goalPct: number }) {
       <span className="flex items-center gap-1.5">
         <span
           className="w-3 h-3 rounded-sm border border-border"
-          style={{
-            backgroundImage:
-              "repeating-linear-gradient(45deg, var(--border) 0 2px, transparent 2px 6px)",
-          }}
+          style={{ boxShadow: "inset 0 -3px 0 0 var(--warning)" }}
           aria-hidden
         />
-        no material list
+        estimated (legacy deal, no material list)
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="text-[9px] text-muted">·n</span>
+        jobs that day
       </span>
       <span className="flex items-center gap-1.5">
         <Wrench size={12} />

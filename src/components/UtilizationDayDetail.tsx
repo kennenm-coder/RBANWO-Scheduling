@@ -64,7 +64,7 @@ export default function UtilizationDayDetail({ row, day, onClose }: Props) {
               Off — <span className="text-muted">{day.offReason}</span>. Carries no capacity, so
               it is left out of the utilization ratio entirely.
             </p>
-          ) : day.dayClass === "unmeasured" ? (
+          ) : day.dayClass === "estimated" ? (
             <div
               className="rounded-lg px-3 py-2.5 text-sm"
               style={{
@@ -73,11 +73,12 @@ export default function UtilizationDayDetail({ row, day, onClose }: Props) {
             >
               <p className="font-medium flex items-center gap-1.5">
                 <AlertTriangle size={14} />
-                Not counted — no material list
+                {formatPoints(day.points)} of {formatPoints(day.capacity)} points — part estimated
               </p>
               <p className="text-muted mt-1">
-                This day is excluded from both sides of the ratio. Leaving it in the denominator
-                would make {row.crew.name} read as under-utilized for a day they were working.
+                A legacy deal on this day has no material list, so its share is estimated from
+                how many days it runs rather than counted from products. The job count below is
+                deals, not units.
               </p>
             </div>
           ) : day.dayClass === "idle" ? (
@@ -129,14 +130,21 @@ export default function UtilizationDayDetail({ row, day, onClose }: Props) {
                       {job.spanDays > 1 ? ` · ${job.spanDays}-day job` : ""}
                     </p>
 
-                    {!job.hasTally ? (
-                      <p
-                        className="text-xs mt-1.5 flex items-center gap-1.5"
-                        style={{ color: "var(--warning)" }}
-                      >
-                        <AlertTriangle size={12} />
-                        No material list in the material-list app
-                      </p>
+                    {job.estimated ? (
+                      <div className="mt-1.5" style={{ color: "var(--warning)" }}>
+                        <p className="text-xs flex items-center gap-1.5">
+                          <AlertTriangle size={12} />
+                          Legacy deal — no material list
+                        </p>
+                        <p className="text-[11px] text-muted mt-1">
+                          Estimated at {formatPoints(job.jobPoints / Math.max(1, job.spanDays))}{" "}
+                          pts per day it runs
+                          {job.spanDays > 1
+                            ? ` × ${job.spanDays} days = ${formatPoints(job.jobPoints)} pts`
+                            : ""}
+                          . Not a product count.
+                        </p>
+                      </div>
                     ) : (
                       <>
                         <div className="flex flex-wrap gap-1 mt-2">

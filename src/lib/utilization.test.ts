@@ -36,6 +36,7 @@ const weights = buildWeightMap(WEIGHTS);
 const SETTINGS: UtilizationSettings = {
   target_points_per_day: 12,
   goal_utilization_pct: 85,
+  legacy_points_per_day: 6,
 };
 
 function makeTally(overrides: Partial<InstallTally> = {}): InstallTally {
@@ -260,22 +261,40 @@ describe("computeUtilization — day classes", () => {
     expect(row.capacity).toBe(12);
     expect(row.utilizationPct).toBe(0);
     expect(row.nonInstallDays).toBe(1);
-    // A service call is not "missing" a material list.
-    expect(row.missingTallyJobs).toHaveLength(0);
+    // A service call is not a legacy deal — it never had a material list to miss.
+    expect(row.legacyJobs).toHaveLength(0);
+    expect(row.days[0].jobs[0].estimated).toBe(false);
   });
 
-  it("an install with no material list takes the whole DAY out of the ratio", () => {
-    // The core rule: were the day left in the denominator, this installer
-    // would read 0% and look idle when they were in fact working.
+  it("a legacy deal is estimated at the legacy rate, not excluded", () => {
+    // Legacy deals used to drop the whole day from the ratio, which left an
+    // installer carrying old work looking blank instead of busy.
     const row = run([makeAppt({ id: "a", order_number: "PO-NOPE" })], []);
-    expect(row.days[0].dayClass).toBe("unmeasured");
-    expect(row.capacity).toBe(0);
-    expect(row.utilizationPct).toBeNull();
-    expect(row.unmeasuredDays).toBe(1);
-    expect(row.missingTallyJobs.map((j) => j.appointmentId)).toEqual(["a"]);
+    expect(row.days[0].dayClass).toBe("estimated");
+    expect(row.days[0].points).toBe(6);
+    expect(row.capacity).toBe(12);
+    expect(row.utilizationPct).toBe(50);
+    expect(row.estimatedDays).toBe(1);
+    expect(row.legacyJobs.map((j) => j.appointmentId)).toEqual(["a"]);
+    expect(row.days[0].jobs[0].estimated).toBe(true);
   });
 
-  it("one job without a list poisons the day even when another has one", () => {
+  it("a legacy deal is worth the rate for every day it runs", () => {
+    const row = computeUtilization({
+      crews: [makeCrew({ id: "lead", name: "Sam" })],
+      dates: ["2026-10-05", "2026-10-06", "2026-10-07"],
+      appointments: [makeAppt({ id: "a", duration_days: 3, order_number: "PO-NOPE" })],
+      tallyByOrder: new Map(),
+      weights,
+      settings: SETTINGS,
+      isOff: neverOff,
+    })[0];
+    // 6 x 3 days = 18 points, spread back over the 3 days worked.
+    expect(row.days[0].jobs[0].jobPoints).toBe(18);
+    expect(row.days.map((d) => d.points)).toEqual([6, 6, 6]);
+  });
+
+  it("one legacy deal marks the whole day estimated, mixed with a real one", () => {
     const row = run(
       [
         makeAppt({ id: "a", order_number: "PO-1" }),
@@ -283,14 +302,31 @@ describe("computeUtilization — day classes", () => {
       ],
       [makeTally({ windows_if: 2 })]
     );
-    expect(row.days[0].dayClass).toBe("unmeasured");
-    expect(row.capacity).toBe(0);
+    // 4 real points + 6 estimated, and the day is marked part-estimate.
+    expect(row.days[0].dayClass).toBe("estimated");
+    expect(row.days[0].points).toBe(10);
+    expect(row.capacity).toBe(12);
   });
 
-  it("an appointment with no order number counts as missing its list", () => {
+  it("an appointment with no order number is a legacy deal too", () => {
     const row = run([makeAppt({ id: "a", order_number: null })], []);
-    expect(row.days[0].dayClass).toBe("unmeasured");
-    expect(row.missingTallyJobs).toHaveLength(1);
+    expect(row.days[0].dayClass).toBe("estimated");
+    expect(row.legacyJobs).toHaveLength(1);
+  });
+
+  it("a legacy rate of zero scores legacy deals as no work", () => {
+    const row = computeUtilization({
+      crews: [makeCrew({ id: "lead", name: "Sam" })],
+      dates: ["2026-10-05"],
+      appointments: [makeAppt({ id: "a", order_number: "PO-NOPE" })],
+      tallyByOrder: new Map(),
+      weights,
+      settings: { ...SETTINGS, legacy_points_per_day: 0 },
+      isOff: neverOff,
+    })[0];
+    expect(row.days[0].points).toBe(0);
+    expect(row.days[0].dayClass).toBe("estimated");
+    expect(row.utilizationPct).toBe(0);
   });
 
   it("two installs on one day add up", () => {
@@ -356,8 +392,8 @@ describe("computeUtilization — multi-day jobs", () => {
       settings: SETTINGS,
       isOff: neverOff,
     });
-    expect(rows[0].unmeasuredDays).toBe(3);
-    expect(rows[0].missingTallyJobs).toHaveLength(1);
+    expect(rows[0].estimatedDays).toBe(3);
+    expect(rows[0].legacyJobs).toHaveLength(1);
   });
 
   it("counts a span that started before the range", () => {
@@ -450,7 +486,7 @@ describe("sortByUtilization", () => {
 });
 
 describe("summarizeCoverage", () => {
-  it("counts measured and missing install jobs, ignoring service", () => {
+  it("counts measured and legacy install jobs, ignoring service", () => {
     const crew = makeCrew({ id: "lead", name: "Sam" });
     const rows = computeUtilization({
       crews: [crew],
@@ -472,8 +508,8 @@ describe("summarizeCoverage", () => {
     });
     expect(summarizeCoverage(rows)).toEqual({
       measuredJobs: 1,
-      missingJobs: 1,
-      unmeasuredDays: 1,
+      legacyJobs: 1,
+      estimatedDays: 1,
     });
   });
 });
