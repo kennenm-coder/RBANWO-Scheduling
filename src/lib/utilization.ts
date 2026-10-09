@@ -763,3 +763,52 @@ export function describeDayPoints(day: CrewDay): string {
 
   return lines.join(NL) + NL + total + caveat;
 }
+
+export interface OpenDaysEntry {
+  crew: Crew;
+  /** Days with capacity and nothing booked, inside the window looked at. */
+  openDays: number;
+  /** The soonest of them, `yyyy-MM-dd`. */
+  nextOpen: string | null;
+  /** Utilization across the whole range, for context. */
+  utilizationPct: number | null;
+}
+
+/**
+ * Who has room for another job.
+ *
+ * The grid shows everything; this answers the question a scheduling manager
+ * actually opens the tab with. Only `idle` days count — a day spent on service
+ * or a legacy deal is a day they are already out, even though it scores no or
+ * estimated product load.
+ *
+ * `withinDates` is normally the first week or two of the range: a gap three
+ * weeks out is not yet a problem to solve.
+ */
+export function summarizeOpenDays(
+  rows: CrewUtilization[],
+  withinDates: string[]
+): OpenDaysEntry[] {
+  const window = new Set(withinDates);
+
+  return rows
+    .map((row) => {
+      const open = row.days
+        .filter((d) => window.has(d.date) && d.dayClass === "idle")
+        .map((d) => d.date)
+        .sort();
+      return {
+        crew: row.crew,
+        openDays: open.length,
+        nextOpen: open[0] ?? null,
+        utilizationPct: row.utilizationPct,
+      };
+    })
+    .filter((e) => e.openDays > 0)
+    .sort(
+      (a, b) =>
+        b.openDays - a.openDays ||
+        (a.nextOpen ?? "").localeCompare(b.nextOpen ?? "") ||
+        a.crew.name.localeCompare(b.crew.name)
+    );
+}

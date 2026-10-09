@@ -17,14 +17,14 @@ import {
 /**
  * The per-day utilization grid — installers down, days across.
  *
- * The primary view, not a rollup: a light Tuesday is the thing a scheduling
- * manager acts on, and a range total would average it away. The range rollup
- * sits in the sticky summary column at the right.
+ * Each cell is a bar filled to how much of that day is booked, labelled with a
+ * percentage. Points are the engine, not the interface: nobody schedules in
+ * points, and "8.7" meant nothing without mental arithmetic against a 12-point
+ * day. The exact points live in the hover and the drill-down.
  *
- * Band accents reuse the theme's own semantic tokens (danger / warning /
- * success / primary) and are tinted with the same color-mix-against-background
- * recipe as blocked-visuals.ts, which is what keeps one definition legible on
- * white, near-black and ivory alike.
+ * Band accents reuse the theme's own semantic tokens and are tinted with the
+ * same color-mix-against-background recipe as blocked-visuals.ts, which keeps
+ * one definition legible on white, near-black and ivory alike.
  */
 
 const BAND_ACCENT: Record<UtilBand, string> = {
@@ -35,16 +35,15 @@ const BAND_ACCENT: Record<UtilBand, string> = {
   none: "var(--muted)",
 };
 
-function tint(accent: string): string {
-  return `color-mix(in srgb, ${accent} var(--blk-tint), var(--background))`;
+function tint(accent: string, strength = "var(--blk-tint)"): string {
+  return `color-mix(in srgb, ${accent} ${strength}, var(--background))`;
 }
 
 /** A day's own band, measured against its capacity rather than the range. */
 function dayBand(day: CrewDay, goalPct: number): UtilBand {
   if (day.capacity <= 0) return "none";
-  // Service / JIP / LSWP days scored zero product and so came out blood red,
-  // which reads as "this person did nothing" when they were out working. They
-  // get a neutral cell: still zero product load, but not an accusation.
+  // Service / JIP / LSWP days score no product by design, but a red cell reads
+  // as "did nothing" for a day spent out on a call. Neutral, not an accusation.
   if (day.dayClass === "non_install") return "none";
   return utilizationBand((day.points / day.capacity) * 100, goalPct);
 }
@@ -59,14 +58,23 @@ const CLASS_NOTE: Record<DayClass, string> = {
 
 interface Props {
   rows: CrewUtilization[];
+  /** The days to draw. May be a slice of the full range. */
   dates: string[];
   goalPct: number;
+  /** Show the range rollup column. Off for the secondary weeks grid. */
+  showRange?: boolean;
   onSelectDay: (row: CrewUtilization, day: CrewDay) => void;
 }
 
-export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: Props) {
-  // Week boundaries so a 4-week range stays readable: a heavier divider where
-  // each Monday starts, instead of twenty identical columns.
+export default function UtilizationGrid({
+  rows,
+  dates,
+  goalPct,
+  showRange = true,
+  onSelectDay,
+}: Props) {
+  // A heavier divider where each Monday starts, so a multi-week grid reads as
+  // weeks rather than one undifferentiated run of columns.
   const weekStartIndexes = useMemo(() => {
     const set = new Set<number>();
     dates.forEach((d, i) => {
@@ -85,7 +93,7 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
 
   return (
     <div className="overflow-x-auto">
-      <table className="border-separate border-spacing-0 text-sm">
+      <table className="border-separate border-spacing-0 text-sm w-full">
         <thead>
           <tr>
             <th
@@ -101,7 +109,7 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
                 <th
                   key={d}
                   scope="col"
-                  className={`border-b border-border px-1 py-2 text-center font-medium min-w-[2.75rem] sm:min-w-[3.25rem] ${
+                  className={`border-b border-border px-1 py-2 text-center font-medium min-w-[3rem] ${
                     weekend ? "text-muted/60" : "text-muted"
                   } ${weekStartIndexes.has(i) ? "border-l-2 border-l-border" : ""}`}
                 >
@@ -110,17 +118,23 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
                 </th>
               );
             })}
-            <th
-              scope="col"
-              className="sticky right-0 z-20 bg-surface border-b border-l border-border px-3 py-2 text-right font-medium text-muted min-w-[5.5rem] sm:min-w-[7.5rem]"
-            >
-              Range
-            </th>
+            {showRange && (
+              <th
+                scope="col"
+                className="sticky right-0 z-20 bg-surface border-b border-l border-border px-3 py-2 text-right font-medium text-muted min-w-[5.5rem] sm:min-w-[7rem]"
+              >
+                Range
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => {
             const rowBand = utilizationBand(row.utilizationPct, goalPct);
+            // Days are looked up by date so this grid can draw any slice of the
+            // range without the caller re-slicing every row.
+            const byDate = new Map(row.days.map((d) => [d.date, d]));
+
             return (
               <tr key={row.crew.id}>
                 <th
@@ -142,23 +156,28 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
                   </span>
                 </th>
 
-                {row.days.map((day, i) => {
+                {dates.map((date, i) => {
+                  const day = byDate.get(date);
+                  if (!day) return <td key={date} className="border-b border-border" />;
+
                   const band = dayBand(day, goalPct);
                   const accent = BAND_ACCENT[band];
                   const jobCount = day.jobs.length;
+                  const pct = day.capacity > 0 ? (day.points / day.capacity) * 100 : 0;
+                  // The bar caps at full; the number keeps telling the truth,
+                  // so 275% reads as a brim-full blue cell labelled 275%.
+                  const fill = Math.max(0, Math.min(100, pct));
+
                   const header = `${row.crew.name} — ${format(parseISO(day.date), "EEE MMM d")}`;
-                  // Hover gives the full arithmetic: every job, its product mix
-                  // and what it contributed. Built in utilization.ts so the
-                  // numbers shown come from the code that computed them.
                   const hover = `${header}\n${"—".repeat(header.length)}\n${describeDayPoints(day)}`;
                   const aria =
                     day.capacity > 0
-                      ? `${header}, ${formatPoints(day.points)} of ${formatPoints(day.capacity)} points from ${jobCount} job${jobCount === 1 ? "" : "s"}${day.dayClass === "estimated" ? ", partly estimated" : ""}`
+                      ? `${header}, ${Math.round(pct)} percent of a full day from ${jobCount} job${jobCount === 1 ? "" : "s"}${day.dayClass === "estimated" ? ", partly estimated" : ""}`
                       : `${header}, ${CLASS_NOTE[day.dayClass]}`;
 
                   return (
                     <td
-                      key={day.date}
+                      key={date}
                       className={`border-b border-border p-0 ${
                         weekStartIndexes.has(i) ? "border-l-2 border-l-border" : ""
                       }`}
@@ -168,68 +187,74 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
                         onClick={() => onSelectDay(row, day)}
                         title={hover}
                         aria-label={aria}
-                        className="w-full h-9 flex items-center justify-center gap-1 text-xs tabular-nums transition-opacity hover:opacity-75 focus:outline-2 focus:outline-offset-[-2px] focus:outline-primary"
-                        style={
-                          day.dayClass === "off"
-                            ? { backgroundColor: "var(--surface)", color: "var(--muted)" }
-                            : {
-                                backgroundColor: tint(accent),
-                                color: "var(--foreground)",
-                                // A dashed underline marks a number that is part
-                                // estimate, so an estimated day can never be
-                                // mistaken for a counted one at a glance.
-                                ...(day.dayClass === "estimated"
-                                  ? { boxShadow: "inset 0 -3px 0 0 var(--warning)" }
-                                  : null),
-                              }
-                        }
+                        className="relative w-full h-10 flex items-center justify-center overflow-hidden transition-opacity hover:opacity-80 focus:outline-2 focus:outline-offset-[-2px] focus:outline-primary"
+                        style={{
+                          backgroundColor:
+                            day.dayClass === "off" ? "var(--surface)" : "var(--background)",
+                          // Amber underline marks a number that is part
+                          // estimate, so it can never read as counted.
+                          ...(day.dayClass === "estimated"
+                            ? { boxShadow: "inset 0 -3px 0 0 var(--warning)" }
+                            : null),
+                        }}
                       >
+                        {day.dayClass !== "off" && day.capacity > 0 && fill > 0 && (
+                          <span
+                            aria-hidden
+                            className="absolute left-0 bottom-0 top-0"
+                            style={{ width: `${fill}%`, backgroundColor: tint(accent, "45%") }}
+                          />
+                        )}
+
                         {day.dayClass === "off" ? (
-                          <span className="text-[10px]">—</span>
+                          <span className="text-[10px] text-muted">—</span>
                         ) : day.dayClass === "non_install" ? (
-                          <Wrench size={12} style={{ color: "var(--muted)" }} />
+                          <Wrench size={12} className="relative" style={{ color: "var(--muted)" }} />
                         ) : (
-                          <>
-                            <span className="font-medium">{formatPoints(day.points)}</span>
-                            {jobCount > 0 && (
-                              <span className="text-[9px] text-muted leading-none">
-                                ·{jobCount}
-                              </span>
+                          <span className="relative flex items-baseline gap-0.5">
+                            <span className="text-xs font-semibold tabular-nums">
+                              {Math.round(pct)}
+                              <span className="text-[9px] font-normal">%</span>
+                            </span>
+                            {jobCount > 1 && (
+                              <span className="text-[9px] text-muted leading-none">·{jobCount}</span>
                             )}
-                          </>
+                          </span>
                         )}
                       </button>
                     </td>
                   );
                 })}
 
-                <td className="sticky right-0 z-10 bg-background border-b border-l border-border px-3 py-1.5 text-right">
-                  {row.utilizationPct === null ? (
-                    <span className="text-xs text-muted">no data</span>
-                  ) : (
-                    <span className="flex flex-col items-end gap-0.5">
-                      <span
-                        className="text-sm font-semibold tabular-nums"
-                        style={{ color: BAND_ACCENT[rowBand] }}
-                      >
-                        {Math.round(row.utilizationPct)}%
-                      </span>
-                      <span className="text-[10px] text-muted tabular-nums">
-                        {formatPoints(row.totalPoints)}/{formatPoints(row.capacity)} pts
-                      </span>
-                    </span>
-                  )}
-                  {(row.estimatedDays > 0 || row.idleDays > 0) && (
-                    <span className="mt-0.5 flex flex-wrap justify-end gap-1 text-[10px] text-muted">
-                      {row.idleDays > 0 && <span>{row.idleDays} idle</span>}
-                      {row.estimatedDays > 0 && (
-                        <span style={{ color: "var(--warning)" }}>
-                          {row.estimatedDays} est.
+                {showRange && (
+                  <td className="sticky right-0 z-10 bg-background border-b border-l border-border px-3 py-1.5 text-right">
+                    {row.utilizationPct === null ? (
+                      <span className="text-xs text-muted">no data</span>
+                    ) : (
+                      <span className="flex flex-col items-end gap-0.5">
+                        <span
+                          className="text-sm font-semibold tabular-nums"
+                          style={{ color: BAND_ACCENT[rowBand] }}
+                        >
+                          {Math.round(row.utilizationPct)}%
                         </span>
-                      )}
-                    </span>
-                  )}
-                </td>
+                        <span className="text-[10px] text-muted tabular-nums">
+                          {formatPoints(row.totalPoints)}/{formatPoints(row.capacity)} pts
+                        </span>
+                        {(row.estimatedDays > 0 || row.idleDays > 0) && (
+                          <span className="flex flex-wrap justify-end gap-1 text-[10px] text-muted">
+                            {row.idleDays > 0 && <span>{row.idleDays} open</span>}
+                            {row.estimatedDays > 0 && (
+                              <span style={{ color: "var(--warning)" }}>
+                                {row.estimatedDays} est.
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </td>
+                )}
               </tr>
             );
           })}
@@ -242,7 +267,7 @@ export default function UtilizationGrid({ rows, dates, goalPct, onSelectDay }: P
 /** Shared legend, rendered by the page under the grid. */
 export function UtilizationLegend({ goalPct }: { goalPct: number }) {
   const items: { band: UtilBand; label: string }[] = [
-    { band: "low", label: "under 70%" },
+    { band: "low", label: "under 70% of a day" },
     { band: "warn", label: `70–${goalPct}%` },
     { band: "good", label: `${goalPct}%+` },
     { band: "over", label: "over 110%" },
@@ -253,7 +278,7 @@ export function UtilizationLegend({ goalPct }: { goalPct: number }) {
         <span key={band} className="flex items-center gap-1.5">
           <span
             className="w-3 h-3 rounded-sm border border-border"
-            style={{ backgroundColor: tint(BAND_ACCENT[band]) }}
+            style={{ backgroundColor: tint(BAND_ACCENT[band], "45%") }}
             aria-hidden
           />
           {label}
@@ -265,15 +290,11 @@ export function UtilizationLegend({ goalPct }: { goalPct: number }) {
           style={{ boxShadow: "inset 0 -3px 0 0 var(--warning)" }}
           aria-hidden
         />
-        estimated (legacy deal, no material list)
-      </span>
-      <span className="flex items-center gap-1.5">
-        <span className="text-[9px] text-muted">·n</span>
-        jobs that day
+        estimated — legacy deal, no material list
       </span>
       <span className="flex items-center gap-1.5">
         <Wrench size={12} />
-        service / JIP
+        service / JIP — no product load
       </span>
       <span className="flex items-center gap-1.5">
         <span
@@ -281,8 +302,9 @@ export function UtilizationLegend({ goalPct }: { goalPct: number }) {
           style={{ backgroundColor: "var(--surface)" }}
           aria-hidden
         />
-        off
+        off — weekend, PTO, holiday
       </span>
+      <span>·n = jobs that day</span>
     </div>
   );
 }

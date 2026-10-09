@@ -6,6 +6,7 @@ import {
   isInstallerCrew,
   sortByUtilization,
   summarizeCoverage,
+  summarizeOpenDays,
   tallyBreakdown,
   tallyPoints,
   utilizationBand,
@@ -772,5 +773,42 @@ describe("legacy deals estimated from the unit count", () => {
     expect(row.days[0].points).toBe(12);
     expect(row.days[0].jobs[0].estimated).toBe(false);
     expect(row.days[0].jobs[0].estimateBasis).toBeNull();
+  });
+});
+
+describe("summarizeOpenDays", () => {
+  const a = makeCrew({ id: "a", name: "Wide Open" });
+  const b = makeCrew({ id: "b", name: "One Gap" });
+  const c = makeCrew({ id: "c", name: "Booked Solid" });
+  const dates = ["2026-10-05", "2026-10-06", "2026-10-07"];
+
+  const rows = computeUtilization({
+    crews: [a, b, c],
+    dates,
+    appointments: [
+      // b works one day, c works all three
+      makeAppt({ id: "b1", crew_id: "b", order_number: "PO-1", scheduled_date: "2026-10-05" }),
+      makeAppt({ id: "c1", crew_id: "c", order_number: "PO-1", scheduled_date: "2026-10-05", duration_days: 3 }),
+    ],
+    tallyByOrder: new Map([["PO-1", makeTally({ order_number: "PO-1", windows_if: 6 })]]),
+    weights,
+    settings: SETTINGS,
+    isOff: neverOff,
+  });
+
+  it("lists who has room, emptiest first, with the soonest open day", () => {
+    const open = summarizeOpenDays(rows, dates);
+    expect(open.map((e) => [e.crew.name, e.openDays, e.nextOpen])).toEqual([
+      ["Wide Open", 3, "2026-10-05"],
+      ["One Gap", 2, "2026-10-06"],
+    ]);
+  });
+
+  it("leaves out anyone with no open day", () => {
+    expect(summarizeOpenDays(rows, dates).map((e) => e.crew.name)).not.toContain("Booked Solid");
+  });
+
+  it("only looks inside the window it is given", () => {
+    expect(summarizeOpenDays(rows, ["2026-10-05"]).map((e) => e.crew.name)).toEqual(["Wide Open"]);
   });
 });

@@ -8,6 +8,7 @@ import { useData } from "@/components/DataProvider";
 import UtilizationGrid, { UtilizationLegend } from "@/components/UtilizationGrid";
 import UtilizationDayDetail from "@/components/UtilizationDayDetail";
 import { canManage } from "@/lib/auth";
+import { crewColorFor } from "@/lib/preferences";
 import {
   buildWeightMap,
   computeUtilization,
@@ -16,6 +17,7 @@ import {
   LOAD_BEARING_TYPES,
   sortByUtilization,
   summarizeCoverage,
+  summarizeOpenDays,
   type CrewDay,
   type CrewUtilization,
   type DayJob,
@@ -185,6 +187,13 @@ export default function MetricsPage() {
 
   const coverage = useMemo(() => summarizeCoverage(rows), [rows]);
 
+  // Scheduling decisions happen in the next fortnight; the rest of the month
+  // matters but should not crowd the screen. 28 columns at once was the single
+  // biggest reason the grid was hard to read.
+  const nearDates = useMemo(() => dates.slice(0, 14), [dates]);
+  const laterDates = useMemo(() => dates.slice(14), [dates]);
+  const openDays = useMemo(() => summarizeOpenDays(rows, nearDates), [rows, nearDates]);
+
   const shiftWeeks = useCallback((delta: number) => {
     setStartDate((d) => format(addDays(parseISO(d), delta * 7), "yyyy-MM-dd"));
   }, []);
@@ -314,9 +323,47 @@ export default function MetricsPage() {
               </div>
             )}
 
+            {/* ── Who needs work. The question the tab is opened with. ── */}
+            <section className="px-4 pt-4">
+              <h2 className="text-sm font-semibold">Who needs work</h2>
+              <p className="text-xs text-muted mt-0.5">
+                Open days in the next two weeks — days with no job booked at all. Service and
+                legacy-deal days are left out: those installers are already out working.
+              </p>
+              {openDays.length === 0 ? (
+                <p className="mt-3 text-sm text-muted">
+                  Nobody has an open day in the next two weeks.
+                </p>
+              ) : (
+                <ul className="mt-3 flex flex-wrap gap-2">
+                  {openDays.map((entry) => (
+                    <li
+                      key={entry.crew.id}
+                      className="flex items-center gap-2 rounded-lg border border-border px-3 py-2"
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: crewColorFor(entry.crew) }}
+                        aria-hidden
+                      />
+                      <span className="text-sm font-medium">{entry.crew.name}</span>
+                      <span className="text-sm tabular-nums" style={{ color: "var(--danger)" }}>
+                        {entry.openDays} open
+                      </span>
+                      {entry.nextOpen && (
+                        <span className="text-xs text-muted">
+                          from {format(parseISO(entry.nextOpen), "EEE M/d")}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
             {/* The honesty line. Without it the numbers under-report quietly. */}
             {(coverage.legacyJobs > 0 || coverage.measuredJobs > 0) && (
-              <p className="px-4 pt-3 text-xs text-muted">
+              <p className="px-4 pt-4 text-xs text-muted">
                 {coverage.measuredJobs} install
                 {coverage.measuredJobs === 1 ? "" : "s"} counted from material lists
                 {coverage.legacyJobs > 0 && (
@@ -334,14 +381,45 @@ export default function MetricsPage() {
               </p>
             )}
 
-            <div className="p-4 pt-3">
+            <section className="px-4 pt-3">
+              <h2 className="text-sm font-semibold mb-2">
+                Next two weeks
+                <span className="ml-2 text-xs font-normal text-muted">
+                  each cell is how full that day is
+                </span>
+              </h2>
               <UtilizationGrid
                 rows={rows}
-                dates={dates}
+                dates={nearDates}
                 goalPct={goalPct}
                 onSelectDay={(row, day) => setSelected({ row, day })}
               />
-            </div>
+            </section>
+
+            {laterDates.length > 0 && (
+              <details className="px-4 pt-4 group">
+                <summary className="cursor-pointer text-sm font-semibold list-none flex items-center gap-1.5">
+                  <ChevronRight
+                    size={14}
+                    className="transition-transform group-open:rotate-90"
+                  />
+                  Rest of the range
+                  <span className="text-xs font-normal text-muted">
+                    {format(parseISO(laterDates[0]), "MMM d")} –{" "}
+                    {format(parseISO(laterDates[laterDates.length - 1]), "MMM d")}
+                  </span>
+                </summary>
+                <div className="mt-2">
+                  <UtilizationGrid
+                    rows={rows}
+                    dates={laterDates}
+                    goalPct={goalPct}
+                    showRange={false}
+                    onSelectDay={(row, day) => setSelected({ row, day })}
+                  />
+                </div>
+              </details>
+            )}
 
             <UtilizationLegend goalPct={goalPct} />
 
