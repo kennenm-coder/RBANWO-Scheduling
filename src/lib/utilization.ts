@@ -243,6 +243,12 @@ export interface DayJob {
   /** False for an install with no material list — a "legacy deal". */
   hasTally: boolean;
   /**
+   * True when a material list DOES exist but holds no countable units (all
+   * misc, or no abbrev). Scored like a legacy deal, but worth telling apart:
+   * the list is there and probably needs fixing, not building.
+   */
+  emptyTally: boolean;
+  /**
    * True when `jobPoints` came from the legacy per-day rate rather than a real
    * product count. The UI must never let an estimate read as a product tally.
    */
@@ -371,7 +377,12 @@ function buildDayJob(
 ): DayJob {
   const loadBearing = LOAD_BEARING_TYPES.includes(appt.appointment_type);
   const order = appt.order_number?.trim() || "";
-  const tally = order ? tallyByOrder.get(order) : undefined;
+  const found = order ? tallyByOrder.get(order) : undefined;
+  // A tally that sums to zero is a material list with nothing countable on it
+  // — every unit is misc, or none carries an abbrev. That is not a confident
+  // "no work"; it is the same absence of information as having no list, so it
+  // is treated as one rather than reading as a silent idle day.
+  const tally = found && found.total_units > 0 ? found : undefined;
   const spanDays = Math.max(1, appt.duration_days || 1);
   const divisor = Math.max(1, workedDays);
   const breakdown = tally ? tallyBreakdown(tally, weights) : [];
@@ -393,6 +404,7 @@ function buildDayJob(
     loadBearing,
     // Only load-bearing work NEEDS a tally; a service call is not "missing" one.
     hasTally: loadBearing ? !!tally : true,
+    emptyTally: loadBearing && !!found && !tally,
     estimated,
     spanDays,
     workedDays: divisor,
@@ -610,7 +622,7 @@ export function describeDayPoints(day: CrewDay): string {
       // Never show a product mix here — there isn't one, and an estimate must
       // not be able to read as a count of real units.
       lines.push(
-        `${job.customerName} — LEGACY DEAL, no material list` +
+        `${job.customerName} — ${job.emptyTally ? "LIST HAS NO COUNTABLE UNITS" : "LEGACY DEAL, no material list"}` +
           INDENT +
           `estimated ${formatPoints(job.dayPoints)} pts${span}`
       );

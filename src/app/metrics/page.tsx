@@ -371,6 +371,7 @@ export default function MetricsPage() {
                         </span>
                         <span className="text-xs text-muted tabular-nums">
                           {job.orderNumber ? `Order ${job.orderNumber}` : "no order number"}
+                          {job.emptyTally ? " · list has no countable units" : ""}
                         </span>
                       </li>
                     ))

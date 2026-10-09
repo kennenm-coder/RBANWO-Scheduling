@@ -604,3 +604,46 @@ describe("multi-day jobs that span a non-working day", () => {
     expect(row.capacity).toBe(0);
   });
 });
+
+describe("a material list with nothing countable on it", () => {
+  const crew = makeCrew({ id: "lead", name: "Sam" });
+
+  function run(tallies: InstallTally[]) {
+    return computeUtilization({
+      crews: [crew],
+      dates: ["2026-10-05"],
+      appointments: [makeAppt({ id: "a", order_number: "PO-1" })],
+      tallyByOrder: new Map(tallies.map((t) => [t.order_number!, t])),
+      weights,
+      settings: SETTINGS,
+      isOff: neverOff,
+    })[0];
+  }
+
+  it("is estimated, not read as a confident zero", () => {
+    // Seen in production: one job whose doc holds a single unit that is misc
+    // or carries no abbrev, so the tally sums to zero. Scored as a real 0 it
+    // was indistinguishable from an idle day, and nothing flagged it.
+    const row = run([makeTally({ order_number: "PO-1" })]);
+    expect(row.days[0].dayClass).toBe("estimated");
+    expect(row.days[0].points).toBe(6);
+    expect(row.legacyJobs).toHaveLength(1);
+  });
+
+  it("is told apart from a job that has no list at all", () => {
+    const empty = run([makeTally({ order_number: "PO-1" })]).days[0].jobs[0];
+    expect(empty.emptyTally).toBe(true);
+
+    const missing = run([]).days[0].jobs[0];
+    expect(missing.emptyTally).toBe(false);
+    // Both are estimated; only the cause differs.
+    expect(empty.estimated && missing.estimated).toBe(true);
+  });
+
+  it("still counts a list that has real units on it", () => {
+    const row = run([makeTally({ order_number: "PO-1", windows_if: 6 })]);
+    expect(row.days[0].dayClass).toBe("measurable");
+    expect(row.days[0].points).toBe(12);
+    expect(row.legacyJobs).toHaveLength(0);
+  });
+});

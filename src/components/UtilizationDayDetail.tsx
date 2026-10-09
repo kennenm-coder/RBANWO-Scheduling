@@ -134,7 +134,9 @@ export default function UtilizationDayDetail({ row, day, onClose }: Props) {
                       <div className="mt-1.5" style={{ color: "var(--warning)" }}>
                         <p className="text-xs flex items-center gap-1.5">
                           <AlertTriangle size={12} />
-                          Legacy deal — no material list
+                          {job.emptyTally
+                            ? "Material list has no countable units"
+                            : "Legacy deal — no material list"}
                         </p>
                         <p className="text-[11px] text-muted mt-1">
                           Estimated at {formatPoints(job.jobPoints / Math.max(1, job.spanDays))}{" "}
