@@ -107,7 +107,14 @@ export function deriveIssues(
    * `appointments` by design, so without them a job cancelled here while rForce
    * still shows it live is indistinguishable from one that was never scheduled.
    */
-  cancelledTiles: CancelledTile[] = []
+  cancelledTiles: CancelledTile[] = [],
+  /**
+   * Observed daily-export dates. A "cancelled here" flag only makes sense while
+   * rForce still has the job live; an order that has itself dropped out of the
+   * exports (the red tier) is no longer live there, so flagging it would tell
+   * the scheduler to go cancel a job rForce already let go of.
+   */
+  exportDates: string[] = []
 ): SchedulingIssue[] {
   const normalizeWo = (value: string | null | undefined) =>
     (value || "").trim().toLowerCase();
@@ -172,11 +179,27 @@ export function deriveIssues(
       // Missing: rForce says scheduled, no local tile
       if (!rf.scheduled_start) continue; // safety — no date means nothing to show
 
+      // Already placed on the calendar, just outside the loaded date window
+      // (its tile is older/further out than the calendar loads). It isn't
+      // missing — approving it would only hit the DUPLICATE_WO guard — so skip.
+      // This runs BEFORE the cancelled-here check on purpose: a job cancelled
+      // once and later rebooked on a date outside the window has a live tile,
+      // so it is scheduled, not "cancelled here". Checking cancellations first
+      // produced a purple flag that vanished the moment the calendar loaded
+      // that far-out date and came back on the next page load.
+      if (scheduledWorkOrders.has(normalizeWo(rf.work_order_number))) continue;
+
       // Someone cancelled the tile here while rForce still has the job live.
       // Reported separately from "missing": the action is to cancel it in rForce
       // (or restore the tile), not to go place a job that was never scheduled.
+      // "Live" matters: once the order has missed enough exports to count as
+      // dropped from rForce, there is nothing left to cancel there, so a tile
+      // cancelled off a "Dropped from rForce" review must not resurface as a
+      // "Cancelled here, live in rForce" row.
       const cancelled = cancelledByWo.get(normalizeWo(rf.work_order_number));
-      if (cancelled) {
+      const droppedFromRForce =
+        exportDates.length > 0 && missedExportCount(rf, exportDates) >= MISSED_EXPORTS_FOR_RED;
+      if (cancelled && !droppedFromRForce) {
         issues.push({
           type: "cancelled_locally",
           rforceOrder: rf,
@@ -190,11 +213,6 @@ export function deriveIssues(
         });
         continue;
       }
-
-      // Already placed on the calendar, just outside the loaded date window
-      // (its tile is older/further out than the calendar loads). It isn't
-      // missing — approving it would only hit the DUPLICATE_WO guard — so skip.
-      if (scheduledWorkOrders.has(normalizeWo(rf.work_order_number))) continue;
 
       // Resolve where this job would land if approved (same placement logic the
       // approval overlay uses). Only present when the resource maps to a crew.
@@ -452,4 +470,35 @@ export function deriveAwaitingRForce(
   });
 
   return awaiting;
+}
+
+/**
+ * The one way to count what the Issues tab holds. The page header and the
+ * bottom-nav badge both go through here so they can never disagree.
+ *
+ *  - `actionable` is what the badge shows and what the header leads with:
+ *    every rForce-side issue, every dropped tile, and the awaiting-rForce rows
+ *    that have gone *overdue* (an export ran and rForce still lacks the job).
+ *  - `pendingRForce` is the rest of the awaiting rows: booked here, no export
+ *    has run since. Normal right after booking, so it is not a badge — but it
+ *    is still a row on the page, which is why it is reported separately rather
+ *    than silently folded in or silently left out.
+ *  - `total` is every row the page can list: actionable + pendingRForce.
+ */
+export interface IssueCounts {
+  actionable: number;
+  pendingRForce: number;
+  total: number;
+}
+
+export function countIssues(
+  issues: SchedulingIssue[],
+  dropped: DroppedTileIssue[],
+  awaiting: AwaitingRForceIssue[]
+): IssueCounts {
+  let overdue = 0;
+  for (const a of awaiting) if (a.tier === "overdue") overdue++;
+  const pendingRForce = awaiting.length - overdue;
+  const actionable = issues.length + dropped.length + overdue;
+  return { actionable, pendingRForce, total: actionable + pendingRForce };
 }

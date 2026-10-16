@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveIssues, deriveDroppedTiles, deriveAwaitingRForce } from "./issues";
+import { deriveIssues, deriveDroppedTiles, deriveAwaitingRForce, countIssues } from "./issues";
 import type { Appointment, RForceOrder, AppointmentLink } from "./types";
 
 function makeRForceOrder(overrides: Partial<RForceOrder> = {}): RForceOrder {
@@ -482,5 +482,91 @@ describe("deriveDroppedTiles", () => {
     });
     const cancelledAppt = makeAppointment({ work_order_number: "WO-100", status: "cancelled" });
     expect(deriveDroppedTiles([cancelledAppt], [staleOrder], [], EXPORTS, TODAY)).toHaveLength(0);
+  });
+});
+
+describe("issue-count stability (header vs badge, resolve vs refresh)", () => {
+  const cancelledTile = (overrides: Record<string, unknown> = {}) => ({
+    id: "appt-cancelled",
+    work_order_number: "WO-100",
+    scheduled_date: "2026-08-14",
+    crew_id: "crew-1",
+    cancelled_at: "2026-08-10T12:00:00Z",
+    cancelled_by: "user-1",
+    cancellation_reason: "customer rescheduled",
+    version: 2,
+    ...overrides,
+  });
+
+  it("a WO cancelled once but rebooked outside the loaded window is scheduled, not 'cancelled here'", () => {
+    // The old order of checks flagged this purple; the flag then vanished as soon
+    // as the calendar loaded the far-out date, and came back on the next refresh.
+    const issues = deriveIssues(
+      [makeRForceOrder()],
+      [],
+      [],
+      [crew],
+      [],
+      new Set(["wo-100"]), // live tile exists, just not in `appointments`
+      [],
+      [cancelledTile()] as never
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it("does not flag 'cancelled here' once the order itself has dropped from rForce exports", () => {
+    // Cancel tile from a "Dropped from rForce" review → must not reappear as
+    // "Cancelled here, live in rForce": rForce no longer has it.
+    const staleOrder = makeRForceOrder({ updated_at: "2026-08-06T00:00:00Z" });
+    const exports = ["2026-08-17", "2026-08-16"]; // missed 2 → red tier
+    const issues = deriveIssues(
+      [staleOrder],
+      [],
+      [],
+      [crew],
+      [],
+      new Set(),
+      [],
+      [cancelledTile()] as never,
+      exports
+    );
+    expect(issues.find((i) => i.type === "cancelled_locally")).toBeUndefined();
+  });
+
+  it("still flags 'cancelled here' while the order is present in the latest export", () => {
+    const freshOrder = makeRForceOrder({ updated_at: "2026-08-17T00:00:00Z" });
+    const exports = ["2026-08-17", "2026-08-16"];
+    const issues = deriveIssues(
+      [freshOrder],
+      [],
+      [],
+      [crew],
+      [],
+      new Set(),
+      [],
+      [cancelledTile()] as never,
+      exports
+    );
+    expect(issues.map((i) => i.type)).toEqual(["cancelled_locally"]);
+  });
+
+  it("countIssues: actionable excludes pending-rForce rows, total includes them", () => {
+    const issue = { type: "missing" } as never;
+    const dropped = [{ woNumber: "WO-1" }, { woNumber: "WO-2" }] as never;
+    const awaiting = [
+      { tier: "overdue" },
+      { tier: "pending" },
+      { tier: "pending" },
+      { tier: "pending" },
+    ] as never;
+    expect(countIssues([issue], dropped, awaiting)).toEqual({
+      actionable: 1 + 2 + 1,
+      pendingRForce: 3,
+      total: 7,
+    });
+  });
+
+  it("countIssues: empty inputs count to zero", () => {
+    expect(countIssues([], [], [])).toEqual({ actionable: 0, pendingRForce: 0, total: 0 });
   });
 });

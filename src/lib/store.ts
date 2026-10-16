@@ -636,14 +636,33 @@ export async function fetchCancelledTiles(): Promise<CancelledTile[]> {
 
 // ── Appointment Links ──
 
+/**
+ * Every active link, paged. A bare `.select()` silently stops at PostgREST's
+ * 1,000-row cap, and links accumulate one per approval/merge forever — once the
+ * table crossed that line, whichever links fell past the cap were missing on
+ * the next page load, and the tiles behind them read as unpaired or mismatched
+ * again. Ordered by id so the pages are disjoint (see fetchRForceOrders).
+ */
 export async function fetchActiveLinks(): Promise<AppointmentLink[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  const { data } = await sb
-    .from("sched_appointment_links")
-    .select("*")
-    .is("unlinked_at", null);
-  return (data as AppointmentLink[]) ?? [];
+  const all: AppointmentLink[] = [];
+  let offset = 0;
+  const BATCH = 1000;
+  while (true) {
+    const { data, error } = await sb
+      .from("sched_appointment_links")
+      .select("*")
+      .is("unlinked_at", null)
+      .order("id", { ascending: true })
+      .range(offset, offset + BATCH - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all.push(...(data as AppointmentLink[]));
+    if (data.length < BATCH) break;
+    offset += BATCH;
+  }
+  return all;
 }
 
 export async function linkAppointment(
@@ -1003,11 +1022,32 @@ export async function deleteCalendarBlock(id: string): Promise<void> {
 
 // ── rForce Dismissals ──
 
+/**
+ * Every dismissal, paged. Same 1,000-row trap as fetchActiveLinks: a dismissal
+ * is written once per "Dismiss" / "Keep tile" / "Cancelled in rForce" click and
+ * never deleted, so the table only grows. Past the cap, the newest dismissals
+ * were the ones left out, which is exactly "I dismissed it, refreshed, and it
+ * came back".
+ */
 export async function fetchDismissals(): Promise<RForceDismissal[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  const { data } = await sb.from("sched_rforce_dismissals").select("*");
-  return (data as RForceDismissal[]) ?? [];
+  const all: RForceDismissal[] = [];
+  let offset = 0;
+  const BATCH = 1000;
+  while (true) {
+    const { data, error } = await sb
+      .from("sched_rforce_dismissals")
+      .select("*")
+      .order("id", { ascending: true })
+      .range(offset, offset + BATCH - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all.push(...(data as RForceDismissal[]));
+    if (data.length < BATCH) break;
+    offset += BATCH;
+  }
+  return all;
 }
 
 export async function dismissRForceOrder(

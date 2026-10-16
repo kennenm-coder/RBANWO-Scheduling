@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useData } from "@/components/DataProvider";
-import { fetchScheduledWorkOrderNumbers } from "@/lib/store";
 import { useToast } from "@/components/Toast";
 import { getRForceResource } from "@/lib/normalize";
 import { useActorName } from "@/hooks/useActorName";
@@ -11,6 +10,7 @@ import {
   deriveIssues,
   deriveDroppedTiles,
   deriveAwaitingRForce,
+  countIssues,
   type SchedulingIssue,
   type DroppedTileIssue,
   type AwaitingRForceIssue,
@@ -465,8 +465,9 @@ export default function IssuesPage() {
     dismissRForce,
     exportDates,
     cancelledTiles,
+    scheduledWorkOrders,
     restoreAppointment,
-    refreshData,
+    refreshReconciliationSets,
   } = useData();
   const router = useRouter();
   const { showToast } = useToast();
@@ -486,25 +487,15 @@ export default function IssuesPage() {
     | null
   >(null);
 
-  // Work orders already placed on the calendar anywhere (incl. outside the
-  // loaded date window). Fetched once so already-scheduled past jobs aren't
-  // flagged "missing". Refetched after a bulk approve so the list stays honest.
-  const [scheduledWos, setScheduledWos] = useState<Set<string>>(new Set());
-  const [scheduledWosVersion, setScheduledWosVersion] = useState(0);
-  useEffect(() => {
-    let active = true;
-    fetchScheduledWorkOrderNumbers().then((list) => {
-      if (active) setScheduledWos(new Set(list.map((w) => w.trim().toLowerCase())));
-    });
-    return () => {
-      active = false;
-    };
-  }, [scheduledWosVersion]);
-
+  // The scheduled-WO set comes from DataProvider — the same copy the bottom-nav
+  // badge reads. This page used to fetch its own on every mount, starting from
+  // an empty set, so for the first half-second of each visit every past job
+  // with a tile outside the loaded window counted as "missing" and the header
+  // number ran well above the badge before settling.
   const allIssues = useMemo(
     () =>
-      deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWos, dismissals, cancelledTiles),
-    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWos, dismissals, cancelledTiles]
+      deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, cancelledTiles, exportDates),
+    [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, cancelledTiles, exportDates]
   );
 
   // Tiles whose backing rForce order silently dropped from imports (cancellation
@@ -535,7 +526,14 @@ export default function IssuesPage() {
     return c;
   }, [allIssues, droppedTiles, awaiting]);
 
-  const totalCount = allIssues.length + droppedTiles.length + awaiting.length;
+  // One counting rule shared with the bottom-nav badge. `actionable` is the
+  // headline (and the badge); `pendingRForce` rows are listed but called out
+  // separately so the two numbers on screen visibly reconcile.
+  const counts = useMemo(
+    () => countIssues(allIssues, droppedTiles, awaiting),
+    [allIssues, droppedTiles, awaiting]
+  );
+  const totalCount = counts.total;
 
   // Missing issues that can be auto-placed (resource maps to a crew).
   const approvable = useMemo(
@@ -607,8 +605,10 @@ export default function IssuesPage() {
       }
     }
     setBulk({ phase: "done", approved, skipped, failed });
-    // Refetch the placed-WO set so anything just approved drops off the list.
-    setScheduledWosVersion((v) => v + 1);
+    // Each approve already refreshes the shared placed-WO set, but those run
+    // in the background; one final pass guarantees the list reflects the last
+    // approval before the "Done" dialog is read.
+    void refreshReconciliationSets();
   }
 
   const filteredIssues = useMemo(() => {
@@ -793,9 +793,11 @@ export default function IssuesPage() {
     const key = `${issue.woNumber}|${issue.rforceDate}`;
     setRestoringKey(key);
     try {
+      // restoreAppointment puts the tile back into local state and refreshes
+      // the scheduled/cancelled sets itself; the full refreshData() this used
+      // to call re-downloaded every work order just to clear one row.
       await restoreAppointment(tile.id, tile.version);
       showToast(`Restored ${issue.customerName} to the calendar.`, "success");
-      await refreshData();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
       showToast(
@@ -825,8 +827,16 @@ export default function IssuesPage() {
           <h1 className="text-lg font-semibold">
             Issues{" "}
             <span className="text-muted font-normal text-sm">
-              ({totalCount})
+              ({counts.actionable})
             </span>
+            {counts.pendingRForce > 0 && (
+              <span
+                className="ml-1.5 text-muted font-normal text-xs"
+                title="Booked here, no rForce import has run since. Listed under “Not in rForce” but not counted as an issue yet."
+              >
+                + {counts.pendingRForce} pending rForce
+              </span>
+            )}
           </h1>
           <div className="ml-auto flex items-center gap-2">
             {underScheduled.length > 0 && (

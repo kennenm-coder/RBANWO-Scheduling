@@ -8,7 +8,7 @@ import { useData } from "./DataProvider";
 import { useAuth } from "./AuthProvider";
 import { canManage } from "@/lib/auth";
 import { categorizeResourceNames, deniedNamesFromFlagKeys } from "@/lib/unmatched-resources";
-import { deriveIssues, deriveDroppedTiles, deriveAwaitingRForce } from "@/lib/issues";
+import { deriveIssues, deriveDroppedTiles, deriveAwaitingRForce, countIssues } from "@/lib/issues";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: CalendarDays },
@@ -46,16 +46,17 @@ export default function BottomNav() {
     return unmatched.length + suggested.length;
   }, [crews, rforceOrders, timeOffRequests, flagResolutions]);
 
-  // Pass scheduledWorkOrders so the badge counts issues the same way the Issues
-  // page does — otherwise already-scheduled jobs get re-flagged as "missing".
-  // Only urgent tile reviews count: dropped tiles (red tier) and app bookings
-  // that are still missing from rForce after an export ("overdue"). A tile
-  // merely "pending" rForce is normal and isn't a badge.
+  // Same inputs, same derivations and the same counting rule as the Issues page
+  // header (countIssues), so the badge and the header can't drift apart. The
+  // badge shows the actionable count: a tile merely "pending" rForce is normal
+  // right after booking and is not something to nag about.
   const issueCount = useMemo(
     () =>
-      deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, cancelledTiles).length +
-      deriveDroppedTiles(appointments, rforceOrders, dismissals, exportDates).length +
-      deriveAwaitingRForce(appointments, rforceOrders, dismissals, exportDates).filter((t) => t.tier === "overdue").length,
+      countIssues(
+        deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, cancelledTiles, exportDates),
+        deriveDroppedTiles(appointments, rforceOrders, dismissals, exportDates),
+        deriveAwaitingRForce(appointments, rforceOrders, dismissals, exportDates)
+      ).actionable,
     [rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, exportDates, cancelledTiles]
   );
 

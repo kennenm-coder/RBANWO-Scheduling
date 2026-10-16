@@ -144,6 +144,11 @@ interface DataContextValue {
   rejectMatch: (appointmentId: string, workOrderNumber: string, reason?: string) => Promise<void>;
   unrejectMatch: (appointmentId: string, workOrderNumber: string) => Promise<void>;
   refreshData: () => Promise<void>;
+  /** Refetch only `scheduledWorkOrders` and `cancelledTiles` — the two sets the
+   *  Issues engine uses to see tiles outside the loaded window. Cheap (WO
+   *  numbers and a handful of columns), so it runs after every write that can
+   *  change them, instead of the full refreshData() sweep. */
+  refreshReconciliationSets: () => Promise<void>;
   /** Patch one already-loaded rForce order in place. Use this after a write that
    *  touches a single work_orders row (e.g. scheduler notes) — refreshData()
    *  re-downloads every work order in the 90-day window, which is megabytes of
@@ -203,8 +208,18 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const loadData = useCallback(async () => {
     try {
       const today = new Date();
-      const start = format(subDays(today, 30), "yyyy-MM-dd");
-      const end = format(addDays(today, 180), "yyyy-MM-dd");
+      // Keep whatever window ensureDateRange has already grown to. A refresh
+      // (restore from Issues, resource edits, the freshness banner) used to
+      // snap back to the base window and drop every tile loaded beyond it, so
+      // issues that depended on those tiles flipped on and off between a
+      // refresh and the next calendar visit. The window only ever grows.
+      const base = {
+        start: format(subDays(today, 30), "yyyy-MM-dd"),
+        end: format(addDays(today, 180), "yyyy-MM-dd"),
+      };
+      const held = loadedRangeRef.current;
+      const start = held && held.start < base.start ? held.start : base.start;
+      const end = held && held.end > base.end ? held.end : base.end;
 
       const [c, a, r, t, av, cb, links, rm, dism, flagRes, matchRej, unsched, schedWos, runDates, cancelled] = await Promise.all([
         fetchCrews(),
@@ -266,6 +281,29 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       console.error("Failed to load data:", err);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // The Issues engine decides "already scheduled elsewhere" and "cancelled here"
+  // from these two sets, which only loadData filled. Every write that places,
+  // cancels, restores, unschedules or deletes a tile changes them, and until the
+  // next full load the engine was reasoning from the stale copies: a cancelled
+  // tile did not flag until a page refresh, a restored one stayed flagged. Only
+  // the latest call wins so an older, slower response can't overwrite a newer one.
+  const reconcileSeqRef = useRef(0);
+  const refreshReconciliationSets = useCallback(async () => {
+    const seq = ++reconcileSeqRef.current;
+    try {
+      const [schedWos, cancelled] = await Promise.all([
+        fetchScheduledWorkOrderNumbers(),
+        fetchCancelledTiles(),
+      ]);
+      if (seq !== reconcileSeqRef.current) return;
+      setScheduledWorkOrders(new Set(schedWos.map((w) => w.trim().toLowerCase())));
+      setCancelledTiles(cancelled);
+    } catch (err) {
+      // Keep the sets we have; the next write or full load retries.
+      console.error("Failed to refresh reconciliation sets:", err);
     }
   }, []);
 
@@ -410,11 +448,12 @@ export default function DataProvider({ children }: { children: ReactNode }) {
             if (prev.find((a) => a.id === result.id)) return prev;
             return [...prev, result];
           });
+          if (result.work_order_number) void refreshReconciliationSets();
         }
       }
       return result;
     },
-    [appointments]
+    [appointments, refreshReconciliationSets]
   );
 
   const handleUpdate = useCallback(
@@ -440,10 +479,15 @@ export default function DataProvider({ children }: { children: ReactNode }) {
             prev.map((a) => (a.id === result.id ? result : a))
           );
         }
+        // A status flip (scheduled ↔ unscheduled) or a work-order edit moves
+        // the row in or out of the scheduled-WO set.
+        if ("status" in updates || "work_order_number" in updates) {
+          void refreshReconciliationSets();
+        }
       }
       return result;
     },
-    [appointments]
+    [appointments, refreshReconciliationSets]
   );
 
   const handleCancel = useCallback(
@@ -464,21 +508,30 @@ export default function DataProvider({ children }: { children: ReactNode }) {
             : a
         )
       );
+      // The tile leaves the scheduled-WO set and joins cancelledTiles; the
+      // "cancelled here, live in rForce" row depends on both being current.
+      void refreshReconciliationSets();
     },
-    [actorId]
+    [actorId, refreshReconciliationSets]
   );
 
   const handleRestore = useCallback(
     async (id: string, version: number) => {
       const result = await restoreApptInDb(id, version);
       if (result) {
+        // A cancelled tile is not in `appointments` (fetchAppointments excludes
+        // them), so a plain map() silently dropped the restored row and the
+        // calendar only showed it after a full refresh. Insert when absent.
         setAppointments((prev) =>
-          prev.map((a) => (a.id === result.id ? result : a))
+          prev.some((a) => a.id === result.id)
+            ? prev.map((a) => (a.id === result.id ? result : a))
+            : [...prev, result]
         );
+        void refreshReconciliationSets();
       }
       return result;
     },
-    []
+    [refreshReconciliationSets]
   );
 
   const handleDelete = useCallback(
@@ -488,8 +541,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       setAppointments((prev) => prev.filter((a) => a.id !== id));
       setUnscheduledAppointments((prev) => prev.filter((a) => a.id !== id));
       setActiveLinks((prev) => prev.filter((l) => l.appointment_id !== id));
+      setCancelledTiles((prev) => prev.filter((t) => t.id !== id));
+      void refreshReconciliationSets();
     },
-    []
+    [refreshReconciliationSets]
   );
 
   const handleUnschedule = useCallback(
@@ -505,9 +560,10 @@ export default function DataProvider({ children }: { children: ReactNode }) {
             ? prev.map((a) => (a.id === result.id ? result : a))
             : [...prev, result]
         );
+        void refreshReconciliationSets();
       }
     },
-    []
+    [refreshReconciliationSets]
   );
 
   const handleMerge = useCallback(
@@ -522,9 +578,11 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       if (result.link) {
         setActiveLinks((prev) => [...prev, result.link!]);
       }
+      // Merging stamps a work order onto the tile → it enters the scheduled set.
+      void refreshReconciliationSets();
       return result;
     },
-    []
+    [refreshReconciliationSets]
   );
 
   const handleAddTimeOff = useCallback(
@@ -631,9 +689,12 @@ export default function DataProvider({ children }: { children: ReactNode }) {
           return [...prev, result.link!];
         });
       }
+      // The job is now on the calendar; the scheduled-WO set must say so even
+      // when its date falls outside the loaded window.
+      void refreshReconciliationSets();
       return result.appointment;
     },
-    [user?.id, displayName, appointments, crews, availabilityRules, availabilityExceptions, calendarBlocks]
+    [user?.id, displayName, appointments, crews, availabilityRules, availabilityExceptions, calendarBlocks, refreshReconciliationSets]
   );
 
   const handleDismissRForce = useCallback(
@@ -741,6 +802,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         rejectMatch: handleRejectMatch,
         unrejectMatch: handleUnrejectMatch,
         refreshData: loadData,
+        refreshReconciliationSets,
         patchRForceOrder: handlePatchRForceOrder,
         ensureDateRange,
         addTimeOff: handleAddTimeOff,
