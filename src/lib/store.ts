@@ -742,16 +742,16 @@ export async function upsertResourceMapping(
   crewId: string
 ): Promise<ResourceMapping | null> {
   const sb = requireSupabase();
-  const { data, error } = await sb
-    .from("sched_resource_mappings")
-    .upsert(
-      { raw_name: rawName, crew_id: crewId, is_active: true, updated_at: new Date().toISOString() },
-      { onConflict: "raw_name" }
-    )
-    .select()
-    .single();
+  // Goes through an RPC, not .upsert(): the unique index is
+  // (lower(raw_name)) WHERE is_active = true, and PostgREST's onConflict
+  // cannot name an expression or a partial index. See migration
+  // 20261020_002_resource_mapping_upsert_rpc.sql.
+  const { data, error } = await sb.rpc("sched_upsert_resource_mapping", {
+    p_raw_name: rawName,
+    p_crew_id: crewId,
+  });
   if (error) throw new Error(error.message);
-  return data as ResourceMapping | null;
+  return (data as ResourceMapping) ?? null;
 }
 
 // ── Account/Address Lookup (for autofill) ──
