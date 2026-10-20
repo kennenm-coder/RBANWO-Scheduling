@@ -34,6 +34,12 @@ create policy "Users can update own profile"
   to authenticated
   using (id = auth.uid());
 
+-- WARNING: this policy is BROKEN and is replaced by
+-- 20261020_001_fix_sched_profiles_rls_recursion.sql. A policy on
+-- sched_profiles that selects FROM sched_profiles recurses; it took every app
+-- on the shared project down on 2026-10-20. Do not copy this pattern — put the
+-- role check in a SECURITY DEFINER function instead. Left here unmodified
+-- because it has already been applied.
 create policy "Admins can manage profiles"
   on sched_profiles for all
   to authenticated
