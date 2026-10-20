@@ -9,6 +9,22 @@
 -- DO NOT run this file to create a fresh database — it exists as a reference.
 -- Actual changes are applied via individual migrations in supabase/migrations/.
 --
+-- STALE AS OF 2026-10-20 — THE RLS POLICIES BELOW ARE NOT WHAT PRODUCTION HAS.
+-- This file still lists `FOR ALL TO anon USING (true) WITH CHECK (true)`
+-- policies on sched_appointment_events, sched_appointment_links,
+-- sched_availability_rules, sched_availability_exceptions,
+-- sched_calendar_blocks, sched_resource_mappings, sched_rforce_dismissals,
+-- sched_import_snapshots, sched_flag_resolutions and sched_match_rejections.
+-- Those were removed by the 2026-09-08 lockdown. Production now has exactly
+-- one policy per sched_* table:
+--   scheduling_roles_all_<table> FOR ALL
+--     USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+-- See 20260908_001_rls_lockdown_allowlist.sql (documentation),
+-- Betterthengooglecal/supabase/migrations/019_lock_down_shared_tables.sql
+-- (where it is actually applied) and 20261020_003_drop_anon_policies.sql.
+-- Trust `pg_policies` in the live database over the RLS section of this file
+-- until it is regenerated.
+--
 -- When adding a new column or table:
 --   1. Write a migration in supabase/migrations/ with the ALTER/CREATE
 --   2. Update this file to reflect the new state

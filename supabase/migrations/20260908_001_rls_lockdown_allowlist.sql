@@ -22,4 +22,11 @@
 -- now refuses unauthenticated queries — sign in with ?forceLogin=1 locally.
 --
 -- Nothing to run from this file; it documents the change for this repo.
+--
+-- WARNING (2026-10-20): because this file runs nothing, rebuilding ONLY this
+-- repo's migrations leaves the wide-open "Anon can ..." policies from
+-- 20260806_006, 20260806_007 and 20260812_002 in place — the lockdown
+-- described above happens in the OTHER repo. 20261020_003_drop_anon_policies
+-- now removes them from here, so this repo no longer depends on
+-- Betterthengooglecal's 019 running afterwards.
 SELECT 1;
