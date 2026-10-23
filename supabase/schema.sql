@@ -9,21 +9,9 @@
 -- DO NOT run this file to create a fresh database — it exists as a reference.
 -- Actual changes are applied via individual migrations in supabase/migrations/.
 --
--- STALE AS OF 2026-10-20 — THE RLS POLICIES BELOW ARE NOT WHAT PRODUCTION HAS.
--- This file still lists `FOR ALL TO anon USING (true) WITH CHECK (true)`
--- policies on sched_appointment_events, sched_appointment_links,
--- sched_availability_rules, sched_availability_exceptions,
--- sched_calendar_blocks, sched_resource_mappings, sched_rforce_dismissals,
--- sched_import_snapshots, sched_flag_resolutions and sched_match_rejections.
--- Those were removed by the 2026-09-08 lockdown. Production now has exactly
--- one policy per sched_* table:
---   scheduling_roles_all_<table> FOR ALL
---     USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
--- See 20260908_001_rls_lockdown_allowlist.sql (documentation),
--- Betterthengooglecal/supabase/migrations/019_lock_down_shared_tables.sql
--- (where it is actually applied) and 20261020_003_drop_anon_policies.sql.
--- Trust `pg_policies` in the live database over the RLS section of this file
--- until it is regenerated.
+-- Section 4 (row-level security) was regenerated from live production on
+-- 2026-10-23 and matches it. The rest of this file is still maintained by
+-- hand — when in doubt, trust the live database.
 --
 -- When adding a new column or table:
 --   1. Write a migration in supabase/migrations/ with the ALTER/CREATE
@@ -483,118 +471,215 @@ CREATE INDEX idx_import_snapshots_import ON sched_import_snapshots(import_id);
 
 
 -- ╔══════════════════════════════════════════════════════════════════════════╗
--- ║  SECTION 4: ROW-LEVEL SECURITY                                         ║
+-- ║  SECTION 4: ROW-LEVEL SECURITY                                           ║
 -- ╠══════════════════════════════════════════════════════════════════════════╣
--- ║  Current policy: wide-open for both anon and authenticated.            ║
--- ║  The app is internal-only; ENFORCE_AUTH = false.                        ║
--- ║  Phase 13 will tighten this to authenticated-only.                     ║
+-- ║  Locked down 2026-09-08. Every sched_* table requires an allowlisted     ║
+-- ║  scheduling role. Nothing here is reachable by anon.                     ║
 -- ╚══════════════════════════════════════════════════════════════════════════╝
+--
+-- REGENERATED 2026-10-23 by reading pg_policies on live production
+-- (xusqjotoyntnfysquvlv), not written by hand.
+--
+-- What was here before was wrong in a way that mattered. The header claimed
+-- "wide-open for both anon and authenticated ... Phase 13 will tighten this",
+-- and the body listed FOR ALL TO anon USING (true) WITH CHECK (true) policies
+-- on ten tables. Phase 13 happened on 2026-09-08; those anon policies were
+-- removed then. A file that calls itself the single source of truth while
+-- describing security that was deleted six weeks earlier is worse than no
+-- file at all, so it is now generated from the database.
+--
+-- Where it is actually applied:
+--   Betterthengooglecal/supabase/migrations/019_lock_down_shared_tables.sql
+--       the real lockdown; it owns the shared tables and rewrites every
+--       sched_* policy
+--   20260908_001_rls_lockdown_allowlist.sql
+--       documentation only - it runs nothing (SELECT 1)
+--   20261020_001_fix_sched_profiles_rls_recursion.sql
+--       sched_profiles, after the self-referencing policy caused the
+--       2026-10-20 outage
+--   20261020_003_drop_anon_policies.sql
+--       removes this repo's own anon policies so a rebuild here no longer
+--       depends on the calendar app's 019 running afterwards
+--
+-- The predicates are SECURITY DEFINER helpers on the shared project:
+--   has_any_role(text[])  caller holds one of these roles in allowed_emails
+--   is_allowlisted()      caller's email appears in allowed_emails at all
+--   sched_is_admin()      caller is admin/manager in sched_profiles
+--
+-- ── Standard shape: one policy per table, scheduling roles, full access ────
 
--- Base 5 tables: wide-open (original supabase-rls.sql)
-ALTER TABLE sched_crews ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all access to sched_crews"
-  ON sched_crews FOR ALL USING (true) WITH CHECK (true);
+ALTER TABLE sched_appointment_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_appointment_events"
+  ON sched_appointment_events FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_appointment_links ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_appointment_links"
+  ON sched_appointment_links FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_appointment_resources ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_appointment_resources"
+  ON sched_appointment_resources FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
 
 ALTER TABLE sched_appointments ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all access to sched_appointments"
-  ON sched_appointments FOR ALL USING (true) WITH CHECK (true);
-
-ALTER TABLE sched_csv_imports ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all access to sched_csv_imports"
-  ON sched_csv_imports FOR ALL USING (true) WITH CHECK (true);
-
-ALTER TABLE sched_settings ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all access to sched_settings"
-  ON sched_settings FOR ALL USING (true) WITH CHECK (true);
-
--- Profiles: own-row update, admin manage, all read
-ALTER TABLE sched_profiles ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can read all profiles"
-  ON sched_profiles FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Users can update own profile"
-  ON sched_profiles FOR UPDATE TO authenticated USING (id = auth.uid());
-
-ALTER TABLE sched_user_preferences ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can read own preferences"
-  ON sched_user_preferences FOR SELECT TO authenticated USING (user_id = auth.uid());
-CREATE POLICY "Users can manage own preferences"
-  ON sched_user_preferences FOR ALL TO authenticated USING (user_id = auth.uid());
-
--- Appointment events: authenticated read + insert; anon read + insert
-ALTER TABLE sched_appointment_events ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can read events"
-  ON sched_appointment_events FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Authenticated can insert events"
-  ON sched_appointment_events FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "Anon can read appointment events"
-  ON sched_appointment_events FOR SELECT TO anon USING (true);
-CREATE POLICY "Anon can insert appointment events"
-  ON sched_appointment_events FOR INSERT TO anon WITH CHECK (true);
-
--- Links: authenticated + anon full access
-ALTER TABLE sched_appointment_links ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can manage links"
-  ON sched_appointment_links FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage appointment links"
-  ON sched_appointment_links FOR ALL TO anon USING (true) WITH CHECK (true);
-
--- Availability: authenticated + anon full access
-ALTER TABLE sched_availability_rules ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can manage availability"
-  ON sched_availability_rules FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage availability rules"
-  ON sched_availability_rules FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "scheduling_roles_all_sched_appointments"
+  ON sched_appointments FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
 
 ALTER TABLE sched_availability_exceptions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can manage exceptions"
-  ON sched_availability_exceptions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage availability exceptions"
-  ON sched_availability_exceptions FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "scheduling_roles_all_sched_availability_exceptions"
+  ON sched_availability_exceptions FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_availability_rules ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_availability_rules"
+  ON sched_availability_rules FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
 
 ALTER TABLE sched_calendar_blocks ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can manage calendar blocks"
-  ON sched_calendar_blocks FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage calendar blocks"
-  ON sched_calendar_blocks FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "scheduling_roles_all_sched_calendar_blocks"
+  ON sched_calendar_blocks FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
 
--- Resource mappings: authenticated + anon full access
-ALTER TABLE sched_resource_mappings ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can manage mappings"
-  ON sched_resource_mappings FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage resource mappings"
-  ON sched_resource_mappings FOR ALL TO anon USING (true) WITH CHECK (true);
+ALTER TABLE sched_crews ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_crews"
+  ON sched_crews FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
 
--- Dismissals: authenticated + anon full access
-ALTER TABLE sched_rforce_dismissals ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can manage dismissals"
-  ON sched_rforce_dismissals FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage dismissals"
-  ON sched_rforce_dismissals FOR ALL TO anon USING (true) WITH CHECK (true);
+ALTER TABLE sched_csv_imports ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_csv_imports"
+  ON sched_csv_imports FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
 
--- Import snapshots: authenticated + anon full access
-ALTER TABLE sched_import_snapshots ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can manage snapshots"
-  ON sched_import_snapshots FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage import snapshots"
-  ON sched_import_snapshots FOR ALL TO anon USING (true) WITH CHECK (true);
-
--- Flag resolutions: authenticated + anon full access
 ALTER TABLE sched_flag_resolutions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can manage resolutions"
-  ON sched_flag_resolutions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage flag resolutions"
-  ON sched_flag_resolutions FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "scheduling_roles_all_sched_flag_resolutions"
+  ON sched_flag_resolutions FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
 
--- Match rejections: authenticated + anon full access
+ALTER TABLE sched_flags ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_flags"
+  ON sched_flags FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_geocode_cache ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_geocode_cache"
+  ON sched_geocode_cache FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_import_runs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_import_runs"
+  ON sched_import_runs FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_import_snapshots ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_import_snapshots"
+  ON sched_import_snapshots FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
 ALTER TABLE sched_match_rejections ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Authenticated can read rejections"
-  ON sched_match_rejections FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Authenticated can manage rejections"
-  ON sched_match_rejections FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Anon can manage match rejections"
-  ON sched_match_rejections FOR ALL TO anon USING (true) WITH CHECK (true);
+CREATE POLICY "scheduling_roles_all_sched_match_rejections"
+  ON sched_match_rejections FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
 
--- Geocode cache: no RLS (no sensitive data, internal use only)
+ALTER TABLE sched_reconciliation_results ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_reconciliation_results"
+  ON sched_reconciliation_results FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_resource_mappings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_resource_mappings"
+  ON sched_resource_mappings FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_rforce_dismissals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_rforce_dismissals"
+  ON sched_rforce_dismissals FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_rforce_orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_rforce_orders"
+  ON sched_rforce_orders FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+ALTER TABLE sched_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "scheduling_roles_all_sched_settings"
+  ON sched_settings FOR ALL
+  USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']))
+  WITH CHECK (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+-- ── Exceptions ────────────────────────────────────────────────────────────
+
+-- sched_profiles: allowlisted read, own-row update, admin manage.
+-- "Admins can manage profiles" calls sched_is_admin() rather than selecting
+-- from sched_profiles; selecting from the table it guards is what caused the
+-- 2026-10-20 outage. See 20261020_001.
+ALTER TABLE sched_profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "allowlisted_read_sched_profiles"
+  ON sched_profiles FOR SELECT USING (is_allowlisted());
+CREATE POLICY "Users can update own profile"
+  ON sched_profiles FOR UPDATE TO authenticated USING (id = auth.uid());
+CREATE POLICY "Admins can manage profiles"
+  ON sched_profiles FOR ALL TO authenticated
+  USING (sched_is_admin()) WITH CHECK (sched_is_admin());
+
+-- sched_user_preferences: per-user, not role-gated.
+ALTER TABLE sched_user_preferences ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can read own preferences"
+  ON sched_user_preferences FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "Users can manage own preferences"
+  ON sched_user_preferences FOR ALL USING (user_id = auth.uid());
+
+-- Admin-write / roles-read pairs: everyone scheduling may read, only admin
+-- may change. These back the /metrics tab (see 20261008_001).
+ALTER TABLE sched_crew_targets ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "sched_read_crew_targets"
+  ON sched_crew_targets FOR SELECT USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+CREATE POLICY "sched_admin_write_crew_targets"
+  ON sched_crew_targets FOR ALL USING (has_any_role(ARRAY['admin']));
+
+ALTER TABLE sched_load_weights ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "sched_read_load_weights"
+  ON sched_load_weights FOR SELECT USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+CREATE POLICY "sched_admin_write_load_weights"
+  ON sched_load_weights FOR ALL USING (has_any_role(ARRAY['admin']));
+
+ALTER TABLE sched_utilization_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "sched_read_utilization_settings"
+  ON sched_utilization_settings FOR SELECT USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+CREATE POLICY "sched_admin_write_utilization_settings"
+  ON sched_utilization_settings FOR ALL
+  USING (has_any_role(ARRAY['admin'])) WITH CHECK (has_any_role(ARRAY['admin']));
+
+-- sched_install_tally: READ ONLY to everyone. Rows are written by the
+-- trigger in 20261008_001, which runs as the saver, so no write policy.
+ALTER TABLE sched_install_tally ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "sched_read_install_tally"
+  ON sched_install_tally FOR SELECT USING (has_any_role(ARRAY['admin','scheduling','scheduling_manager']));
+
+-- NOTE: sched_geocode_cache DOES have RLS (listed above). This file used to
+-- claim it had none.
+
 
 
 -- ╔══════════════════════════════════════════════════════════════════════════╗
