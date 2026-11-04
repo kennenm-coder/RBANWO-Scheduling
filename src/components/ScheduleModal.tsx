@@ -627,13 +627,9 @@ export default function ScheduleModal({
                 value={type}
                 onChange={(e) => {
                   const newType = e.target.value as AppointmentType;
+                  // Changing the type keeps the start/end the scheduler already
+                  // set. (The type effect still coerces the block for measures.)
                   setType(newType);
-                  const blocks = getTimeBlocksForType(newType);
-                  setSelectedBlock(blocks[0]);
-                  // Reset times to defaults for the new type
-                  const defaults = getDefaultTimes(newType);
-                  setStartTime(defaults.start);
-                  setEndTime(defaults.end);
                 }}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background"
               >
