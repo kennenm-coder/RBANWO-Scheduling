@@ -92,3 +92,46 @@ export async function deleteLegacyLink(orderNumber: string): Promise<boolean> {
   const { error } = await sb.from("legacy_install_links").delete().eq("order_number", orderNumber);
   return !error;
 }
+
+/**
+ * Change fingerprints — one tiny request per table ("<count>:<newest stamp>").
+ *
+ * The chips need to stay live while several people schedule at once, so they
+ * re-check every minute. A re-check that pulled whole tables would be wasteful;
+ * this lets the provider refetch a table only when its fingerprint moved. A
+ * delete changes the count, an edit or insert moves the newest stamp. Null on
+ * any failure, which the caller treats as "leave what's on screen alone".
+ */
+export interface JobLinkSignatures {
+  legacy: string | null;
+  linked: string | null;
+  writeUps: string | null;
+}
+
+async function signature(
+  table: string,
+  stampColumn: string,
+  activeOnly = false
+): Promise<string | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  let q = sb
+    .from(table)
+    .select(stampColumn, { count: "exact" })
+    .order(stampColumn, { ascending: false })
+    .limit(1);
+  if (activeOnly) q = q.in("status", ["in_review", "open"]);
+  const { data, error, count } = await q;
+  if (error || count == null) return null;
+  const newest = (data as unknown as Record<string, string>[] | null)?.[0]?.[stampColumn] ?? "";
+  return `${count}:${newest}`;
+}
+
+export async function fetchJobLinkSignatures(): Promise<JobLinkSignatures> {
+  const [legacy, linked, writeUps] = await Promise.all([
+    signature("legacy_install_links", "updated_at").catch(() => null),
+    signature("sched_install_tally", "built_at").catch(() => null),
+    signature("field_work_orders", "updated_at", true).catch(() => null),
+  ]);
+  return { legacy, linked, writeUps };
+}

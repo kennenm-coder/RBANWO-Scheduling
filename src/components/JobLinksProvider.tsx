@@ -13,6 +13,7 @@ import {
   fetchActiveWriteUpIndex,
   fetchLegacyLinkMap,
   fetchLinkedJobMap,
+  fetchJobLinkSignatures,
   upsertLegacyLink,
   deleteLegacyLink,
 } from "@/lib/job-links-store";
@@ -47,13 +48,33 @@ export default function JobLinksProvider({ children }: { children: React.ReactNo
   const [data, setData] = useState<JobLinkData>(EMPTY_JOB_LINKS);
   const lastLoadRef = useRef(0);
 
+  // What each table looked like the last time we pulled it. A re-check pulls a
+  // table again only when its fingerprint moved, so staying live costs three
+  // tiny requests a minute instead of three table downloads.
+  const sigRef = useRef<{ legacy: string | null; linked: string | null; writeUps: string | null }>({
+    legacy: null,
+    linked: null,
+    writeUps: null,
+  });
+
   const load = useCallback(async () => {
     lastLoadRef.current = Date.now();
+    const sigs = await fetchJobLinkSignatures().catch(() => null);
+    if (!sigs) return;
+    const seen = sigRef.current;
+    // A null fingerprint means that check failed: leave the slice alone.
+    const stale = (k: "legacy" | "linked" | "writeUps") => sigs[k] !== null && sigs[k] !== seen[k];
+
     const [legacy, linked, writeUps] = await Promise.all([
-      fetchLegacyLinkMap().catch(() => null),
-      fetchLinkedJobMap().catch(() => null),
-      fetchActiveWriteUpIndex().catch(() => null),
+      stale("legacy") ? fetchLegacyLinkMap().catch(() => null) : null,
+      stale("linked") ? fetchLinkedJobMap().catch(() => null) : null,
+      stale("writeUps") ? fetchActiveWriteUpIndex().catch(() => null) : null,
     ]);
+    // Remember a fingerprint only if its pull succeeded, so a failed pull retries.
+    if (legacy) seen.legacy = sigs.legacy;
+    if (linked) seen.linked = sigs.linked;
+    if (writeUps) seen.writeUps = sigs.writeUps;
+    if (!legacy && !linked && !writeUps) return;
     // Each slice is replaced only if its own read succeeded.
     setData((prev) => ({
       legacy: legacy ?? prev.legacy,

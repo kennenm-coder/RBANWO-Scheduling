@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import JobLinksProvider from "./JobLinksProvider";
 import JobLinkChips from "./JobLinkChips";
 import { addressKey } from "@/lib/address-match";
@@ -10,11 +10,17 @@ const store = vi.hoisted(() => ({
   legacy: null as Map<string, string> | null,
   linked: null as Map<string, string> | null,
   writeUps: null as Map<string, unknown[]> | null,
+  sig: "1:a",
+  pulls: 0,
 }));
 
 vi.mock("@/lib/job-links-store", () => ({
   fetchLegacyLinkMap: async () => store.legacy,
-  fetchLinkedJobMap: async () => store.linked,
+  fetchLinkedJobMap: async () => {
+    store.pulls++;
+    return store.linked;
+  },
+  fetchJobLinkSignatures: async () => ({ legacy: store.sig, linked: store.sig, writeUps: store.sig }),
   fetchActiveWriteUpIndex: async () => store.writeUps,
   upsertLegacyLink: async () => true,
   deleteLegacyLink: async () => true,
@@ -76,5 +82,42 @@ describe("JobLinkChips", () => {
     );
     await new Promise((r) => setTimeout(r, 500));
     expect(container.textContent).toBe("");
+  });
+
+  it("re-checks on focus but only re-pulls a table whose fingerprint moved", async () => {
+    store.linked = new Map([["A1", "job-1"]]);
+    store.legacy = new Map();
+    store.writeUps = new Map();
+    store.sig = "1:a";
+    store.pulls = 0;
+    render(
+      <JobLinksProvider>
+        <JobLinkChips appointment={install} />
+      </JobLinksProvider>
+    );
+    await waitFor(() => expect(screen.getByText("Mat List")).toBeTruthy());
+    expect(store.pulls).toBe(1);
+
+    const realNow = Date.now;
+    Date.now = () => realNow() + 120_000; // past the one-minute throttle
+    try {
+      // Nothing changed: the check runs but pulls nothing.
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(store.pulls).toBe(1);
+
+      // Something changed: it pulls again.
+      store.sig = "2:b";
+      Date.now = () => realNow() + 300_000;
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(store.pulls).toBe(2);
+    } finally {
+      Date.now = realNow;
+    }
   });
 });
