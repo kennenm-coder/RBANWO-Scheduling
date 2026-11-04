@@ -10,6 +10,7 @@ import type {
   Appointment,
   AppointmentLink,
   Crew,
+  FuzzyMatchCandidate,
   MatchRejection,
   QueueItem,
   QueueItemCategory,
@@ -20,6 +21,7 @@ import type {
 import { normalizeWoTypeOrUnknown, isNotSchedulable, isNonFieldWork, getRForceResource } from "./normalize";
 import { typeLabel } from "./calendar-utils";
 import { deriveRForceCalendarStatus } from "./rforce-calendar-status";
+import { buildFuzzyMatchIndex, findFuzzyMatchesIndexed } from "./fuzzy-match";
 
 function parseAddressParts(address: string): { city: string; state: string; zip: string } {
   if (!address) return { city: "", state: "", zip: "" };
@@ -69,7 +71,7 @@ export function buildQueueItems(
   activeLinks: AppointmentLink[],
   dismissals: RForceDismissal[],
   mappings: ResourceMapping[],
-  _matchRejections: MatchRejection[] = [],
+  matchRejections: MatchRejection[] = [],
   /**
    * Work-order numbers (normalized) that already have a tile ANYWHERE on the
    * calendar — including tiles outside the loaded date window (e.g. completed
@@ -80,6 +82,12 @@ export function buildQueueItems(
   scheduledWorkOrders: Set<string> = new Set()
 ): QueueItem[] {
   const items: QueueItem[] = [];
+  // Hand-entered tiles (no work order yet) that an rForce row could be: built
+  // once, lazily, only if some row actually needs confirmation.
+  const rejectedPairs = new Set(
+    matchRejections.map((r) => `${r.appointment_id}|${r.work_order_number}`)
+  );
+  let fuzzyIndex: ReturnType<typeof buildFuzzyMatchIndex> | null = null;
   const dismissalKeys = new Set(
     dismissals.map((dismissal) =>
       `${dismissal.work_order_number.trim().toLowerCase()}|${dismissal.rforce_date}`
@@ -114,6 +122,37 @@ export function buildQueueItems(
       calendarItem.status === "needs_confirmation" &&
       scheduledWorkOrders.has(rf.work_order_number.trim().toLowerCase())
     ) continue;
+
+    let suggestion: FuzzyMatchCandidate | undefined;
+    if (calendarItem.status === "needs_confirmation") {
+      if (!fuzzyIndex) {
+        fuzzyIndex = buildFuzzyMatchIndex(
+          scheduledAppointments,
+          crews,
+          new Set(activeLinks.filter((l) => !l.unlinked_at).map((l) => l.appointment_id))
+        );
+      }
+      suggestion = findFuzzyMatchesIndexed(rf, fuzzyIndex, mappings, rejectedPairs)
+        .find((c) => !c.appointment.work_order_number);
+    }
+
+    if (suggestion) {
+      const enriched = enrichItem({
+        id: rf.work_order_number,
+        category: "merge_suggested",
+        rforceOrder: rf,
+        appointment: suggestion.appointment,
+        fuzzyMatch: suggestion,
+        customerName: rf.customer_name || "Unknown",
+        address: rf.address || "",
+        workOrderNumber: rf.work_order_number,
+        orderNumber: rf.order_number || undefined,
+        workOrderType: rf.work_order_type || undefined,
+        productCount: rf.product_count || undefined,
+      }, rf, suggestion.appointment);
+      items.push({ ...enriched, hasPossibleMerge: true });
+      continue;
+    }
 
     const category: QueueItemCategory =
       calendarItem.status === "needs_confirmation"
@@ -153,6 +192,7 @@ export function buildQueueItems(
   }
 
   const order: Partial<Record<QueueItemCategory, number>> = {
+    merge_suggested: 0,
     needs_confirmation: 0,
     discrepancy: 1,
     app_unscheduled: 2,

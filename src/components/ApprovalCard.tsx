@@ -84,6 +84,11 @@ export default function ApprovalCard({
       setGranted({ overlap: false, availability: false });
     } catch (err: unknown) {
       const msg = errorMessage(err);
+      // The merge review modal opened instead - nothing failed.
+      if (msg.includes("POSSIBLE_MATCH")) {
+        setError(null);
+        return;
+      }
       setGranted(next);
       setOverride(false);
       if (msg.includes("SCHEDULING_CONFLICT") || msg.includes("DOUBLE_BOOK")) {

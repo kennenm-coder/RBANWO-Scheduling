@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildMergeUpdates } from "./merge";
+import { buildMergeUpdates, describeMergeConflicts } from "./merge";
 import type { Appointment, RForceOrder } from "./types";
 
 function makeAppt(overrides: Partial<Appointment> & { id: string }): Appointment {
@@ -238,5 +238,78 @@ describe("buildMergeUpdates", () => {
     // null rForce fields should not overwrite existing appointment data
     expect(fieldsUpdated).not.toContain("customer_name");
     expect(fieldsUpdated).not.toContain("address");
+  });
+});
+
+describe("per-field merge choices", () => {
+  const measureAppt = () =>
+    makeAppt({
+      id: "m1",
+      appointment_type: "tech_measure",
+      time_block: "10-12",
+      start_time: "10:00",
+      end_time: "12:00",
+      scheduled_date: "2026-08-10",
+    });
+  const measureRF = (over: Partial<RForceOrder> = {}) =>
+    makeRF({
+      work_order_type: "Tech Measure",
+      scheduled_start: "2026-08-11T14:00:00",
+      scheduled_end: "2026-08-11T16:00:00",
+      ...over,
+    });
+
+  it("flags a different date and a different block, not a same-block minute offset", () => {
+    const conflicts = describeMergeConflicts(measureAppt(), measureRF(), [], []);
+    const keys = conflicts.map((c) => c.key);
+    expect(keys).toContain("date");
+    expect(keys).toContain("time");
+    const same = describeMergeConflicts(
+      measureAppt(),
+      measureRF({ scheduled_start: "2026-08-10T10:30:00", scheduled_end: "2026-08-10T12:00:00" }),
+      [],
+      []
+    );
+    expect(same.map((c) => c.key)).not.toContain("time");
+    expect(same.map((c) => c.key)).not.toContain("date");
+  });
+
+  it("schedule fields default to the app, text fields to rForce", () => {
+    const conflicts = describeMergeConflicts(measureAppt(), measureRF(), [], []);
+    expect(conflicts.find((c) => c.key === "date")?.defaultSide).toBe("app");
+    expect(conflicts.find((c) => c.key === "time")?.defaultSide).toBe("app");
+    expect(conflicts.find((c) => c.key === "address")?.defaultSide).toBe("rforce");
+  });
+
+  it("with no choices the app keeps its date and time", () => {
+    const { updates } = buildMergeUpdates(measureAppt(), measureRF());
+    expect(updates.scheduled_date).toBeUndefined();
+    expect(updates.time_block).toBeUndefined();
+    expect(updates.start_time).toBeUndefined();
+  });
+
+  it("choosing rForce for date and time moves the tile there", () => {
+    const { updates, fieldsUpdated } = buildMergeUpdates(measureAppt(), measureRF(), {
+      date: "rforce",
+      time: "rforce",
+    });
+    expect(updates.scheduled_date).toBe("2026-08-11");
+    expect(updates.time_block).toBe("2-4");
+    expect(updates.start_time).toBe("14:00");
+    expect(updates.end_time).toBe("16:00");
+    expect(fieldsUpdated).toEqual(expect.arrayContaining(["scheduled_date", "scheduling"]));
+  });
+
+  it("keeping the app's address / name / type leaves them untouched", () => {
+    const { updates } = buildMergeUpdates(measureAppt(), makeRF({ work_order_type: "Service" }), {
+      address: "app",
+      customer_name: "app",
+      appointment_type: "app",
+    });
+    expect(updates.address).toBeUndefined();
+    expect(updates.customer_name).toBeUndefined();
+    expect(updates.appointment_type).toBeUndefined();
+    expect(updates.time_block).toBeUndefined(); // no mode-change re-derive when type is kept
+    expect(updates.work_order_number).toBe("WO-100"); // the link key always lands
   });
 });

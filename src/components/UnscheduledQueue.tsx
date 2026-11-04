@@ -9,7 +9,6 @@ import ScheduleModal from "./ScheduleModal";
 import { useAuth } from "./AuthProvider";
 import { canAdmin } from "@/lib/auth";
 import LinkModal from "./LinkModal";
-import MergeConfirmModal from "./MergeConfirmModal";
 import {
   Appointment,
   RForceOrder,
@@ -134,7 +133,7 @@ export default function UnscheduledQueue() {
     resourceMappings,
     matchRejections,
     scheduledWorkOrders,
-    mergeRForce,
+    reviewMerge,
     rejectMatch,
     deleteAppointment,
   } = useData();
@@ -147,8 +146,6 @@ export default function UnscheduledQueue() {
   const [scheduleMeta, setScheduleMeta] = useState<{ hours: number | null; fullDay: boolean } | null>(null);
   const [linkRForceOrder, setLinkRForceOrder] = useState<RForceOrder | null>(null);
   const [linkAppointment, setLinkAppointment] = useState<Appointment | null>(null);
-  const [mergingId, setMergingId] = useState<string | null>(null);
-  const [mergeConfirmItem, setMergeConfirmItem] = useState<QueueItem | null>(null);
 
   // Build the full unified queue
   const allItems = useMemo(
@@ -186,30 +183,11 @@ export default function UnscheduledQueue() {
     [filters, setFilters]
   );
 
+  // The review modal is shared app-wide (MergeReviewHost) so the calendar's
+  // Approve button can open the same screen.
   const handleMergeClick = (item: QueueItem) => {
     if (!item.fuzzyMatch || !item.rforceOrder) return;
-    setMergeConfirmItem(item);
-  };
-
-  const handleMergeConfirm = async () => {
-    if (!mergeConfirmItem?.fuzzyMatch || !mergeConfirmItem?.rforceOrder) return;
-    setMergingId(mergeConfirmItem.id);
-    try {
-      await mergeRForce(mergeConfirmItem.fuzzyMatch.appointment, mergeConfirmItem.rforceOrder);
-    } catch (err) {
-      console.error("Merge failed:", err);
-      // The confirm dialog closes either way — say so, or a failed merge looks
-      // exactly like a successful one.
-      const msg = err instanceof Error ? err.message : String(err);
-      alert(
-        msg.includes("DUPLICATE_WO")
-          ? "Merge failed: that work order is already on another active appointment."
-          : `Merge failed: ${msg.replace(/^SCHEDULING_CONFLICT:\s*/, "")}`
-      );
-    } finally {
-      setMergingId(null);
-      setMergeConfirmItem(null);
-    }
+    reviewMerge(item.fuzzyMatch);
   };
 
   const updateFilter = useCallback(
@@ -496,7 +474,7 @@ export default function UnscheduledQueue() {
             item={item}
             rforceOrders={rforceOrders}
             appointments={appointments}
-            merging={mergingId === item.id}
+            merging={false}
             onSchedule={(rf, meta) => { setScheduleOrder(rf); setScheduleMeta(meta); }}
             onLinkRForce={(rf) => setLinkRForceOrder(rf)}
             onLinkApp={(appt) => setLinkAppointment(appt)}
@@ -534,20 +512,6 @@ export default function UnscheduledQueue() {
           mode="link_to_rforce"
           appointment={linkAppointment}
           onClose={() => setLinkAppointment(null)}
-        />
-      )}
-      {mergeConfirmItem?.fuzzyMatch && mergeConfirmItem?.rforceOrder && (
-        <MergeConfirmModal
-          appointment={mergeConfirmItem.fuzzyMatch.appointment}
-          rforceOrder={mergeConfirmItem.rforceOrder}
-          fuzzyMatch={mergeConfirmItem.fuzzyMatch}
-          onConfirm={handleMergeConfirm}
-          onReject={() => {
-            if (mergeConfirmItem.fuzzyMatch && mergeConfirmItem.workOrderNumber) {
-              rejectMatch(mergeConfirmItem.fuzzyMatch.appointment.id, mergeConfirmItem.workOrderNumber);
-            }
-          }}
-          onClose={() => setMergeConfirmItem(null)}
         />
       )}
     </div>

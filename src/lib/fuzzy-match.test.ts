@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findFuzzyMatches, buildFuzzyMatchIndex, findFuzzyMatchesIndexed } from "./fuzzy-match";
+import { findFuzzyMatches, buildFuzzyMatchIndex, findFuzzyMatchesIndexed, sameWorkOrder } from "./fuzzy-match";
 import { Appointment, RForceOrder, Crew, ResourceMapping } from "./types";
 
 function makeAppt(overrides: Partial<Appointment> & { id: string }): Appointment {
@@ -182,5 +182,46 @@ describe("buildFuzzyMatchIndex + findFuzzyMatchesIndexed", () => {
     expect(indexed).toHaveLength(direct.length);
     expect(indexed[0]?.score).toBe(direct[0]?.score);
     expect(indexed[0]?.appointment.id).toBe(direct[0]?.appointment.id);
+  });
+});
+
+describe("pairing gaps schedulers hit (manual tile -> rForce import)", () => {
+  const crews = [makeCrew()];
+  const noLinks = new Set<string>();
+
+  it("matches 'Smith, John' to 'John Smith' (order-insensitive names)", () => {
+    const appts = [makeAppt({ id: "a1", customer_name: "Smith, John" })];
+    const rf = makeRF({ customer_name: "John Smith" });
+    const m = findFuzzyMatches(rf, appts, crews, [], noLinks);
+    expect(m).toHaveLength(1);
+    expect(m[0].matchReasons).toContain("Same customer name");
+  });
+
+  it("still suggests a tile that was entered with no crew", () => {
+    const appts = [makeAppt({ id: "a1", crew_id: null })];
+    const m = findFuzzyMatches(makeRF(), appts, crews, [], noLinks);
+    expect(m).toHaveLength(1);
+    expect(m[0].confidence).toBe("high"); // name 40 + date 30
+  });
+
+  it("never suggests a tile on identity-free signals alone (same crew + day + type)", () => {
+    // Different customer, different street: date 30 + crew 20 + type 10 = 60
+    // would have been "high" before the identity guard.
+    const appts = [makeAppt({ id: "a1", customer_name: "Zed Quill", address: "9 Elm Rd, Toledo, OH 43604" })];
+    const rf = makeRF({ customer_name: "Mary Adams" });
+    expect(findFuzzyMatches(rf, appts, crews, [], noLinks)).toHaveLength(0);
+  });
+
+  it("treats a differently-formatted WO number as the same job, not a conflict", () => {
+    const appts = [makeAppt({ id: "a1", work_order_number: "wo-0100" })];
+    const m = findFuzzyMatches(makeRF({ work_order_number: "WO-100" }), appts, crews, [], noLinks);
+    expect(m).toHaveLength(1);
+  });
+
+  it("sameWorkOrder ignores case, prefix, punctuation and leading zeros but not digits", () => {
+    expect(sameWorkOrder("WO-00123", "123")).toBe(true);
+    expect(sameWorkOrder(" wo 123 ", "WO123")).toBe(true);
+    expect(sameWorkOrder("WO-123", "WO-124")).toBe(false);
+    expect(sameWorkOrder("", "")).toBe(false);
   });
 });

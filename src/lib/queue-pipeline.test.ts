@@ -56,3 +56,29 @@ describe("focused scheduler queue", () => {
     expect(items.map((item) => item.id)).not.toContain("WO-2");
   });
 });
+
+describe("suggested pairs for hand-entered tiles", () => {
+  const manual = {
+    ...scheduled,
+    id: "appt-manual",
+    work_order_number: null,
+    customer_name: "WO-9",
+    scheduled_date: "2026-08-14",
+  } as Appointment;
+
+  it("surfaces a WO-less tile as merge_suggested instead of needs_confirmation", () => {
+    const items = buildQueueItems([rf("WO-9", "2026-08-14T09:00:00")], [manual], [], [crew], [], [], []);
+    expect(items).toHaveLength(1);
+    expect(items[0].category).toBe("merge_suggested");
+    expect(items[0].fuzzyMatch?.appointment.id).toBe("appt-manual");
+    expect(items[0].hasPossibleMerge).toBe(true);
+  });
+
+  it("falls back to needs_confirmation once the pair was rejected", () => {
+    const items = buildQueueItems(
+      [rf("WO-9", "2026-08-14T09:00:00")], [manual], [], [crew], [], [], [],
+      [{ id: "r1", appointment_id: "appt-manual", work_order_number: "WO-9", rejected_by: null, rejected_at: "", reason: null }]
+    );
+    expect(items[0].category).toBe("needs_confirmation");
+  });
+});

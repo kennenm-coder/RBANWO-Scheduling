@@ -1,23 +1,31 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { Appointment, RForceOrder, FuzzyMatchCandidate } from "@/lib/types";
-import { normalizeWoType } from "@/lib/normalize";
-import { X, GitMerge, ArrowRight, Loader2 } from "lucide-react";
+import {
+  describeMergeConflicts,
+  MergeChoices,
+  MergeChoiceKey,
+  MergeSide,
+} from "@/lib/merge";
+import { useData } from "./DataProvider";
+import { X, GitMerge, Loader2 } from "lucide-react";
 
 interface Props {
   appointment: Appointment;
   rforceOrder: RForceOrder;
   fuzzyMatch: FuzzyMatchCandidate;
-  onConfirm: () => Promise<void>;
+  onConfirm: (choices: MergeChoices) => Promise<void>;
   onReject: () => void;
   onClose: () => void;
 }
 
 /**
- * Shows a preview of what will change when merging an rForce order
- * into an existing app appointment. Scheduler must confirm.
+ * Review screen for a suggested tile <-> rForce pairing. Fields where the two
+ * disagree get a side-by-side pick: schedule fields (date / time / crew) default
+ * to the app, text fields (address / name / type) default to rForce. Nothing
+ * is written until the scheduler confirms.
  */
 export default function MergeConfirmModal({
   appointment,
@@ -28,99 +36,73 @@ export default function MergeConfirmModal({
   onClose,
 }: Props) {
   useEscapeKey(useCallback(() => onClose(), [onClose]));
+  const { crews, resourceMappings } = useData();
   const [merging, setMerging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Compute what will change (mirrors merge.ts logic)
-  const changes: { field: string; label: string; from: string; to: string }[] = [];
+  const conflicts = useMemo(
+    () => describeMergeConflicts(appointment, rforceOrder, crews, resourceMappings),
+    [appointment, rforceOrder, crews, resourceMappings]
+  );
+  const [choices, setChoices] = useState<Partial<Record<MergeChoiceKey, MergeSide>>>(() =>
+    Object.fromEntries(conflicts.map((c) => [c.key, c.defaultSide]))
+  );
 
-  if (
-    rforceOrder.work_order_number &&
-    rforceOrder.work_order_number !== appointment.work_order_number
-  ) {
-    changes.push({
-      field: "work_order_number",
-      label: "Work Order #",
-      from: appointment.work_order_number || "(none)",
-      to: rforceOrder.work_order_number,
-    });
+  // rForce-only additions: nothing to choose, the tile just gains them.
+  const additions: { label: string; value: string }[] = [];
+  if (rforceOrder.work_order_number && rforceOrder.work_order_number !== appointment.work_order_number) {
+    additions.push({ label: "Work Order #", value: rforceOrder.work_order_number });
   }
-
-  if (
-    rforceOrder.order_number &&
-    rforceOrder.order_number !== appointment.order_number
-  ) {
-    changes.push({
-      field: "order_number",
-      label: "Order #",
-      from: appointment.order_number || "(none)",
-      to: rforceOrder.order_number,
-    });
+  if (rforceOrder.order_number && rforceOrder.order_number !== appointment.order_number) {
+    additions.push({ label: "Order #", value: rforceOrder.order_number });
   }
-
-  if (rforceOrder.address && rforceOrder.address !== appointment.address) {
-    changes.push({
-      field: "address",
-      label: "Address",
-      from: appointment.address || "(none)",
-      to: rforceOrder.address,
-    });
-  }
-
-  if (
-    rforceOrder.customer_name &&
-    rforceOrder.customer_name !== appointment.customer_name
-  ) {
-    changes.push({
-      field: "customer_name",
-      label: "Customer",
-      from: appointment.customer_name || "(none)",
-      to: rforceOrder.customer_name,
-    });
-  }
-
-  const mappedType = normalizeWoType(rforceOrder.work_order_type);
-  if (mappedType !== null && mappedType !== appointment.appointment_type) {
-    changes.push({
-      field: "appointment_type",
-      label: "Type",
-      from: appointment.appointment_type,
-      to: mappedType,
-    });
-  }
-
-  if (rforceOrder.product_count != null) {
-    changes.push({
-      field: "product_count",
-      label: "Products",
-      from: String(appointment.product_count ?? "(none)"),
-      to: String(rforceOrder.product_count),
-    });
+  if (rforceOrder.product_count != null && rforceOrder.product_count !== appointment.product_count) {
+    additions.push({ label: "Products", value: String(rforceOrder.product_count) });
   }
 
   async function handleConfirm() {
     setMerging(true);
+    setError(null);
     try {
-      await onConfirm();
+      await onConfirm(choices);
       onClose();
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg.replace(/^(Error:\s*)?(SCHEDULING_CONFLICT|DUPLICATE_WO):\s*/, "").slice(0, 200));
       setMerging(false);
     }
   }
 
+  const sideBtn = (key: MergeChoiceKey, side: MergeSide, text: string, label: string) => {
+    const active = (choices[key] ?? "app") === side;
+    return (
+      <button
+        type="button"
+        onClick={() => setChoices((c) => ({ ...c, [key]: side }))}
+        className={`flex-1 min-w-0 text-left px-2 py-1.5 rounded-md border text-xs transition-colors ${
+          active
+            ? "border-green-600 bg-green-50 dark:bg-green-900/20 text-foreground"
+            : "border-border text-muted hover:bg-surface"
+        }`}
+        aria-pressed={active}
+      >
+        <div className="text-[9px] uppercase tracking-wide opacity-70">{label}</div>
+        <div className="truncate font-medium" title={text}>{text}</div>
+      </button>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-background rounded-xl shadow-xl w-full max-w-md border border-border animate-slide-up">
+      <div className="relative bg-background rounded-xl shadow-xl w-full max-w-md border border-border animate-slide-up max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <GitMerge size={16} className="text-green-600" />
             <h2 className="font-semibold text-sm">Confirm Merge</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md hover:bg-surface text-muted"
-          >
+          <button onClick={onClose} className="p-1 rounded-md hover:bg-surface text-muted">
             <X size={16} />
           </button>
         </div>
@@ -129,59 +111,56 @@ export default function MergeConfirmModal({
         <div className="px-4 py-3 bg-green-50 dark:bg-green-900/10 border-b border-border">
           <div className="text-xs text-green-700 dark:text-green-300 font-medium mb-1">
             {fuzzyMatch.confidence === "high" ? "High" : "Medium"} confidence match
+            {" - "}
+            {appointment.customer_name || "your tile"} &harr; {rforceOrder.customer_name || "rForce order"}
           </div>
           <div className="text-[10px] text-green-600 dark:text-green-400">
             {fuzzyMatch.matchReasons.join(" · ")}
           </div>
         </div>
 
-        {/* What stays (manual wins) */}
+        {/* Disagreements: pick a side */}
         <div className="px-4 py-3 border-b border-border">
           <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">
-            Kept from your entry (manual wins)
+            {conflicts.length === 0 ? "Details agree" : "Where they differ - pick one"}
           </div>
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-muted">Crew</span>
-              <span className="font-medium">{appointment.crew_id ? "Current crew" : "(unassigned)"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted">Date</span>
-              <span className="font-medium">{appointment.scheduled_date || "(unscheduled)"}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted">Time</span>
-              <span className="font-medium">{appointment.time_block || "(none)"}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* What changes (rForce wins) */}
-        <div className="px-4 py-3 border-b border-border">
-          <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">
-            Updated from rForce ({changes.length} field{changes.length !== 1 ? "s" : ""})
-          </div>
-          {changes.length === 0 ? (
-            <div className="text-xs text-muted italic">No field changes — only link will be created</div>
+          {conflicts.length === 0 ? (
+            <div className="text-xs text-muted italic">Date, time, crew and details already match.</div>
           ) : (
-            <div className="space-y-1.5">
-              {changes.map((c) => (
-                <div key={c.field} className="text-xs">
-                  <div className="text-muted mb-0.5">{c.label}</div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-red-500 dark:text-red-400 line-through truncate max-w-[140px]" title={c.from}>
-                      {c.from}
-                    </span>
-                    <ArrowRight size={10} className="text-muted shrink-0" />
-                    <span className="text-green-600 dark:text-green-400 font-medium truncate max-w-[140px]" title={c.to}>
-                      {c.to}
-                    </span>
+            <div className="space-y-2.5">
+              {conflicts.map((c) => (
+                <div key={c.key}>
+                  <div className="text-xs text-muted mb-1">{c.label}</div>
+                  <div className="flex gap-1.5">
+                    {sideBtn(c.key, "app", c.app, "Keep app")}
+                    {sideBtn(c.key, "rforce", c.rforce, "Use rForce")}
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
+
+        {/* rForce additions */}
+        {additions.length > 0 && (
+          <div className="px-4 py-3 border-b border-border">
+            <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">
+              Added from rForce
+            </div>
+            <div className="space-y-1 text-xs">
+              {additions.map((a) => (
+                <div key={a.label} className="flex justify-between gap-3">
+                  <span className="text-muted">{a.label}</span>
+                  <span className="font-medium truncate">{a.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 border-b border-border">{error}</div>
+        )}
 
         {/* Actions */}
         <div className="flex items-center gap-2 px-4 py-3">
@@ -190,11 +169,7 @@ export default function MergeConfirmModal({
             disabled={merging}
             className="flex-1 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
           >
-            {merging ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <GitMerge size={14} />
-            )}
+            {merging ? <Loader2 size={14} className="animate-spin" /> : <GitMerge size={14} />}
             {merging ? "Merging..." : "Confirm Merge"}
           </button>
           <button
@@ -203,6 +178,7 @@ export default function MergeConfirmModal({
               onClose();
             }}
             className="px-3 py-2 border border-border text-sm rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-muted hover:text-red-600 transition-colors"
+            title="These are different jobs - remember that and let rForce create its own tile"
           >
             Not a match
           </button>

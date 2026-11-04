@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import DataProvider from "@/components/DataProvider";
+import MergeReviewHost from "@/components/MergeReviewHost";
 import JobLinksProvider from "@/components/JobLinksProvider";
 import AuthProvider from "@/components/AuthProvider";
 import RequireAuth from "@/components/RequireAuth";
@@ -76,6 +77,7 @@ export default function RootLayout({
                   </main>
                   <BottomNav />
                   <UpdatePrompt />
+                  <MergeReviewHost />
                 </ToastProvider>
               </JobLinksProvider>
             </DataProvider>

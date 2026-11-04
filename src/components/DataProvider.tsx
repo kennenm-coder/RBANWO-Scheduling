@@ -22,6 +22,7 @@ import {
   RForceDismissal,
   FlagResolution,
   MatchRejection,
+  FuzzyMatchCandidate,
   TimeBlock,
 } from "@/lib/types";
 import {
@@ -61,7 +62,8 @@ import {
   recordImportRun,
 } from "@/lib/store";
 import { detectLatestExportDate } from "@/lib/rforce-staleness";
-import { mergeRForceIntoAppointment as mergeInDb, MergeResult } from "@/lib/merge";
+import { mergeRForceIntoAppointment as mergeInDb, MergeResult, MergeChoices } from "@/lib/merge";
+import { findFuzzyMatches } from "@/lib/fuzzy-match";
 import { humanizeConflictMessage } from "@/lib/calendar-utils";
 import { subscribeToAppointments } from "@/lib/realtime";
 import { useAuth } from "./AuthProvider";
@@ -122,8 +124,14 @@ interface DataContextValue {
   ) => Promise<void>;
   mergeRForce: (
     appointment: Appointment,
-    rforceOrder: RForceOrder
+    rforceOrder: RForceOrder,
+    /** Per-field picks from the confirm modal; omitted = app keeps schedule, rForce wins text. */
+    choices?: MergeChoices
   ) => Promise<MergeResult>;
+  /** Suggested pair the review modal is showing (rendered by MergeReviewHost). */
+  mergeReview: FuzzyMatchCandidate | null;
+  /** Open the merge review for a suggested tile/rForce pair. */
+  reviewMerge: (candidate: FuzzyMatchCandidate | null) => void;
   approveRForce: (
     rforceOrder: RForceOrder,
     crewId: string,
@@ -191,6 +199,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [dismissals, setDismissals] = useState<RForceDismissal[]>([]);
   const [flagResolutions, setFlagResolutions] = useState<FlagResolution[]>([]);
   const [matchRejections, setMatchRejections] = useState<MatchRejection[]>([]);
+  const [mergeReview, setMergeReview] = useState<FuzzyMatchCandidate | null>(null);
   const [scheduledWorkOrders, setScheduledWorkOrders] = useState<Set<string>>(new Set());
   const [cancelledTiles, setCancelledTiles] = useState<CancelledTile[]>([]);
   const [exportDates, setExportDates] = useState<string[]>([]);
@@ -567,8 +576,11 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   );
 
   const handleMerge = useCallback(
-    async (appointment: Appointment, rforceOrder: RForceOrder) => {
-      const result = await mergeInDb(appointment, rforceOrder);
+    async (appointment: Appointment, rforceOrder: RForceOrder, choices: MergeChoices = {}) => {
+      const result = await mergeInDb(appointment, rforceOrder, choices, {
+        crews,
+        mappings: resourceMappings,
+      });
       // Update the appointment in local state
       setAppointments((prev) =>
         prev.map((a) =>
@@ -582,7 +594,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       void refreshReconciliationSets();
       return result;
     },
-    [refreshReconciliationSets]
+    [refreshReconciliationSets, crews, resourceMappings]
   );
 
   const handleAddTimeOff = useCallback(
@@ -655,6 +667,33 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       override: boolean = false,
       availabilityOverride: boolean = false
     ) => {
+      // Before minting a NEW tile, look for a hand-entered tile (no work order yet)
+      // that is probably this same job. Approving would otherwise leave the
+      // scheduler with two tiles for one job. Rejected pairs are remembered, so
+      // "Not a match" lets the next Approve through.
+      {
+        const linkedIds = new Set(
+          activeLinks.filter((l) => !l.unlinked_at).map((l) => l.appointment_id)
+        );
+        const rejected = new Set(
+          matchRejections.map((r) => `${r.appointment_id}|${r.work_order_number}`)
+        );
+        const suggestion = findFuzzyMatches(
+          rforceOrder,
+          appointments,
+          crews,
+          resourceMappings,
+          linkedIds,
+          rejected
+        ).find((c) => !c.appointment.work_order_number);
+        if (suggestion) {
+          setMergeReview(suggestion);
+          throw new Error(
+            `POSSIBLE_MATCH: This looks like ${suggestion.appointment.customer_name || "an existing tile"} already on the calendar. Review the match first.`
+          );
+        }
+      }
+
       // Throws on failure — caller should catch and surface the message.
       // Translate the DB's UUID-based conflict text into a human sentence
       // (who is booked, when) using the appointments/crews already in memory.
@@ -694,7 +733,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       void refreshReconciliationSets();
       return result.appointment;
     },
-    [user?.id, displayName, appointments, crews, availabilityRules, availabilityExceptions, calendarBlocks, refreshReconciliationSets]
+    [user?.id, displayName, appointments, crews, availabilityRules, availabilityExceptions, calendarBlocks, refreshReconciliationSets, activeLinks, matchRejections, resourceMappings]
   );
 
   const handleDismissRForce = useCallback(
@@ -795,6 +834,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         deleteAppointment: handleDelete,
         unscheduleAppointment: handleUnschedule,
         mergeRForce: handleMerge,
+        mergeReview,
+        reviewMerge: setMergeReview,
         approveRForce: handleApproveRForce,
         dismissRForce: handleDismissRForce,
         resolveFlag: handleResolveFlag,

@@ -49,6 +49,25 @@ function lastName(s: string): string {
   return parts[parts.length - 1] || "";
 }
 
+/** Order-insensitive name key: "Smith, John" and "John Smith" produce the same key. */
+function sortedNameKey(s: string): string {
+  return normalize(s).split(" ").filter(Boolean).sort().join(" ");
+}
+
+/**
+ * Forgiving work-order comparison: ignores case, spaces, punctuation/prefix
+ * separators ("WO-123" vs "wo 123") and leading zeros on the digit run.
+ * Only used to decide whether a tile could be the same job — the DB's
+ * one-active-tile-per-WO rule stays exact.
+ */
+export function sameWorkOrder(a: string | null | undefined, b: string | null | undefined): boolean {
+  const key = (v: string | null | undefined) =>
+    (v || "").toLowerCase().replace(/[^a-z0-9]/g, "").replace(/^(wo)/, "").replace(/^0+/, "");
+  const ka = key(a);
+  const kb = key(b);
+  return ka !== "" && ka === kb;
+}
+
 function levenshtein(a: string, b: string): number {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
@@ -113,6 +132,8 @@ export interface FuzzyMatchIndex {
   firstNames: Map<string, string>;
   /** Pre-computed last names keyed by appointment id */
   lastNames: Map<string, string>;
+  /** Order-insensitive name keys keyed by appointment id */
+  sortedNames: Map<string, string>;
   /** Pre-computed normalized addresses keyed by appointment id (first 15 chars) */
   addressPrefixes: Map<string, string>;
   /** Crews keyed by id */
@@ -135,13 +156,16 @@ export function buildFuzzyMatchIndex(
   const normalizedNames = new Map<string, string>();
   const firstNames = new Map<string, string>();
   const lastNames = new Map<string, string>();
+  const sortedNames = new Map<string, string>();
   const addressPrefixes = new Map<string, string>();
   const byDate = new Map<string, Appointment[]>();
 
   for (const appt of appointments) {
     if (appt.status === "cancelled" || appt.status === "unscheduled") continue;
     if (activeLinkedAppointmentIds.has(appt.id)) continue;
-    if (!appt.scheduled_date || !appt.crew_id) continue;
+    // A crew is NOT required: a quickly-entered tile often has none, and those
+    // are exactly the ones that end up duplicated. Date is the only must-have.
+    if (!appt.scheduled_date) continue;
 
     eligible.push(appt);
 
@@ -150,6 +174,7 @@ export function buildFuzzyMatchIndex(
       normalizedNames.set(appt.id, normalize(appt.customer_name));
       firstNames.set(appt.id, firstName(appt.customer_name));
       lastNames.set(appt.id, lastName(appt.customer_name));
+      sortedNames.set(appt.id, sortedNameKey(appt.customer_name));
     }
 
     // Pre-compute address prefix
@@ -164,7 +189,7 @@ export function buildFuzzyMatchIndex(
   }
 
   const crewMap = new Map(crews.map((c) => [c.id, c]));
-  return { eligible, normalizedNames, firstNames, lastNames, addressPrefixes, crewMap, byDate };
+  return { eligible, normalizedNames, firstNames, lastNames, sortedNames, addressPrefixes, crewMap, byDate };
 }
 
 // ── Main function ──
@@ -215,6 +240,8 @@ export function findFuzzyMatchesIndexed(
   const nRfName = rfName ? normalize(rfName) : "";
   const rfFirst = rfName ? firstName(rfName) : "";
   const rfLast = rfName ? lastName(rfName) : "";
+  const rfSorted = rfName ? sortedNameKey(rfName) : "";
+  const rfTokens = nRfName ? nRfName.split(" ").filter((t) => t.length >= 3) : [];
   const nRfAddr = rfAddress ? normalizeAddress(rfAddress).slice(0, 15) : "";
 
   const candidates: FuzzyMatchCandidate[] = [];
@@ -223,33 +250,43 @@ export function findFuzzyMatchesIndexed(
     // Skip if appointment already has a different WO#
     if (
       appt.work_order_number &&
-      appt.work_order_number !== rforceOrder.work_order_number
+      !sameWorkOrder(appt.work_order_number, rforceOrder.work_order_number)
     ) continue;
     // Skip if scheduler rejected this specific match
     if (rejectedPairs?.has(`${appt.id}|${rforceOrder.work_order_number}`)) continue;
 
     let score = 0;
+    let identity = false; // name or address agrees — date/crew/type alone never identify a job
     const reasons: string[] = [];
 
     // ── Customer name (using pre-computed values) ──
     if (nRfName) {
       const nApp = index.normalizedNames.get(appt.id);
       if (nApp) {
-        if (nRfName === nApp) {
+        if (nRfName === nApp || (rfSorted && rfSorted === index.sortedNames.get(appt.id))) {
           score += SCORE_NAME_EXACT;
+          identity = true;
           reasons.push("Same customer name");
         } else {
           const appLast = index.lastNames.get(appt.id) || "";
           if (rfLast === appLast && rfLast.length >= 3) {
             score += SCORE_NAME_FIRST;
+            identity = true;
             reasons.push("Same last name");
           } else {
             const appFirst = index.firstNames.get(appt.id) || "";
             if (rfFirst === appFirst && rfFirst.length >= 2) {
               score += SCORE_NAME_FIRST;
+              identity = true;
               reasons.push("Same first name");
+            } else if (rfTokens.some((t) => nApp.split(" ").includes(t))) {
+              // "Smith, John" vs "John Smith" or "Mr & Mrs Smith" vs "Smith"
+              score += SCORE_NAME_FIRST;
+              identity = true;
+              reasons.push("Shared name part");
             } else if (levenshtein(nRfName, nApp) <= 2) {
               score += SCORE_NAME_FUZZY;
+              identity = true;
               reasons.push("Similar name");
             }
           }
@@ -293,6 +330,7 @@ export function findFuzzyMatchesIndexed(
       const appPrefix = index.addressPrefixes.get(appt.id);
       if (appPrefix && nRfAddr === appPrefix && nRfAddr.length >= 5) {
         score += SCORE_ADDRESS_MATCH;
+        identity = true;
         reasons.push("Same address");
       }
     }
@@ -313,7 +351,7 @@ export function findFuzzyMatchesIndexed(
     }
 
     // ── Threshold check ──
-    if (score >= THRESHOLD_MEDIUM) {
+    if (identity && score >= THRESHOLD_MEDIUM) {
       const confidence: MatchConfidence = score >= THRESHOLD_HIGH ? "high" : "medium";
       candidates.push({
         appointment: appt,
