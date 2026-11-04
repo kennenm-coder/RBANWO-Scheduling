@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import DataProvider from "@/components/DataProvider";
+import JobLinksProvider from "@/components/JobLinksProvider";
 import AuthProvider from "@/components/AuthProvider";
 import RequireAuth from "@/components/RequireAuth";
 import BottomNav from "@/components/BottomNav";
@@ -68,13 +69,15 @@ export default function RootLayout({
         <AuthProvider>
           <RequireAuth>
             <DataProvider>
-              <ToastProvider>
-                <main className="flex-1 flex flex-col overflow-hidden">
-                  {children}
-                </main>
-                <BottomNav />
-                <UpdatePrompt />
-              </ToastProvider>
+              <JobLinksProvider>
+                <ToastProvider>
+                  <main className="flex-1 flex flex-col overflow-hidden">
+                    {children}
+                  </main>
+                  <BottomNav />
+                  <UpdatePrompt />
+                </ToastProvider>
+              </JobLinksProvider>
             </DataProvider>
           </RequireAuth>
         </AuthProvider>

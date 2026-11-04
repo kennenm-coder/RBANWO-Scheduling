@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef, Fragment } from "react";
 import { useData } from "./DataProvider";
 import AppointmentCard, { RForcePendingIcon } from "./AppointmentCard";
+import JobLinkChips from "./JobLinkChips";
 import RForceCard from "./RForceCard";
 import ApprovalCard from "./ApprovalCard";
 import DiscrepancyBadge from "./DiscrepancyBadge";
@@ -1734,6 +1735,7 @@ function CompactAppointmentContent({
         {appointment.manual_override && (
           <span className="text-blue-200 text-[8px] font-bold" title="Manual override">M</span>
         )}
+        <JobLinkChips appointment={appointment} size="xs" />
         {showRForce && (
           isLinked ? (
             rforcePending ? (

@@ -33,6 +33,7 @@ import { useState, useMemo, useCallback } from "react";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { useActorName } from "@/hooks/useActorName";
 import EventHistory from "./EventHistory";
+import InstallPaperwork from "./InstallPaperwork";
 
 interface Props {
   appointment: Appointment;
@@ -322,6 +323,8 @@ export default function AppointmentSheet({
               {appointment.order_number}
             </InfoRow>
           )}
+
+          <InstallPaperwork appointment={appointment} />
 
           {appointment.work_order_number && (
             <InfoRow icon={<Hash size={16} />} label="Work Order">

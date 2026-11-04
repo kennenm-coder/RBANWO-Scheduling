@@ -8,6 +8,7 @@ import { parseCity } from "@/lib/crew-utils";
 import { crewColorFor } from "@/lib/preferences";
 import type { AwaitingTier } from "@/lib/rforce-staleness";
 import { useData } from "./DataProvider";
+import JobLinkChips from "./JobLinkChips";
 import { MapPin, Unlink, AlertTriangle, CheckCircle, Clock, Undo2, Users } from "lucide-react";
 
 interface Props {
@@ -140,6 +141,7 @@ export default function AppointmentCard({
         {!appointment.work_order_number && (
           <Unlink size={10} className="shrink-0 opacity-70" />
         )}
+        <JobLinkChips appointment={appointment} size={compact ? "xs" : "sm"} />
         {showRForce && isLinked && rforcePending && (
           <RForcePendingIcon tier={rforcePending} />
         )}

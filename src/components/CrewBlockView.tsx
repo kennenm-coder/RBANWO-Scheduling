@@ -54,6 +54,7 @@ import {
 } from "date-fns";
 import { useCurrentActor } from "./AuthProvider";
 import { useToast } from "./Toast";
+import JobLinkChips from "./JobLinkChips";
 import { addMinutesToTime, getNextAvailableStart, getSchedulingMode, timeDurationMinutes } from "@/lib/scheduling-policy";
 
 // Measure tech row labels — the remote row, then the 2-hour on-site blocks
@@ -1470,6 +1471,7 @@ function BlockCell({
         </span>
       )}
       <span className={foreign ? "" : "pr-3"}>{label}</span>
+      {!foreign && <JobLinkChips appointment={appointment} size="xs" className="ml-0.5 align-middle" />}
       {appointment.duration_days > 1 && (
         <span className="text-[9px] opacity-70 ml-0.5">
           📅
