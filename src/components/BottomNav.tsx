@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
-import { CalendarDays, ListTodo, Users, AlertTriangle, Gauge } from "lucide-react";
+import { CalendarDays, ListTodo, Users, AlertTriangle, Gauge, ScrollText } from "lucide-react";
 import { useData } from "./DataProvider";
 import { useAuth } from "./AuthProvider";
 import { canManage } from "@/lib/auth";
@@ -18,10 +18,13 @@ const NAV_ITEMS = [
 ];
 
 /**
- * Installer utilization, for Admin and Scheduling Manager only. The page gates
+ * Installer utilization and the activity log, for Admin and Scheduling Manager only. The page gates
  * itself as well — hiding a nav link is not a gate.
  */
-const MANAGER_NAV_ITEMS = [{ href: "/metrics", label: "Utilization", icon: Gauge }];
+const MANAGER_NAV_ITEMS = [
+  { href: "/metrics", label: "Utilization", icon: Gauge },
+  { href: "/activity", label: "Activity", icon: ScrollText },
+];
 
 export default function BottomNav() {
   const pathname = usePathname();

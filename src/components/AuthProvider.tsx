@@ -12,6 +12,7 @@ import {
   type UserRole,
 } from "@/lib/auth";
 import { setPreferencesUser, loadPreferencesFromSupabase } from "@/lib/preferences";
+import { setCurrentActor } from "@/lib/current-actor";
 import type { User } from "@supabase/supabase-js";
 
 /**
@@ -180,6 +181,13 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     allowName ||
     user?.email?.split("@")[0] ||
     (dev ? "Local Dev" : "Unknown");
+
+  // Publish the signed-in actor for data-layer audit writes (activity-store.ts).
+  const actorId = user?.id ?? null;
+  const actorName = user ? displayName : null;
+  useEffect(() => {
+    setCurrentActor({ id: actorId, name: actorName });
+  }, [actorId, actorName]);
 
   return (
     <AuthContext.Provider

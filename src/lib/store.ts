@@ -28,6 +28,8 @@ import { checkAvailabilityConflict } from "./availability";
 import { deriveTimesFromOrder } from "./rforce-times";
 import { getSchedulingMode, deriveOccupancy } from "./scheduling-policy";
 import { clampMultiDaySpan } from "./scheduling-limits";
+import { logActivityEvent } from "./activity-store";
+import { describeRule, describeBlock, describeDeletedAppointment } from "./activity-log";
 
 // ── Crews ──
 
@@ -302,12 +304,28 @@ export async function restoreAppointment(
  */
 export async function deleteAppointment(id: string): Promise<void> {
   const sb = requireSupabase();
+  // Snapshot first: the tile's own history is deleted with it, so this is the
+  // only record that it existed (shown in the manager Activity Log).
+  const { data: snapshot } = await sb
+    .from("sched_appointments")
+    .select("customer_name, work_order_number, order_number, appointment_type, scheduled_date, crew_id, status")
+    .eq("id", id)
+    .maybeSingle();
   const { error: linkErr } = await sb.from("sched_appointment_links").delete().eq("appointment_id", id);
   if (linkErr) throw new Error(linkErr.message || "Failed to remove appointment links");
   // Audit events are best-effort — a leftover event row must not block the delete.
   await sb.from("sched_appointment_events").delete().eq("appointment_id", id);
   const { error } = await sb.from("sched_appointments").delete().eq("id", id);
   if (error) throw new Error(error.message || "Failed to delete appointment");
+  if (snapshot) {
+    await logActivityEvent({
+      entityType: "appointment",
+      entityId: id,
+      action: "deleted",
+      summary: describeDeletedAppointment(snapshot),
+      before: snapshot as Record<string, unknown>,
+    });
+  }
 }
 
 /** Move an appointment back to the queue by setting status='unscheduled' and clearing scheduling fields. */
@@ -940,6 +958,17 @@ export async function upsertAvailabilityRule(
   // repeat_interval column is guaranteed by the authoritative schema
   const payload = { ...rule, updated_at: new Date().toISOString() };
 
+  // Before-image for the activity log (an edit, not a create, when the row exists).
+  let before: AvailabilityRule | null = null;
+  if (rule.id) {
+    const { data: prev } = await sb
+      .from("sched_availability_rules")
+      .select("*")
+      .eq("id", rule.id)
+      .maybeSingle();
+    before = (prev as AvailabilityRule | null) ?? null;
+  }
+
   const { data, error } = await sb
     .from("sched_availability_rules")
     .upsert(payload)
@@ -947,17 +976,45 @@ export async function upsertAvailabilityRule(
     .single();
 
   if (error) throw new Error(error.message);
-  return data as AvailabilityRule | null;
+  const saved = data as AvailabilityRule | null;
+  if (saved) {
+    await logActivityEvent({
+      entityType: "availability_rule",
+      entityId: saved.id,
+      // Deactivating a rule is a removal as far as the calendar is concerned.
+      action: saved.is_active === false ? "deleted" : before ? "updated" : "created",
+      summary: describeRule(saved),
+      reason: saved.reason ?? null,
+      before: before as Record<string, unknown> | null,
+      after: saved as unknown as Record<string, unknown>,
+    });
+  }
+  return saved;
 }
 
 export async function deleteAvailabilityRule(id: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
+  const { data: before } = await sb
+    .from("sched_availability_rules")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
   const { error } = await sb
     .from("sched_availability_rules")
     .delete()
     .eq("id", id);
   if (error) throw error;
+  if (before) {
+    await logActivityEvent({
+      entityType: "availability_rule",
+      entityId: id,
+      action: "deleted",
+      summary: describeRule(before as AvailabilityRule),
+      reason: (before as AvailabilityRule).reason ?? null,
+      before: before as Record<string, unknown>,
+    });
+  }
 }
 
 export async function upsertAvailabilityException(
@@ -1004,20 +1061,52 @@ export async function upsertCalendarBlock(
 ): Promise<CalendarBlock | null> {
   const sb = requireSupabase();
   const payload = { ...block, updated_at: new Date().toISOString() };
+  let before: CalendarBlock | null = null;
+  if (block.id) {
+    const { data: prev } = await sb
+      .from("sched_calendar_blocks")
+      .select("*")
+      .eq("id", block.id)
+      .maybeSingle();
+    before = (prev as CalendarBlock | null) ?? null;
+  }
   const { data, error } = await sb
     .from("sched_calendar_blocks")
     .upsert(payload)
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return data as CalendarBlock | null;
+  const saved = data as CalendarBlock | null;
+  if (saved) {
+    await logActivityEvent({
+      entityType: "calendar_block",
+      entityId: saved.id,
+      action: saved.is_active === false ? "deleted" : before ? "updated" : "created",
+      summary: describeBlock(saved),
+      reason: saved.reason ?? null,
+      before: before as Record<string, unknown> | null,
+      after: saved as unknown as Record<string, unknown>,
+    });
+  }
+  return saved;
 }
 
 export async function deleteCalendarBlock(id: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
+  const { data: before } = await sb.from("sched_calendar_blocks").select("*").eq("id", id).maybeSingle();
   const { error } = await sb.from("sched_calendar_blocks").delete().eq("id", id);
   if (error) throw error;
+  if (before) {
+    await logActivityEvent({
+      entityType: "calendar_block",
+      entityId: id,
+      action: "deleted",
+      summary: describeBlock(before as CalendarBlock),
+      reason: (before as CalendarBlock).reason ?? null,
+      before: before as Record<string, unknown>,
+    });
+  }
 }
 
 // ── rForce Dismissals ──
