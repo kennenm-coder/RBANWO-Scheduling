@@ -31,6 +31,7 @@ function entry(key: string, at: string, source: "appointment" | "config" = "appo
     summary: null,
     reason: null,
     appointmentId: null,
+    entityId: null,
     customer: null,
     workOrder: null,
     orderNumber: null,
@@ -124,6 +125,7 @@ describe("normalizing rows", () => {
     expect(e.workOrder).toBe("5");
     expect(e.crewId).toBe("c2");
     expect(e.key).toBe("c:c1");
+    expect(e.entityId).toBe("a9");
   });
 
   it("does not invent a customer for availability rules", () => {

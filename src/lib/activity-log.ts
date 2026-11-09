@@ -33,6 +33,8 @@ export interface ActivityEntry {
   reason: string | null;
   // Appointment context (null for config entries)
   appointmentId: string | null;
+  /** Config entries: id of the rule / block / (deleted) tile the entry is about. */
+  entityId: string | null;
   customer: string | null;
   workOrder: string | null;
   orderNumber: string | null;
@@ -174,6 +176,7 @@ export function normalizeAppointmentEvent(row: AppointmentEventRow): ActivityEnt
     summary: describeAppointmentChange(row.action, row.before_state, row.after_state),
     reason: row.reason,
     appointmentId: row.appointment_id,
+    entityId: null,
     customer: appt?.customer_name ?? null,
     workOrder: appt?.work_order_number ?? null,
     orderNumber: appt?.order_number ?? null,
@@ -197,6 +200,7 @@ export function normalizeConfigEvent(row: ConfigEventRow): ActivityEntry {
     summary: row.summary,
     reason: row.reason,
     appointmentId: null,
+    entityId: row.entity_id,
     customer: isAppt ? str(snap.customer_name) : null,
     workOrder: isAppt ? str(snap.work_order_number) : null,
     orderNumber: isAppt ? str(snap.order_number) : null,
@@ -263,6 +267,7 @@ const RULE_KIND_LABELS: Record<string, string> = {
   block: "Block",
   late_day: "Late Day",
   office_day: "Office Day",
+  special_ops: "Special Ops",
 };
 
 export interface RuleLike {

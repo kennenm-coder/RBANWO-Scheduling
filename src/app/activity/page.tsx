@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
-import { ChevronDown, ChevronUp, Loader2, Search, ShieldX, X } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ChevronDown, ChevronUp, Loader2, Search, ShieldX, X } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { useData } from "@/components/DataProvider";
 import { canManage } from "@/lib/auth";
@@ -16,6 +17,8 @@ import {
   type ActivityTone,
 } from "@/lib/activity-log";
 import { ACTIVITY_PAGE_SIZE, fetchActivityActors, fetchActivityPage } from "@/lib/activity-store";
+import { flagActivity, localToday, summarizeFlags, worstSeverity, type ActivityFlag, type FlagSeverity } from "@/lib/activity-flags";
+import { deriveAwaitingRForce, deriveDroppedTiles, deriveIssues } from "@/lib/issues";
 
 /**
  * Activity Log — manager and admin only.
@@ -35,6 +38,16 @@ const TONE_CLASS: Record<ActivityTone, string> = {
   muted: "bg-foreground/10 text-muted",
 };
 
+const FLAG_CHIP: Record<FlagSeverity, string> = {
+  red: "bg-red-500/15 text-red-700 dark:text-red-400",
+  amber: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+};
+
+const ROW_CLASS: Record<FlagSeverity, string> = {
+  red: "border-l-4 border-l-red-500 bg-red-500/5",
+  amber: "border-l-4 border-l-amber-500 bg-amber-500/5",
+};
+
 const TILE_ACTIONS = Object.entries(ACTIVITY_ACTIONS).filter(([, m]) => m.source === "appointment" && m.entityType === undefined);
 const OTHER_ACTIONS = Object.entries(ACTIVITY_ACTIONS).filter(([, m]) => m.source === "config");
 
@@ -48,7 +61,21 @@ function fmtWhen(iso: string): string {
 
 export default function ActivityPage() {
   const { role, status, devBypass, user } = useAuth();
-  const { crews, loading: dataLoading } = useData();
+  const {
+    crews,
+    loading: dataLoading,
+    appointments,
+    rforceOrders,
+    activeLinks,
+    resourceMappings,
+    scheduledWorkOrders,
+    dismissals,
+    exportDates,
+    cancelledTiles,
+    availabilityRules,
+    availabilityExceptions,
+    calendarBlocks,
+  } = useData();
   const allowed = canManage(role);
 
   const [filters, setFilters] = useState<ActivityFilters>(EMPTY_FILTERS);
@@ -64,6 +91,7 @@ export default function ActivityPage() {
   const [error, setError] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
   // Bumped per query so a slow earlier response can't overwrite a newer one.
   const generation = useRef(0);
 
@@ -141,7 +169,31 @@ export default function ActivityPage() {
   const filtered = hasActiveFilters(filters);
   const selectedAction = filters.actions[0] ?? "";
 
-  const shown = useMemo(() => entries, [entries]);
+  // Potential issues: the same derivations the Issues tab and nav badge use,
+  // plus the calendar's own double-booking and availability checks, asked about
+  // the CURRENT state of whatever each action touched. Read-only.
+  const flags = useMemo(() => {
+    if (!allowed) return new Map<string, ActivityFlag[]>();
+    const issues = deriveIssues(rforceOrders, appointments, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, cancelledTiles, exportDates);
+    const dropped = deriveDroppedTiles(appointments, rforceOrders, dismissals, exportDates);
+    const awaiting = deriveAwaitingRForce(appointments, rforceOrders, dismissals, exportDates);
+    return flagActivity(entries, {
+      appointments,
+      issues,
+      dropped,
+      awaiting,
+      rules: availabilityRules,
+      exceptions: availabilityExceptions,
+      blocks: calendarBlocks,
+      today: localToday(),
+    });
+  }, [allowed, entries, appointments, rforceOrders, activeLinks, crews, resourceMappings, scheduledWorkOrders, dismissals, cancelledTiles, exportDates, availabilityRules, availabilityExceptions, calendarBlocks]);
+
+  const flagSummary = useMemo(() => summarizeFlags(flags), [flags]);
+  const shown = useMemo(
+    () => (onlyFlagged ? entries.filter((e) => flags.has(e.key)) : entries),
+    [entries, flags, onlyFlagged]
+  );
 
   if (status === "loading" || dataLoading) {
     return (
@@ -177,6 +229,64 @@ export default function ActivityPage() {
           <p className="text-xs text-muted">
             Who changed what, and when — tile changes, availability and Special Ops / Office Day tiles,
             company blocks, and deleted tiles. Newest first.
+          </p>
+        </div>
+
+        {/* ── Potential issues ── */}
+        <div
+          className={`rounded-lg border px-3 py-2.5 text-sm ${
+            flagSummary.red > 0
+              ? "border-red-500/40 bg-red-500/5"
+              : flagSummary.amber > 0
+                ? "border-amber-500/40 bg-amber-500/5"
+                : "border-border bg-background"
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <AlertTriangle
+              size={15}
+              className={flagSummary.red > 0 ? "text-red-500" : flagSummary.amber > 0 ? "text-amber-500" : "text-muted"}
+            />
+            <span className="font-medium">Potential issues</span>
+            {flagSummary.flaggedEntries === 0 ? (
+              <span className="text-muted">None spotted in the {entries.length} actions loaded.</span>
+            ) : (
+              <>
+                {flagSummary.red > 0 && (
+                  <span className="rounded px-1.5 py-0.5 text-xs font-medium bg-red-500/15 text-red-700 dark:text-red-400">
+                    {flagSummary.red} red
+                  </span>
+                )}
+                {flagSummary.amber > 0 && (
+                  <span className="rounded px-1.5 py-0.5 text-xs font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">
+                    {flagSummary.amber} amber
+                  </span>
+                )}
+                <label className="ml-auto inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={onlyFlagged}
+                    onChange={(e) => setOnlyFlagged(e.target.checked)}
+                  />
+                  Only flagged
+                </label>
+              </>
+            )}
+          </div>
+          {flagSummary.byCode.length > 0 && (
+            <ul className="mt-1.5 flex flex-wrap gap-1.5">
+              {flagSummary.byCode.map((c) => (
+                <li key={c.code} className={`rounded px-1.5 py-0.5 text-xs ${FLAG_CHIP[c.severity]}`}>
+                  {c.label} · {c.count}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-1.5 text-xs text-muted">
+            Flags show what the app&rsquo;s scheduling checks see <em>now</em> on the tile, rule or block an action
+            touched, on its newest action only &mdash; not necessarily what that action caused. Based on tiles
+            currently loaded on the calendar. Nothing is changed here; fix things from the{" "}
+            <Link href="/issues" className="text-primary hover:underline">Issues</Link> tab or the calendar.
           </p>
         </div>
 
@@ -267,7 +377,7 @@ export default function ActivityPage() {
           </div>
         ) : shown.length === 0 ? (
           <div className="text-center text-sm text-muted py-12 space-y-1">
-            <p>{filtered ? "Nothing matches these filters." : "No activity recorded yet."}</p>
+            <p>{onlyFlagged && entries.length > 0 ? "No flagged actions in what is loaded." : filtered ? "Nothing matches these filters." : "No activity recorded yet."}</p>
             {devBypass && !user && (
               <p className="text-xs">
                 Local dev bypass has no database session, so row-level security returns nothing. Open
@@ -282,6 +392,8 @@ export default function ActivityPage() {
               const tone = TONE_CLASS[meta?.tone ?? "muted"];
               const crew = crewName(e.crewId);
               const open = expanded.has(e.key);
+              const rowFlags = flags.get(e.key) ?? [];
+              const worst = worstSeverity(rowFlags);
               const subject = [e.customer, e.workOrder ? `WO ${e.workOrder}` : e.orderNumber ? `Order ${e.orderNumber}` : null]
                 .filter(Boolean)
                 .join(" · ");
@@ -289,7 +401,7 @@ export default function ActivityPage() {
                 ? `${crew} — ${e.summary ?? ""}`
                 : e.summary;
               return (
-                <li key={e.key} className="px-3 py-2.5">
+                <li key={e.key} className={`px-3 py-2.5 ${worst ? ROW_CLASS[worst] : ""}`}>
                   <div className="flex items-start gap-2">
                     <span className={`shrink-0 mt-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>
                       {actionLabel(e.action)}
@@ -298,6 +410,17 @@ export default function ActivityPage() {
                       {subject && <div className="font-medium truncate">{subject}</div>}
                       {detail && <div className="text-muted break-words">{detail}</div>}
                       {e.reason && <div className="text-muted/80 text-xs break-words">Reason: {e.reason}</div>}
+                      {rowFlags.map((f) => (
+                        <div
+                          key={f.code}
+                          className={`mt-1 text-xs break-words ${
+                            f.severity === "red" ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400"
+                          }`}
+                        >
+                          <span className="font-semibold uppercase tracking-wide mr-1">{f.severity}</span>
+                          {f.message}
+                        </div>
+                      ))}
                       <div className="text-xs text-muted/70 mt-0.5">
                         {e.actorName ?? "Unknown user"} · {fmtWhen(e.at)}
                         {e.scheduledDate && e.source === "appointment" && <> · tile on {e.scheduledDate}</>}
