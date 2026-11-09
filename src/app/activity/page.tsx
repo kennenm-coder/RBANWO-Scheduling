@@ -250,7 +250,7 @@ export default function ActivityPage() {
         {configError && (
           <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
             Availability, company-block and deleted-tile activity could not be loaded ({configError}). If the
-            <code className="mx-1">20261109_001_activity_log</code>migration has not been applied yet, only tile
+            <code className="mx-1">20261109_002_activity_log</code>migration has not been applied yet, only tile
             changes are shown.
           </div>
         )}
