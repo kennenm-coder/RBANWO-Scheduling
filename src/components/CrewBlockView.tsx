@@ -163,7 +163,9 @@ function BlockDayLabels({
           className={`text-[8px] font-semibold leading-none px-0.5 py-px rounded ${
             k === "late_day"
               ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
-              : "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300"
+              : k === "special_ops"
+                ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
+                : "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300"
           }`}
         >
           {LABEL_KIND_TEXT[k]}

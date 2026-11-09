@@ -8,7 +8,7 @@ import {
   upsertAvailabilityRule,
   deleteAvailabilityRule,
 } from "@/lib/store";
-import { Plus, Trash2, Clock, CalendarOff, Pencil, Save, Briefcase, Sunset, Building2 } from "lucide-react";
+import { Plus, Trash2, Clock, CalendarOff, Pencil, Save, Briefcase, Sunset, Building2, ShieldAlert } from "lucide-react";
 import { format } from "date-fns";
 import { isOneDaySpecialRule } from "@/lib/availability";
 
@@ -218,6 +218,8 @@ export default function AvailabilityEditor({
                 <Sunset size={12} className="text-amber-500 shrink-0" />
               ) : rule.kind === "office_day" ? (
                 <Building2 size={12} className="text-teal-500 shrink-0" />
+              ) : rule.kind === "special_ops" ? (
+                <ShieldAlert size={12} className="text-orange-500 shrink-0" />
               ) : (
                 <CalendarOff size={12} className="text-muted shrink-0" />
               )}
