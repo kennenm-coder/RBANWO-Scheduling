@@ -371,6 +371,16 @@ export interface AvailabilityRule {
   end_time: string | null;
   weekdays: number[];
   repeat_interval: number;
+  /**
+   * Monthly pattern ("first Friday of every other month"). When set, the rule
+   * matches the Nth occurrence of each selected weekday in the month — 1–4, or
+   * 5 for the LAST one — and `repeat_interval` (weeks) is ignored in favour of
+   * `month_interval`. null/undefined = ordinary weekly rule.
+   */
+  week_of_month?: number | null;
+  /** Months between occurrences in monthly mode (1 = every month, 2 = every
+   *  other month…), counted from the month of `effective_start`. */
+  month_interval?: number | null;
   effective_start: string;
   effective_end: string | null;
   reason: string | null;

@@ -10,9 +10,19 @@ import {
 } from "@/lib/store";
 import { Plus, Trash2, Clock, CalendarOff, Pencil, Save, Briefcase, Sunset, Building2, ShieldAlert } from "lucide-react";
 import { format } from "date-fns";
-import { isOneDaySpecialRule } from "@/lib/availability";
+import { isOneDaySpecialRule, isMonthlyRule, LAST_WEEK_OF_MONTH } from "@/lib/availability";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const WEEK_OF_MONTH_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "First" },
+  { value: 2, label: "Second" },
+  { value: 3, label: "Third" },
+  { value: 4, label: "Fourth" },
+  { value: LAST_WEEK_OF_MONTH, label: "Last" },
+];
+
+type RepeatMode = "weekly" | "monthly";
 
 const KIND_OPTIONS: { value: AvailabilityKind; label: string }[] = [
   { value: "unavailable", label: "Day Off" },
@@ -31,16 +41,25 @@ const DEPARTMENT_OPTIONS: { value: string; label: string }[] = [
 ];
 
 function ruleDescription(rule: AvailabilityRule): string {
-  const days = rule.weekdays.length > 0
+  let days = rule.weekdays.length > 0
     ? rule.weekdays.map((d) => DAY_LABELS[d]).join(", ")
     : "All days";
 
-  const interval =
+  let interval =
     rule.repeat_interval === 2
       ? " (every other week)"
       : rule.repeat_interval > 2
         ? ` (every ${rule.repeat_interval} weeks)`
         : "";
+
+  // Monthly pattern: "First Fri of every other month" replaces the weekly interval.
+  if (isMonthlyRule(rule)) {
+    const nth = WEEK_OF_MONTH_OPTIONS.find((o) => o.value === rule.week_of_month)?.label.toLowerCase() ?? `#${rule.week_of_month}`;
+    const mi = rule.month_interval ?? 1;
+    const every = mi === 1 ? "every month" : mi === 2 ? "every other month" : `every ${mi} months`;
+    days = `the ${nth} ${days} of ${every}`;
+    interval = "";
+  }
 
   if (rule.kind === "unavailable" || rule.kind === "pto") {
     if (rule.start_time && rule.end_time) {
@@ -85,6 +104,10 @@ export default function AvailabilityEditor({
   const [department, setDepartment] = useState("");
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [repeatInterval, setRepeatInterval] = useState(1);
+  // Monthly pattern, e.g. "first Friday of every other month".
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>("weekly");
+  const [weekOfMonth, setWeekOfMonth] = useState(1);
+  const [monthInterval, setMonthInterval] = useState(1);
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("18:00");
   // Late Day / Office Day: when true, the whole day is blocked (no times);
@@ -121,6 +144,9 @@ export default function AvailabilityEditor({
     setDepartment("");
     setWeekdays([]);
     setRepeatInterval(1);
+    setRepeatMode("weekly");
+    setWeekOfMonth(1);
+    setMonthInterval(1);
     setStartTime("08:00");
     setEndTime("18:00");
     setAllDay(true);
@@ -137,6 +163,9 @@ export default function AvailabilityEditor({
     setDepartment(rule.department || "");
     setWeekdays([...rule.weekdays]);
     setRepeatInterval(rule.repeat_interval);
+    setRepeatMode(isMonthlyRule(rule) ? "monthly" : "weekly");
+    setWeekOfMonth(rule.week_of_month ?? 1);
+    setMonthInterval(rule.month_interval ?? 1);
     setStartTime(rule.start_time || "08:00");
     setEndTime(rule.end_time || "18:00");
     setAllDay(!rule.start_time && !rule.end_time);
@@ -149,6 +178,8 @@ export default function AvailabilityEditor({
   // Block = always a time window. Late/Office = a window only when not "all day".
   const usesTimeWindow =
     kind === "block" || ((kind === "late_day" || kind === "office_day" || kind === "special_ops") && !allDay);
+
+  const monthly = repeatMode === "monthly";
 
   async function handleSave() {
     if (weekdays.length === 0) return;
@@ -163,7 +194,14 @@ export default function AvailabilityEditor({
         kind,
         department: kind === "role_assignment" ? department : null,
         weekdays,
-        repeat_interval: repeatInterval,
+        repeat_interval: monthly ? 1 : repeatInterval,
+        // Only sent for monthly rules / when clearing one, so ordinary weekly
+        // rules keep saving even before the monthly-pattern migration is applied.
+        ...(monthly
+          ? { week_of_month: weekOfMonth, month_interval: monthInterval }
+          : editingId
+            ? { week_of_month: null, month_interval: 1 }
+            : {}),
         start_time: usesTimeWindow ? startTime : null,
         end_time: usesTimeWindow ? endTime : null,
         effective_start: effectiveStart,
@@ -338,15 +376,60 @@ export default function AvailabilityEditor({
               Repeat
             </label>
             <select
-              value={repeatInterval}
-              onChange={(e) => setRepeatInterval(Number(e.target.value))}
+              value={monthly ? "monthly" : repeatInterval}
+              onChange={(e) => {
+                if (e.target.value === "monthly") {
+                  setRepeatMode("monthly");
+                } else {
+                  setRepeatMode("weekly");
+                  setRepeatInterval(Number(e.target.value));
+                }
+              }}
               className="w-full border border-border rounded-lg px-2.5 py-1.5 text-sm bg-background"
             >
               <option value={1}>Every week</option>
               <option value={2}>Every other week</option>
               <option value={3}>Every 3 weeks</option>
               <option value={4}>Every 4 weeks</option>
+              <option value="monthly">Monthly pattern (e.g. first Friday)…</option>
             </select>
+
+            {monthly && (
+              <div className="mt-2 space-y-2">
+                <div className="flex gap-2">
+                  <select
+                    value={weekOfMonth}
+                    onChange={(e) => setWeekOfMonth(Number(e.target.value))}
+                    className="flex-1 border border-border rounded-lg px-2.5 py-1.5 text-sm bg-background"
+                    aria-label="Which occurrence in the month"
+                  >
+                    {WEEK_OF_MONTH_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={monthInterval}
+                    onChange={(e) => setMonthInterval(Number(e.target.value))}
+                    className="flex-1 border border-border rounded-lg px-2.5 py-1.5 text-sm bg-background"
+                    aria-label="How many months apart"
+                  >
+                    <option value={1}>of every month</option>
+                    <option value={2}>of every other month</option>
+                    <option value={3}>of every 3rd month</option>
+                    <option value={4}>of every 4th month</option>
+                    <option value={6}>of every 6th month</option>
+                    <option value={12}>once a year</option>
+                  </select>
+                </div>
+                <p className="text-[10px] text-muted/60">
+                  Pick the day(s) above, e.g. Fri → &quot;First Fri of every other month&quot;.
+                  {monthInterval > 1 &&
+                    " Months are counted from the “Effective from” month below, so set that to the first month it should apply."}
+                </p>
+              </div>
+            )}
           </div>
 
           {(kind === "late_day" || kind === "office_day" || kind === "special_ops") && (

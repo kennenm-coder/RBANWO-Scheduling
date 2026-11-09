@@ -240,6 +240,8 @@ CREATE TABLE sched_availability_rules (
   end_time TIME,
   weekdays INTEGER[] DEFAULT '{}',
   repeat_interval INTEGER NOT NULL DEFAULT 1,  -- 1=weekly, 2=biweekly, etc.
+  week_of_month SMALLINT CHECK (week_of_month IS NULL OR week_of_month BETWEEN 1 AND 5),  -- monthly pattern: 1-4 = nth, 5 = last
+  month_interval INTEGER NOT NULL DEFAULT 1 CHECK (month_interval >= 1),  -- months between occurrences (monthly pattern)
   effective_start DATE NOT NULL,
   effective_end DATE,
   reason TEXT,

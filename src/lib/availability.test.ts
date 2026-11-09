@@ -355,3 +355,57 @@ describe("checkAvailabilityConflict", () => {
     expect(conflict!.fullDay).toBe(true);
   });
 });
+
+describe("monthly pattern (nth weekday of every N months)", () => {
+  const firstFriEveryOtherMonth = makeRule({
+    kind: "unavailable",
+    weekdays: [5],
+    week_of_month: 1,
+    month_interval: 2,
+    effective_start: "2026-01-01", // anchor month = January
+  });
+  const blocked = (d: string, rule = firstFriEveryOtherMonth) =>
+    !getCrewAvailability("crew-1", localDate(d), [rule], []).available;
+
+  it("blocks the first Friday of Jan, Mar, May...", () => {
+    expect(blocked("2026-01-02")).toBe(true);
+    expect(blocked("2026-03-06")).toBe(true);
+    expect(blocked("2026-05-01")).toBe(true);
+    expect(blocked("2027-01-01")).toBe(true);
+  });
+
+  it("skips the off months", () => {
+    expect(blocked("2026-02-06")).toBe(false);
+    expect(blocked("2026-04-03")).toBe(false);
+  });
+
+  it("skips non-first Fridays and other weekdays in a qualifying month", () => {
+    expect(blocked("2026-01-09")).toBe(false);
+    expect(blocked("2026-01-01")).toBe(false); // Thursday
+  });
+
+  it("every month when month_interval is 1", () => {
+    const r = makeRule({ kind: "unavailable", weekdays: [5], week_of_month: 1, month_interval: 1 });
+    expect(blocked("2026-02-06", r)).toBe(true);
+    expect(blocked("2026-04-03", r)).toBe(true);
+  });
+
+  it("supports 'last' occurrence", () => {
+    const r = makeRule({ kind: "unavailable", weekdays: [5], week_of_month: 5, month_interval: 1 });
+    expect(blocked("2026-11-27", r)).toBe(true); // last Fri of Nov
+    expect(blocked("2026-11-20", r)).toBe(false);
+    expect(blocked("2026-02-27", r)).toBe(true); // last Fri of Feb
+  });
+
+  it("honours effective_start / effective_end", () => {
+    const r = { ...firstFriEveryOtherMonth, effective_start: "2026-03-01", effective_end: "2026-07-31" };
+    expect(blocked("2026-01-02", r)).toBe(false);
+    expect(blocked("2026-03-06", r)).toBe(true);
+    expect(blocked("2026-09-04", r)).toBe(false);
+  });
+
+  it("plain weekly rules (no week_of_month) are unchanged", () => {
+    const r = makeRule({ kind: "unavailable", weekdays: [5] });
+    expect(blocked("2026-01-09", r)).toBe(true);
+  });
+});

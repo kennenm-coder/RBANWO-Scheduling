@@ -43,6 +43,40 @@ function calendarBlockCoversDate(block: CalendarBlock, dateStr: string): boolean
 const DEFAULT_WORK_START = "08:00";
 const DEFAULT_WORK_END = "18:00";
 
+/** "Last" occurrence of a weekday in its month (stored as week_of_month = 5). */
+export const LAST_WEEK_OF_MONTH = 5;
+
+/** Is this a monthly-pattern rule (nth weekday of every N months)? */
+export function isMonthlyRule(rule: Pick<AvailabilityRule, "week_of_month" | "weekdays">): boolean {
+  return rule.week_of_month != null && rule.week_of_month >= 1 && rule.weekdays.length > 0;
+}
+
+/**
+ * Does `dateStr` (YYYY-MM-DD) fall on the rule's Nth-weekday-of-the-month in a
+ * qualifying month? Months are counted from the month of effective_start, so
+ * "first Friday of every other month" starting in January hits Jan, Mar, May…
+ * Pure string/number math — no timezone conversion.
+ */
+function matchesMonthlyPattern(rule: AvailabilityRule, dateStr: string): boolean {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const nth = rule.week_of_month as number;
+
+  if (nth === LAST_WEEK_OF_MONTH) {
+    const daysInMonth = new Date(y, m, 0).getDate();
+    if (d + 7 <= daysInMonth) return false;
+  } else if (Math.floor((d - 1) / 7) + 1 !== nth) {
+    return false;
+  }
+
+  const interval = Math.max(1, rule.month_interval ?? 1);
+  if (interval > 1) {
+    const [ay, am] = rule.effective_start.split("-").map(Number);
+    const monthsDiff = (y - ay) * 12 + (m - am);
+    if (((monthsDiff % interval) + interval) % interval !== 0) return false;
+  }
+  return true;
+}
+
 function ruleAppliesToDate(
   rule: AvailabilityRule,
   dateStr: string,
@@ -55,7 +89,9 @@ function ruleAppliesToDate(
   if (rule.weekdays.length > 0 && !rule.weekdays.includes(dayOfWeek))
     return false;
 
-  if (rule.repeat_interval > 1 && rule.weekdays.length > 0) {
+  if (isMonthlyRule(rule)) {
+    if (!matchesMonthlyPattern(rule, dateStr)) return false;
+  } else if (rule.repeat_interval > 1 && rule.weekdays.length > 0) {
     const anchor = parseISO(rule.effective_start);
     const target = parseISO(dateStr);
     const weeksDiff = differenceInCalendarWeeks(target, anchor, {
