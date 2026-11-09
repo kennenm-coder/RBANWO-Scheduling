@@ -680,6 +680,12 @@ CREATE POLICY "sched_read_install_tally"
 -- NOTE: sched_geocode_cache DOES have RLS (listed above). This file used to
 -- claim it had none.
 
+-- sched_activity_events (20261109_001_activity_log.sql): append-only trail for
+-- availability rules, company blocks and hard-deleted tiles. Read = admin +
+-- scheduling_manager only; insert = any scheduling role; no update/delete.
+-- Not yet in the live-production regeneration above — apply the migration, then
+-- re-run the schema dump.
+
 
 
 -- ╔══════════════════════════════════════════════════════════════════════════╗
