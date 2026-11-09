@@ -332,6 +332,8 @@ export type AvailabilityKind =
   | "block"
   | "late_day"
   | "office_day"
+  // Weather / standby crew day ("Special Ops"). Full-day block like Office.
+  | "special_ops"
   // Company-wide blocks (from sched_calendar_blocks). Not stored on
   // sched_availability_rules — these only ever appear as the resolved
   // blockingKind on a day's availability so the calendar can label them.

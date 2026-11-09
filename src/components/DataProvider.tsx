@@ -31,6 +31,8 @@ import {
   fetchRForceOrders,
   fetchTimeOffRequests,
   fetchAvailabilityRules,
+  upsertAvailabilityRule as upsertAvailabilityRuleInDb,
+  deleteAvailabilityRule as deleteAvailabilityRuleInDb,
   fetchCalendarBlocks,
   upsertCalendarBlock as upsertCalendarBlockInDb,
   deleteCalendarBlock as deleteCalendarBlockInDb,
@@ -69,6 +71,7 @@ import { subscribeToAppointments } from "@/lib/realtime";
 import { useAuth } from "./AuthProvider";
 import { addDays, subDays, format } from "date-fns";
 import { planWindowExtension } from "@/lib/date-window";
+import { isOneDaySpecialRule, type SpecialAssignmentKind } from "@/lib/availability";
 
 interface DataContextValue {
   crews: Crew[];
@@ -171,6 +174,12 @@ interface DataContextValue {
     block: Partial<CalendarBlock> & { kind: CalendarBlock["kind"]; start_date: string }
   ) => Promise<CalendarBlock | null>;
   removeCalendarBlock: (id: string) => Promise<void>;
+  /** Block a crew's whole day as Special Ops or Office Day (a drag from the
+   *  queue's Special Assignments strip). Replaces any one-day special tile the
+   *  crew already has on that date. */
+  assignSpecialDay: (crewId: string, date: string, kind: SpecialAssignmentKind) => Promise<AvailabilityRule | null>;
+  /** Remove a one-day Special Ops / Office tile by its rule id. */
+  removeSpecialDay: (ruleId: string) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -658,6 +667,43 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const handleAssignSpecialDay = useCallback(
+    async (crewId: string, date: string, kind: SpecialAssignmentKind) => {
+      const existing = availabilityRules.find(
+        (r) => r.crew_id === crewId && r.effective_start === date && isOneDaySpecialRule(r)
+      );
+      if (existing?.kind === kind) return existing;
+      const saved = await upsertAvailabilityRuleInDb({
+        ...(existing ? { id: existing.id } : { created_by: user?.id ?? null }),
+        crew_id: crewId,
+        kind,
+        department: null,
+        weekdays: [],
+        repeat_interval: 1,
+        start_time: null,
+        end_time: null,
+        effective_start: date,
+        effective_end: date,
+        reason: null,
+        is_active: true,
+      });
+      if (saved) {
+        setAvailabilityRules((prev) =>
+          prev.some((r) => r.id === saved.id)
+            ? prev.map((r) => (r.id === saved.id ? saved : r))
+            : [...prev, saved]
+        );
+      }
+      return saved;
+    },
+    [availabilityRules, user?.id]
+  );
+
+  const handleRemoveSpecialDay = useCallback(async (ruleId: string) => {
+    await deleteAvailabilityRuleInDb(ruleId);
+    setAvailabilityRules((prev) => prev.filter((r) => r.id !== ruleId));
+  }, []);
+
   const handleApproveRForce = useCallback(
     async (
       rforceOrder: RForceOrder,
@@ -851,6 +897,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         removeTimeOff: handleRemoveTimeOff,
         saveCalendarBlock: handleSaveCalendarBlock,
         removeCalendarBlock: handleRemoveCalendarBlock,
+        assignSpecialDay: handleAssignSpecialDay,
+        removeSpecialDay: handleRemoveSpecialDay,
       }}
     >
       {children}

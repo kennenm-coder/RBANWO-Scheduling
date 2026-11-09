@@ -50,7 +50,8 @@ import { appointmentMatchesSearch, rforceItemMatchesSearch } from "@/lib/search-
 import { getPreferences, crewColorFor } from "@/lib/preferences";
 import { usePresence } from "@/lib/presence";
 import { format, isToday, parseISO, addDays } from "date-fns";
-import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle, ArrowRight, Sunset, Building2 } from "lucide-react";
+import SpecialDayRemove from "./SpecialDayRemove";
+import { Plus, Palmtree, ChevronDown, ChevronRight, Unlink, Ban, AlertTriangle, ArrowRight, Sunset, Building2, ShieldAlert } from "lucide-react";
 
 /** Hatch marking a cell another department has reserved (never the PTO look). */
 import { useSchedulerDrag } from "@/lib/drag-context";
@@ -825,14 +826,17 @@ export default function CrewLaneWeekView({
 function BlockedDayCell({
   visual,
   reason,
+  ruleId,
   children,
 }: {
   visual: BlockedVisual;
   reason: string;
+  /** Rule behind the block, so a one-day Special Ops / Office tile can be removed. */
+  ruleId?: string;
   children?: React.ReactNode;
 }) {
   const Icon =
-    visual.icon === "ban" ? Ban : visual.icon === "sunset" ? Sunset : visual.icon === "building" ? Building2 : Palmtree;
+    visual.icon === "ban" ? Ban : visual.icon === "sunset" ? Sunset : visual.icon === "building" ? Building2 : visual.icon === "shield" ? ShieldAlert : Palmtree;
   return (
     <>
       {children}
@@ -843,6 +847,7 @@ function BlockedDayCell({
       >
         <Icon size={10} className="shrink-0" />
         <span className="text-[8px] leading-none truncate">{reason}</span>
+        {ruleId && <SpecialDayRemove ruleId={ruleId} />}
       </div>
     </>
   );
@@ -873,7 +878,9 @@ function DayLabelBadges({
           className={`text-[7px] font-semibold leading-none px-0.5 py-px rounded ${
             k === "late_day"
               ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
-              : "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300"
+              : k === "special_ops"
+                ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300"
+                : "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300"
           }`}
         >
           {LABEL_KIND_TEXT[k]}
@@ -1051,13 +1058,22 @@ function MeasureTimeLaneCell({
         ...(hasConflict && timeOffColor ? { backgroundColor: `${timeOffColor}20` } : undefined),
         ...ringStyle,
       }}
-      onMouseEnter={() => setHoveredCell(presenceCellKey)}
+      data-crew-day={presenceCellKey} onMouseEnter={() => setHoveredCell(presenceCellKey)}
       onMouseLeave={() => setHoveredCell(null)}
       onDragOver={handleCellDragOver}
       onDragLeave={handleCellDragLeave}
       onDrop={handleCellDrop}
     >
       <DayLabelBadges labels={dayLabels} roleTag={roleTag} />
+      {!off && blockedVisual && availability?.blockingRuleId && (
+        <div
+          className="flex items-center justify-center gap-0.5 px-0.5 text-[8px] font-semibold leading-none"
+          style={{ color: blockedVisual.accent }}
+        >
+          <span className="truncate">{availability.reason || blockedVisual.label}</span>
+          <SpecialDayRemove ruleId={availability.blockingRuleId} />
+        </div>
+      )}
       {hasConflict && (
         <div className="text-[8px] font-semibold px-0.5 flex items-center gap-0.5" style={timeOffColor ? { color: timeOffColor } : undefined}>
           <Palmtree size={8} style={timeOffColor ? { color: timeOffColor } : undefined} className={timeOffColor ? "" : "text-time-off"} />
@@ -1348,6 +1364,7 @@ function StandardCell({
   const presenceCellKey = `${crew.id}|${dateStr}`;
   const peerColor = hoverColorFor(presenceCellKey);
   const presenceHandlers = {
+    "data-crew-day": presenceCellKey,
     onMouseEnter: () => setHoveredCell(presenceCellKey),
     onMouseLeave: () => setHoveredCell(null),
   };
@@ -1528,7 +1545,7 @@ function StandardCell({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <BlockedDayCell visual={visual} reason={reason}>
+        <BlockedDayCell visual={visual} reason={reason} ruleId={availability?.blockingRuleId}>
           <DayLabelBadges labels={dayLabels} roleTag={roleTag} />
         </BlockedDayCell>
       </div>

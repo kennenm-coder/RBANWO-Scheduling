@@ -29,6 +29,7 @@
   --blk-pto: #d97706;
   --blk-unavailable: #e11d48;
   --blk-office: #0d9488;
+  --blk-special: #ea580c;
   --blk-late: #c026d3;
   --blk-holiday: #7c3aed;
   --blk-meeting: #2563eb;
@@ -83,6 +84,7 @@ body {
     --blk-pto: #fbbf24;
     --blk-unavailable: #fb7185;
     --blk-office: #2dd4bf;
+    --blk-special: #fb923c;
     --blk-late: #e879f9;
     --blk-holiday: #a78bfa;
     --blk-meeting: #60a5fa;
@@ -106,6 +108,7 @@ body {
   --blk-pto: #fbbf24;
   --blk-unavailable: #fb7185;
   --blk-office: #2dd4bf;
+  --blk-special: #fb923c;
   --blk-late: #e879f9;
   --blk-holiday: #a78bfa;
   --blk-meeting: #60a5fa;
@@ -134,6 +137,7 @@ body {
   --blk-pto: #b86f0d;
   --blk-unavailable: #c2334d;
   --blk-office: #0f766e;
+  --blk-special: #c2410c;
   --blk-late: #a21caf;
   --blk-holiday: #6d28d9;
   --blk-meeting: #1d4ed8;
@@ -182,4 +186,14 @@ body {
 }
 .scrollbar-hide::-webkit-scrollbar {
   display: none;             /* Chrome/Safari */
+}
+
+/* Drop highlight while a Special Ops / Office Day tile is dragged over a crew day. */
+.special-drop-over {
+  outline: 2px dashed var(--blk-special) !important;
+  outline-offset: -2px;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--blk-special) 15%, transparent),
+    color-mix(in srgb, var(--blk-special) 15%, transparent)
+  );
 }

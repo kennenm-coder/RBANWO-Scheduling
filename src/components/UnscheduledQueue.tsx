@@ -7,7 +7,8 @@ import { openSalesforce } from "@/lib/salesforce";
 import { formatDateStr, formatProductBreakdown } from "@/lib/calendar-utils";
 import ScheduleModal from "./ScheduleModal";
 import { useAuth } from "./AuthProvider";
-import { canAdmin } from "@/lib/auth";
+import { canAdmin, canManage } from "@/lib/auth";
+import SpecialAssignmentStrip from "./SpecialAssignmentStrip";
 import LinkModal from "./LinkModal";
 import {
   Appointment,
@@ -139,6 +140,7 @@ export default function UnscheduledQueue() {
   } = useData();
   const { role } = useAuth();
   const isAdmin = canAdmin(role);
+  const isManager = canManage(role);
 
   const { filters, setFilters, resetFilters, isDefault } = useQueueFilters();
   const [showMore, setShowMore] = useState(false);
@@ -452,6 +454,9 @@ export default function UnscheduledQueue() {
           ))}
         </div>
       )}
+
+      {/* ── Special assignments (manager / admin only) ── */}
+      {isManager && <SpecialAssignmentStrip />}
 
       {/* ── Queue items ── */}
       <div className="flex-1 overflow-auto p-2 space-y-1.5">

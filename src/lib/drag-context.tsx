@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { Appointment, RForceOrder, TimeBlock } from "./types";
+import type { SpecialAssignmentKind } from "./availability";
 
 export interface DraggedAppointmentInfo {
   appointment: Appointment;
@@ -29,6 +30,9 @@ interface SchedulerDragValue {
   resizingAppointment: ResizeInfo | null;
   /** Queue-tile occupancy for the current order drag (null when not dragging one). */
   draggedMeta: DraggedMeta | null;
+  /** A Special Ops / Office Day tile being dragged from the queue strip. */
+  draggedSpecial: SpecialAssignmentKind | null;
+  setDraggedSpecial: (kind: SpecialAssignmentKind | null) => void;
   setDraggedOrder: (order: RForceOrder | null) => void;
   setDraggedAppointment: (info: DraggedAppointmentInfo | null) => void;
   setResizingAppointment: (info: ResizeInfo | null) => void;
@@ -43,12 +47,23 @@ export function SchedulerDragProvider({ children }: { children: React.ReactNode 
   const [draggedAppointment, setAppointment] = useState<DraggedAppointmentInfo | null>(null);
   const [resizingAppointment, setResize] = useState<ResizeInfo | null>(null);
   const [draggedMeta, setMeta] = useState<DraggedMeta | null>(null);
+  const [draggedSpecial, setSpecial] = useState<SpecialAssignmentKind | null>(null);
 
   const clearDrag = useCallback(() => {
     setOrder(null);
     setAppointment(null);
     setResize(null);
     setMeta(null);
+    setSpecial(null);
+  }, []);
+  const setDraggedSpecial = useCallback((kind: SpecialAssignmentKind | null) => {
+    setSpecial(kind);
+    if (kind) {
+      setOrder(null);
+      setAppointment(null);
+      setResize(null);
+      setMeta(null);
+    }
   }, []);
   const setDraggedMeta = useCallback((meta: DraggedMeta | null) => setMeta(meta), []);
   const setDraggedOrder = useCallback((order: RForceOrder | null) => {
@@ -81,13 +96,15 @@ export function SchedulerDragProvider({ children }: { children: React.ReactNode 
       draggedAppointment,
       resizingAppointment,
       draggedMeta,
+      draggedSpecial,
+      setDraggedSpecial,
       setDraggedOrder,
       setDraggedAppointment,
       setResizingAppointment,
       setDraggedMeta,
       clearDrag,
     }),
-    [draggedOrder, draggedAppointment, resizingAppointment, draggedMeta, setDraggedOrder, setDraggedAppointment, setResizingAppointment, setDraggedMeta, clearDrag]
+    [draggedOrder, draggedAppointment, resizingAppointment, draggedMeta, draggedSpecial, setDraggedSpecial, setDraggedOrder, setDraggedAppointment, setResizingAppointment, setDraggedMeta, clearDrag]
   );
 
   return <SchedulerDragContext.Provider value={value}>{children}</SchedulerDragContext.Provider>;
@@ -103,6 +120,8 @@ const NOOP_DRAG: SchedulerDragValue = {
   draggedAppointment: null,
   resizingAppointment: null,
   draggedMeta: null,
+  draggedSpecial: null,
+  setDraggedSpecial: () => {},
   setDraggedOrder: () => {},
   setDraggedAppointment: () => {},
   setResizingAppointment: () => {},

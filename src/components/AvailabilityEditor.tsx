@@ -10,6 +10,7 @@ import {
 } from "@/lib/store";
 import { Plus, Trash2, Clock, CalendarOff, Pencil, Save, Briefcase, Sunset, Building2 } from "lucide-react";
 import { format } from "date-fns";
+import { isOneDaySpecialRule } from "@/lib/availability";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -19,6 +20,7 @@ const KIND_OPTIONS: { value: AvailabilityKind; label: string }[] = [
   { value: "role_assignment", label: "Department Assignment" },
   { value: "late_day", label: "Late Day" },
   { value: "office_day", label: "Office Day" },
+  { value: "special_ops", label: "Special Ops" },
 ];
 
 const DEPARTMENT_OPTIONS: { value: string; label: string }[] = [
@@ -56,8 +58,9 @@ function ruleDescription(rule: AvailabilityRule): string {
     return `${deptLabel} on ${days}${interval}`;
   }
 
-  if (rule.kind === "late_day" || rule.kind === "office_day") {
-    const name = rule.kind === "late_day" ? "Late Day" : "Office Day";
+  if (rule.kind === "late_day" || rule.kind === "office_day" || rule.kind === "special_ops") {
+    const name = rule.kind === "late_day" ? "Late Day" : rule.kind === "special_ops" ? "Special Ops" : "Office Day";
+    if (isOneDaySpecialRule(rule)) return `${name} — ${rule.effective_start} (dragged from the queue)`;
     if (rule.start_time && rule.end_time) {
       return `${name} (blocks ${rule.start_time}–${rule.end_time}) on ${days}${interval}`;
     }
@@ -145,7 +148,7 @@ export default function AvailabilityEditor({
 
   // Block = always a time window. Late/Office = a window only when not "all day".
   const usesTimeWindow =
-    kind === "block" || ((kind === "late_day" || kind === "office_day") && !allDay);
+    kind === "block" || ((kind === "late_day" || kind === "office_day" || kind === "special_ops") && !allDay);
 
   async function handleSave() {
     if (weekdays.length === 0) return;
@@ -344,7 +347,7 @@ export default function AvailabilityEditor({
             </select>
           </div>
 
-          {(kind === "late_day" || kind === "office_day") && (
+          {(kind === "late_day" || kind === "office_day" || kind === "special_ops") && (
             <div>
               <label className="flex items-center gap-2 text-[11px] text-muted cursor-pointer">
                 <input

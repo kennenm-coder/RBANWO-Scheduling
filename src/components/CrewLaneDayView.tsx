@@ -44,7 +44,8 @@ import { executeScheduleMove, validateMove, ScheduleMoveTarget } from "@/lib/sch
 import OverlapOverrideDialog from "./OverlapOverrideDialog";
 import { calculateTimelineDrag, getDurationMinutes, DAY_VIEW_SNAP_MINUTES } from "@/lib/timeline-drag";
 import RForceDetailSheet from "./RForceDetailSheet";
-import { Palmtree, MapPinned, Ban, Sunset, Building2, ArrowRight } from "lucide-react";
+import SpecialDayRemove from "./SpecialDayRemove";
+import { Palmtree, MapPinned, Ban, Sunset, Building2, ShieldAlert, ArrowRight } from "lucide-react";
 import {
   blockedVisualFor,
   timeOffVisual,
@@ -1122,7 +1123,7 @@ function CrewSection({
                 <div
                   key={crew.id}
                   data-crew-row={crew.id}
-                  onMouseEnter={() => setHoveredCell(presenceCellKey)}
+                  data-crew-day={presenceCellKey} onMouseEnter={() => setHoveredCell(presenceCellKey)}
                   onMouseLeave={() => setHoveredCell(null)}
                   className="flex border-b border-border"
                   style={{
@@ -1158,6 +1159,7 @@ function CrewSection({
                         <Palmtree size={14} className="shrink-0" style={{ color: rowBlockVisual?.accent }} />
                       )}
                       {!off && crewUnavailable && <Ban size={12} className="text-muted/40 shrink-0" />}
+                      {!off && crewUnavailable && <SpecialDayRemove ruleId={avail.blockingRuleId} />}
                     </div>
                     {dayLabels.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1 pl-[18px]">
@@ -1419,13 +1421,17 @@ function CrewSection({
                               ? "bg-amber-200/30 dark:bg-amber-800/20"
                               : avail.blockingKind === "office_day"
                                 ? "bg-teal-200/30 dark:bg-teal-800/20"
-                                : "bg-muted/8"
+                                : avail.blockingKind === "special_ops"
+                                  ? "bg-orange-200/30 dark:bg-orange-800/20"
+                                  : "bg-muted/8"
                           }`}
                         >
-                          {avail.blockingKind === "late_day" || avail.blockingKind === "office_day" ? (
+                          {avail.blockingKind === "late_day" || avail.blockingKind === "office_day" || avail.blockingKind === "special_ops" ? (
                             <>
                               {avail.blockingKind === "late_day" ? (
                                 <Sunset size={13} className="text-amber-500/70" />
+                              ) : avail.blockingKind === "special_ops" ? (
+                                <ShieldAlert size={13} className="text-orange-500/70" />
                               ) : (
                                 <Building2 size={13} className="text-teal-500/70" />
                               )}
@@ -1433,7 +1439,9 @@ function CrewSection({
                                 className={`text-[11px] font-semibold ${
                                   avail.blockingKind === "late_day"
                                     ? "text-amber-700 dark:text-amber-300"
-                                    : "text-teal-700 dark:text-teal-300"
+                                    : avail.blockingKind === "special_ops"
+                                      ? "text-orange-700 dark:text-orange-300"
+                                      : "text-teal-700 dark:text-teal-300"
                                 }`}
                               >
                                 {avail.reason || labelForBlockingKind(avail.blockingKind)}

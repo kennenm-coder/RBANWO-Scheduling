@@ -26,13 +26,14 @@ export interface BlockedVisual {
   /** Short text for the cell, e.g. "PTO". */
   label: string;
   /** Which icon the views should draw. */
-  icon: "palm" | "ban" | "sunset" | "building";
+  icon: "palm" | "ban" | "sunset" | "building" | "shield";
 }
 
 const VISUALS: Record<string, BlockedVisual> = {
   pto: { accent: "var(--blk-pto)", label: "PTO", icon: "palm" },
   unavailable: { accent: "var(--blk-unavailable)", label: "Unavailable", icon: "ban" },
   office_day: { accent: "var(--blk-office)", label: "Office", icon: "building" },
+  special_ops: { accent: "var(--blk-special)", label: "Special Ops", icon: "shield" },
   late_day: { accent: "var(--blk-late)", label: "Late Day", icon: "sunset" },
   holiday: { accent: "var(--blk-holiday)", label: "Holiday", icon: "palm" },
   company_meeting: { accent: "var(--blk-meeting)", label: "Office Meeting", icon: "building" },

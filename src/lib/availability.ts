@@ -15,6 +15,9 @@ export interface CrewDayAvailability {
    * pto > unavailable > office_day > late_day.
    */
   blockingKind?: AvailabilityKind;
+  /** Id of the per-crew rule that produced blockingKind (absent for company-wide
+   *  blocks). Lets a view offer to remove a one-day Office / Special Ops tile. */
+  blockingRuleId?: string;
 }
 
 // Higher wins when several full-day rules land on the same day. External PTO
@@ -25,6 +28,7 @@ const FULL_DAY_PRIORITY: Partial<Record<AvailabilityKind, number>> = {
   company_meeting: 5,
   pto: 4,
   unavailable: 3,
+  special_ops: 2.5,
   office_day: 2,
   late_day: 1,
 };
@@ -107,6 +111,7 @@ export function getCrewAvailability(
   let workStart = DEFAULT_WORK_START;
   let workEnd = DEFAULT_WORK_END;
   let blockingKind: AvailabilityKind | undefined;
+  let blockingRuleId: string | undefined;
   let reason: string | undefined;
   const unavailableBlocks = new Set<TimeBlock>();
 
@@ -118,6 +123,7 @@ export function getCrewAvailability(
     "unavailable",
     "late_day",
     "office_day",
+    "special_ops",
   ];
 
   function defaultReasonFor(kind: AvailabilityKind): string {
@@ -138,6 +144,7 @@ export function getCrewAvailability(
         const currentPriority = blockingKind ? (FULL_DAY_PRIORITY[blockingKind] ?? 0) : -1;
         if (priority > currentPriority) {
           blockingKind = rule.kind;
+          blockingRuleId = rule.id;
           reason = rule.reason || defaultReasonFor(rule.kind);
         }
         continue;
@@ -204,7 +211,7 @@ export function getCrewAvailability(
 
   if (blockingKind) {
     MEASURE_TIME_BLOCKS.forEach((b) => unavailableBlocks.add(b));
-    return { available: false, workStart, workEnd, unavailableBlocks, reason, blockingKind };
+    return { available: false, workStart, workEnd, unavailableBlocks, reason, blockingKind, blockingRuleId };
   }
 
   return { available: true, workStart, workEnd, unavailableBlocks, reason };
@@ -258,11 +265,12 @@ export function isTimeBlockAvailable(
  * "Measure Tech on Tue/Thu". Returns the department string (e.g.
  * "service", "measure") or null if no role_assignment rule applies.
  */
-const LABEL_KINDS: AvailabilityKind[] = ["late_day", "office_day"];
+const LABEL_KINDS: AvailabilityKind[] = ["late_day", "office_day", "special_ops"];
 
 export const LABEL_KIND_TEXT: Record<string, string> = {
   late_day: "Late Day",
   office_day: "Office",
+  special_ops: "Special Ops",
 };
 
 /** Human label for whatever kind is fully blocking a day (for full-day tiles). */
@@ -272,6 +280,7 @@ export function labelForBlockingKind(kind?: AvailabilityKind): string {
   if (kind === "pto") return "PTO";
   if (kind === "late_day") return "Late Day";
   if (kind === "office_day") return "Office";
+  if (kind === "special_ops") return "Special Ops";
   return "Unavailable";
 }
 
@@ -421,4 +430,25 @@ export function checkAvailabilityConflict(
   }
 
   return null;
+}
+
+/** The two quick-assign "special assignment" kinds a manager can drag onto a day. */
+export type SpecialAssignmentKind = "special_ops" | "office_day";
+
+export const SPECIAL_ASSIGNMENT_KINDS: readonly SpecialAssignmentKind[] = ["special_ops", "office_day"];
+
+/**
+ * Is this a one-day Special Ops / Office tile (what a drag creates)? Recurring
+ * or ranged rules from the resource editor are not, so a view never offers a
+ * one-click remove on a weekly Office Day.
+ */
+export function isOneDaySpecialRule(rule: AvailabilityRule | undefined | null): boolean {
+  return (
+    !!rule &&
+    (rule.kind === "special_ops" || rule.kind === "office_day") &&
+    rule.weekdays.length === 0 &&
+    !rule.start_time &&
+    !rule.end_time &&
+    rule.effective_end === rule.effective_start
+  );
 }

@@ -13,6 +13,7 @@ import CrewLaneDayView from "@/components/CrewLaneDayView";
 import CrewLaneWeekView from "@/components/CrewLaneWeekView";
 import CrewBlockView from "@/components/CrewBlockView";
 import UnscheduledQueue from "@/components/UnscheduledQueue";
+import SpecialDropZone from "@/components/SpecialDropZone";
 import AppointmentSheet from "@/components/AppointmentSheet";
 import { fetchAppointmentById } from "@/lib/store";
 import { ViewMode, AppointmentType, Appointment } from "@/lib/types";
@@ -255,7 +256,7 @@ export default function CalendarPage() {
 
       {/* Calendar */}
       <PresenceProvider viewMode={viewMode} currentDate={currentDate}>
-      <div className="flex-1 flex flex-col min-w-0">
+      <SpecialDropZone>
         <CalendarHeader
           currentDate={currentDate}
           viewMode={viewMode}
@@ -340,7 +341,7 @@ export default function CalendarPage() {
             onEdit={() => setDeepLinkAppt(null)}
           />
         )}
-      </div>
+      </SpecialDropZone>
       </PresenceProvider>
     </div>
     </SchedulerDragProvider>

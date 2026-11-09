@@ -37,7 +37,8 @@ import {
 import { useSchedulerDrag } from "@/lib/drag-context";
 import { usePresence } from "@/lib/presence";
 import { useDragAutoScroll } from "@/lib/use-drag-autoscroll";
-import { Palmtree, ArrowRight, Ban, Sunset, Building2 } from "lucide-react";
+import SpecialDayRemove from "./SpecialDayRemove";
+import { Palmtree, ArrowRight, Ban, Sunset, Building2, ShieldAlert } from "lucide-react";
 import { getCrewDayLabels, LABEL_KIND_TEXT, getCrewAvailability } from "@/lib/availability";
 import {
   blockedVisualFor,
@@ -111,14 +112,16 @@ function RoleBlockedCell({ label }: { label: string }) {
 function BlockedMark({
   visual,
   reason,
+  ruleId,
   size = "normal",
 }: {
   visual: BlockedVisual;
   reason: string;
+  ruleId?: string;
   size?: "normal" | "small";
 }) {
   const Icon =
-    visual.icon === "ban" ? Ban : visual.icon === "sunset" ? Sunset : visual.icon === "building" ? Building2 : Palmtree;
+    visual.icon === "ban" ? Ban : visual.icon === "sunset" ? Sunset : visual.icon === "building" ? Building2 : visual.icon === "shield" ? ShieldAlert : Palmtree;
   return (
     <div
       className="flex items-center justify-center gap-1 py-0.5 font-semibold"
@@ -126,6 +129,7 @@ function BlockedMark({
     >
       <Icon size={size === "small" ? 11 : 13} className="shrink-0" />
       <span className={size === "small" ? "text-[9px]" : "text-[10px]"}>{reason}</span>
+      {ruleId && <SpecialDayRemove ruleId={ruleId} />}
     </div>
   );
 }
@@ -267,7 +271,7 @@ export default function CrewBlockView({
   // like an ordinary open day here.
   const timeOffColor = getPreferences().time_off_color || undefined;
   const getDayBlock = useCallback(
-    (crew: Crew, day: Date): { visual: BlockedVisual; reason: string } | null => {
+    (crew: Crew, day: Date): { visual: BlockedVisual; reason: string; ruleId?: string } | null => {
       const dateStr = format(day, "yyyy-MM-dd");
       const names = offByDay.get(dateStr);
       const isOff =
@@ -285,7 +289,7 @@ export default function CrewBlockView({
       );
       if (avail.available) return null;
       const visual = blockedVisualFor(avail.blockingKind, { timeOffColor });
-      return { visual, reason: avail.reason || visual.label };
+      return { visual, reason: avail.reason || visual.label, ruleId: avail.blockingRuleId };
     },
     [offByDay, availabilityRules, availabilityExceptions, calendarBlocks, timeOffColor]
   );
@@ -559,7 +563,7 @@ interface SectionBlockProps {
   weekDays: Date[];
   appointments: Appointment[];
   rowMode: RowMode;
-  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string } | null;
+  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string; ruleId?: string } | null;
   getBlockedSlots: (crewId: string, day: Date) => { unavailableBlocks: Set<TimeBlock> };
   getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   customerLastName: (appt: Appointment) => string;
@@ -677,7 +681,7 @@ interface CrewRowProps {
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
-  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string } | null;
+  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string; ruleId?: string } | null;
   getBlockedSlots: (crewId: string, day: Date) => { unavailableBlocks: Set<TimeBlock> };
   getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   customerLastName: (appt: Appointment) => string;
@@ -753,7 +757,7 @@ function CrewRow({
               className={`border border-border p-0.5 align-middle text-center min-w-[120px] ${ROLE_BLOCKED_HATCH} ${isToday ? "bg-primary/5" : ""}`}
               style={peerColor ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" } : undefined}
               title={`${crew.name} is assigned to ${roleBlock.label} on ${format(day, "EEEE")}`}
-              onMouseEnter={() => setHoveredCell(presenceKey)}
+              data-crew-day={presenceKey} onMouseEnter={() => setHoveredCell(presenceKey)}
               onMouseLeave={() => setHoveredCell(null)}
             >
               <BlockDayLabels labels={dayLabels} roleTag={getRoleTag(crew, day)} />
@@ -769,7 +773,7 @@ function CrewRow({
               isToday ? "bg-primary/5" : ""
             } ${roleBlock ? ROLE_BLOCKED_HATCH : ""} ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
             style={peerColor ? { outline: `2px solid ${peerColor}`, outlineOffset: "-2px" } : undefined}
-            onMouseEnter={() => setHoveredCell(presenceKey)}
+            data-crew-day={presenceKey} onMouseEnter={() => setHoveredCell(presenceKey)}
             onMouseLeave={() => setHoveredCell(null)}
             onDragOver={(e) => {
               const order = draggedOrder;
@@ -800,7 +804,7 @@ function CrewRow({
           >
             <BlockDayLabels labels={dayLabels} roleTag={getRoleTag(crew, day)} />
             {dayBlock ? (
-              <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} />
+              <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} ruleId={dayBlock.ruleId} />
             ) : dayAppts.length === 0 ? null : (
               <div className="flex flex-col gap-0.5">
                 {dayAppts.map((appt) => (
@@ -834,7 +838,7 @@ interface MeasureCrewRowsProps {
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
-  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string } | null;
+  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string; ruleId?: string } | null;
   getBlockedSlots: (crewId: string, day: Date) => { unavailableBlocks: Set<TimeBlock> };
   getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   multiDayLabel: (appt: Appointment, day: Date) => string;
@@ -939,11 +943,11 @@ function MeasureCrewRows({
                     className="border border-border p-0.5 text-center align-middle"
                     style={{ ...blockedCellStyle(dayBlock.visual), ...ringStyle }}
                     title={`${crew.name} — ${dayBlock.reason}`}
-                    onMouseEnter={() => setHoveredCell(presenceKey)}
+                    data-crew-day={presenceKey} onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
                     <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
-                    <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} />
+                    <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} ruleId={dayBlock.ruleId} />
                   </td>
                 );
               }
@@ -974,7 +978,7 @@ function MeasureCrewRows({
                     className={`border border-border p-0.5 text-center align-middle ${ROLE_BLOCKED_HATCH} ${isToday ? "bg-primary/5" : ""}`}
                     style={ringStyle}
                     title={`${crew.name} is assigned to ${roleBlock.label} on ${format(day, "EEEE")}`}
-                    onMouseEnter={() => setHoveredCell(presenceKey)}
+                    data-crew-day={presenceKey} onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
                     <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
@@ -1002,7 +1006,7 @@ function MeasureCrewRows({
                 } ${roleBlock ? ROLE_BLOCKED_HATCH : ""} ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
                 style={{ ...(slotBlocked ? blockedSlotStyle(slotBlocked) : undefined), ...ringStyle }}
                 title={slotBlocked ? `${crew.name} is blocked this window` : undefined}
-                onMouseEnter={() => setHoveredCell(presenceKey)}
+                data-crew-day={presenceKey} onMouseEnter={() => setHoveredCell(presenceKey)}
                 onMouseLeave={() => setHoveredCell(null)}
                 onDragOver={(e) => {
                   const order = draggedOrder;
@@ -1080,7 +1084,7 @@ interface HourlyCrewRowsProps {
   crew: Crew;
   weekDays: Date[];
   appointments: Appointment[];
-  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string } | null;
+  getDayBlock: (crew: Crew, day: Date) => { visual: BlockedVisual; reason: string; ruleId?: string } | null;
   getBlockedSlots: (crewId: string, day: Date) => { unavailableBlocks: Set<TimeBlock> };
   getDayLabels: (crewId: string, day: Date) => AvailabilityKind[];
   multiDayLabel: (appt: Appointment, day: Date) => string;
@@ -1247,11 +1251,11 @@ function HourlyCrewRows({
                     className="border border-border p-0.5 text-center align-middle"
                     style={{ ...blockedCellStyle(dayBlock.visual), ...ringStyle }}
                     title={`${crew.name} — ${dayBlock.reason}`}
-                    onMouseEnter={() => setHoveredCell(presenceKey)}
+                    data-crew-day={presenceKey} onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
                     <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
-                    <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} />
+                    <BlockedMark visual={dayBlock.visual} reason={dayBlock.reason} ruleId={dayBlock.ruleId} />
                   </td>
                 );
               }
@@ -1270,7 +1274,7 @@ function HourlyCrewRows({
                     className={`border border-border p-0.5 text-center align-middle ${ROLE_BLOCKED_HATCH} ${isToday ? "bg-primary/5" : ""}`}
                     style={ringStyle}
                     title={`${crew.name} is assigned to ${roleBlock.label} on ${format(day, "EEEE")}`}
-                    onMouseEnter={() => setHoveredCell(presenceKey)}
+                    data-crew-day={presenceKey} onMouseEnter={() => setHoveredCell(presenceKey)}
                     onMouseLeave={() => setHoveredCell(null)}
                   >
                     <BlockDayLabels labels={getDayLabels(crew.id, day)} roleTag={getRoleTag(crew, day)} />
@@ -1297,7 +1301,7 @@ function HourlyCrewRows({
                   isToday ? "bg-primary/5" : ""
                 } ${roleBlock ? ROLE_BLOCKED_HATCH : ""} ${isDragOver ? "!bg-primary/10 outline outline-2 outline-dashed outline-primary" : ""}`}
                 style={ringStyle}
-                onMouseEnter={() => setHoveredCell(presenceKey)}
+                data-crew-day={presenceKey} onMouseEnter={() => setHoveredCell(presenceKey)}
                 onMouseLeave={() => setHoveredCell(null)}
                 onDragOver={(e) => {
                   const order = draggedOrder;
